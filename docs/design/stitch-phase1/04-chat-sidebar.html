@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>KINETIC_CONSOLE | Flowboard Chat</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800;900&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+    body { font-family: 'Inter', sans-serif; }
+    .mono { font-family: 'JetBrains+Mono', monospace; }
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      font-size: 18px;
+    }
+    .pulse-animation {
+      box-shadow: 0 0 0 0 rgba(124, 92, 255, 0.4);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(124, 92, 255, 0.7); }
+      70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(124, 92, 255, 0); }
+      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(124, 92, 255, 0); }
+    }
+    .dot-grid {
+      background-image: radial-gradient(#2a2e38 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+  </style>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          "colors": {
+                  "primary-fixed-dim": "#d8ceff",
+                  "on-secondary-fixed-variant": "#5d5b5f",
+                  "on-secondary": "#212023",
+                  "on-primary-fixed-variant": "#5d38df",
+                  "on-tertiary-fixed": "#383c55",
+                  "on-secondary-fixed": "#403f42",
+                  "on-background": "#dde5ff",
+                  "secondary": "#a09da1",
+                  "secondary-fixed": "#e6e1e6",
+                  "on-secondary-container": "#c2bec3",
+                  "surface-dim": "#0b0e16",
+                  "outline": "#6c758e",
+                  "tertiary-dim": "#cdcfef",
+                  "surface-container-lowest": "#000000",
+                  "surface-tint": "#cabeff",
+                  "on-error-container": "#ff97a3",
+                  "on-tertiary": "#535771",
+                  "on-tertiary-fixed-variant": "#555873",
+                  "surface-container-low": "#0f131e",
+                  "secondary-fixed-dim": "#d7d3d8",
+                  "primary": "#7c5cff",
+                  "on-surface-variant": "#a1abc6",
+                  "surface-bright": "#202c45",
+                  "on-primary-container": "#d4c9ff",
+                  "surface-container": "#131927",
+                  "on-surface": "#dde5ff",
+                  "secondary-dim": "#a09da1",
+                  "tertiary-container": "#dbddfe",
+                  "error-container": "#7f2737",
+                  "primary-container": "#4816cb",
+                  "on-error": "#490013",
+                  "inverse-surface": "#faf9ff",
+                  "inverse-primary": "#613de3",
+                  "primary-fixed": "#e6deff",
+                  "tertiary-fixed-dim": "#cdcfef",
+                  "outline-variant": "#2a2e38",
+                  "tertiary": "#edecff",
+                  "inverse-on-surface": "#52555e",
+                  "surface-container-high": "#1c1f27",
+                  "surface-variant": "#1c253b",
+                  "tertiary-fixed": "#dbddfe",
+                  "primary-dim": "#bcaeff",
+                  "secondary-container": "#3c3b3f",
+                  "surface": "#0b0e16",
+                  "surface-container-highest": "#232630",
+                  "on-primary": "#ffffff",
+                  "background": "#0b0e16",
+                  "on-primary-fixed": "#4000c2",
+                  "error": "#ec7c8a",
+                  "error-dim": "#b95463",
+                  "on-tertiary-container": "#4b4e69"
+          },
+          "borderRadius": {
+                  "DEFAULT": "0.125rem",
+                  "lg": "0.25rem",
+                  "xl": "0.5rem",
+                  "full": "9999px"
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-background text-on-surface overflow-hidden h-screen w-screen flex flex-col">
+<header class="bg-[#0b0e16] text-[#7c5cff] font-sans text-[13px] tracking-tight antialiased uppercase border-b border-[#2a2e38]/40 h-12 flex justify-between items-center w-full px-4 z-50">
+<div class="flex items-center gap-8">
+<span class="font-mono font-bold text-[#7c5cff] text-sm tracking-widest">KINETIC_CONSOLE</span>
+<nav class="hidden md:flex gap-6 items-center">
+<a class="text-[#7c5cff] border-b-2 border-[#7c5cff] pb-1" href="#">Orchestrator</a>
+<a class="text-slate-400 font-medium hover:bg-[#1c1f27] transition-colors duration-150 px-2 rounded" href="#">Pipelines</a>
+<a class="text-slate-400 font-medium hover:bg-[#1c1f27] transition-colors duration-150 px-2 rounded" href="#">Variables</a>
+<a class="text-slate-400 font-medium hover:bg-[#1c1f27] transition-colors duration-150 px-2 rounded" href="#">Logs</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-slate-400 hover:bg-[#1c1f27] p-1 transition-colors">settings</span>
+<span class="material-symbols-outlined text-slate-400 hover:bg-[#1c1f27] p-1 transition-colors">account_tree</span>
+</div>
+<button class="bg-[#7c5cff] text-white px-3 py-1 text-[11px] font-bold tracking-widest active:opacity-80 active:scale-95 transition-all">DEPLOY</button>
+</div>
+</header>
+<div class="flex-1 flex overflow-hidden">
+<aside class="w-[60px] bg-[#14161c] border-r border-[#2a2e38]/40 flex flex-col items-center py-4 gap-6 z-40">
+<div class="w-8 h-8 rounded-lg bg-surface-container-high border border-outline-variant flex items-center justify-center">
+<span class="material-symbols-outlined text-primary scale-75">hub</span>
+</div>
+<div class="flex flex-col gap-4">
+<div class="p-2 rounded bg-surface-container-high text-primary border-r-2 border-primary">
+<span class="material-symbols-outlined">alt_route</span>
+</div>
+<div class="p-2 rounded text-slate-500 hover:text-slate-300 hover:bg-[#1c1f27] transition-all">
+<span class="material-symbols-outlined">data_object</span>
+</div>
+<div class="p-2 rounded text-slate-500 hover:text-slate-300 hover:bg-[#1c1f27] transition-all">
+<span class="material-symbols-outlined">terminal</span>
+</div>
+</div>
+<div class="mt-auto flex flex-col gap-4 mb-4">
+<span class="material-symbols-outlined text-slate-500 cursor-pointer">menu_book</span>
+<span class="material-symbols-outlined text-slate-500 cursor-pointer">settings</span>
+</div>
+</aside>
+<main class="flex-1 flex overflow-hidden">
+<section class="w-[60%] h-full relative overflow-hidden opacity-70 dot-grid">
+<div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+<div class="grid grid-cols-2 gap-8 p-12">
+<div class="w-64 h-48 bg-surface-container-high border border-outline-variant rounded-lg p-3 blur-[2px]">
+<div class="bg-surface-container-low px-2 py-1 mb-3 rounded-sm flex justify-between items-center">
+<span class="text-[11px] font-medium tracking-[0.04em] uppercase text-on-surface-variant">character_node</span>
+<span class="mono text-[9px] text-primary">#LIRA</span>
+</div>
+<div class="aspect-square w-16 bg-surface-container-low mb-2 rounded border border-outline-variant/30 flex items-center justify-center">
+<span class="material-symbols-outlined text-on-surface-variant">person</span>
+</div>
+<div class="h-2 w-full bg-outline-variant/20 rounded-full mb-1"></div>
+<div class="h-2 w-2/3 bg-outline-variant/20 rounded-full"></div>
+</div>
+<div class="w-64 h-56 bg-surface-container-high border border-outline-variant rounded-lg p-3 blur-[4px] mt-12">
+<div class="bg-surface-container-low px-2 py-1 mb-3 rounded-sm flex justify-between items-center">
+<span class="text-[11px] font-medium tracking-[0.04em] uppercase text-on-surface-variant">image_render</span>
+<span class="mono text-[9px] text-primary">#A2K9</span>
+</div>
+<img class="w-full h-24 object-cover rounded border border-outline-variant mb-2 grayscale" data-alt="abstract flowing 3D organic shapes with neon violet and deep blue lighting on a dark background technical aesthetic" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBy7G5_KX7BJ81gKjtqcxMOzxXQvbThqYTeRloeS3w80eFmAMdHBo51mNf20YXWI8ZTR3e_CaRokHgm6kyTC0MPR4FBVywG94Sv_iNoCheXS9adq4jFH-QwvA7pP_379hs2BLoOHVxUIjLXX5ZvGkJaS3mAVnvuRA4BQdTuU9WXJ-WKxWIGzLSJj_mjEHkk3wTamp19VVyikJPIST4p0vOJLtN9_lzVIVIIe2E1WgrWkp66ONvCdZJjh4sNg5LeqedduXP1XJ7hMNY"/>
+<div class="h-2 w-full bg-outline-variant/20 rounded-full"></div>
+</div>
+<div class="w-72 h-40 bg-surface-container-high border border-outline-variant rounded-lg p-3 blur-[3px] -ml-8">
+<div class="bg-surface-container-low px-2 py-1 mb-3 rounded-sm flex justify-between items-center">
+<span class="text-[11px] font-medium tracking-[0.04em] uppercase text-on-surface-variant">prompt_engineer</span>
+<span class="mono text-[9px] text-primary">#PROMPT_01</span>
+</div>
+<div class="mono text-[10px] text-slate-400 leading-relaxed">
+                /imagine: woman_running, cinematic_light, anamorphic, golden_hour...
+              </div>
+</div>
+</div>
+</div>
+</section>
+<div class="w-[1px] bg-outline-variant/20 h-full"></div>
+<section class="w-[40%] bg-surface-container-low h-full flex flex-col z-30">
+<header class="h-14 flex items-center justify-between px-6 border-b border-outline-variant/40 flex-shrink-0">
+<div class="flex items-center gap-2">
+<span class="text-[11px] font-medium tracking-[0.04em] uppercase text-[#8a8f99]">CHAT</span>
+<span class="text-[11px] font-medium text-[#8a8f99] opacity-60">· scene 01</span>
+</div>
+<div class="h-[22px] px-2 bg-surface-container-high rounded-full border border-outline-variant/50 flex items-center gap-2">
+<div class="w-[6px] h-[6px] rounded-full bg-primary pulse-animation"></div>
+<span class="text-[11px] font-medium text-on-surface uppercase tracking-wider">Pipeline running</span>
+</div>
+</header>
+<div class="flex-1 overflow-y-auto p-6 flex flex-col gap-8 scroll-smooth">
+<div class="flex flex-col items-end gap-1">
+<div class="bg-[#201c35] p-4 rounded-xl rounded-tr-[4px] max-w-[85%] border border-primary/20">
+<p class="text-[13px] leading-relaxed text-[#e6e8ec]">
+                Generate 3 variants of <span class="text-primary font-medium">Lira</span> running toward camera — handheld, golden hour, anamorphic 2.39:1
+              </p>
+</div>
+<span class="mono text-[10px] text-[#8a8f99]">14:22 · just now</span>
+</div>
+<div class="flex flex-col gap-3">
+<div class="max-w-[90%]">
+<p class="text-[13px] leading-relaxed text-[#e6e8ec]">
+                Planning pipeline — 3 <code class="mono px-1.5 py-0.5 bg-surface-container-high rounded text-[11px] text-primary border border-outline-variant/30">image</code> nodes from <span class="mono text-primary">#lira</span> ref, 1 <code class="mono px-1.5 py-0.5 bg-surface-container-high rounded text-[11px] text-primary border border-outline-variant/30">video</code> node for the top pick.
+              </p>
+<div class="flex gap-2 mt-4">
+<div class="h-7 px-2 bg-surface-container-high border border-outline-variant/40 rounded flex items-center gap-2">
+<div class="w-2.5 h-2.5 bg-teal-500/80 rounded-sm"></div>
+<span class="mono text-[10px] text-on-surface-variant">#a2k9</span>
+<div class="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+</div>
+<div class="h-7 px-2 bg-surface-container-high border border-outline-variant/40 rounded flex items-center gap-2">
+<div class="w-2.5 h-2.5 bg-teal-500/80 rounded-sm"></div>
+<span class="mono text-[10px] text-on-surface-variant">#7fx3</span>
+<div class="w-1.5 h-1.5 rounded-full bg-amber-500"></div>
+</div>
+<div class="h-7 px-2 bg-surface-container-high border border-outline-variant/40 rounded flex items-center gap-2">
+<div class="w-2.5 h-2.5 bg-teal-500/80 rounded-sm"></div>
+<span class="mono text-[10px] text-on-surface-variant">#b1m4</span>
+<div class="w-1.5 h-1.5 rounded-full bg-primary pulse-animation"></div>
+</div>
+</div>
+</div>
+</div>
+<div class="flex flex-col items-end gap-1 relative">
+<div class="bg-[#201c35] p-4 rounded-xl rounded-tr-[4px] max-w-[85%] border border-primary/20">
+<p class="text-[13px] leading-relaxed text-[#e6e8ec]">
+                Also add a prompt block for the hero pose referencing <span class="text-primary font-bold">#</span>
+</p>
+</div>
+<div class="absolute top-12 left-0 w-[260px] bg-surface-container-highest border border-outline-variant rounded-xl overflow-hidden shadow-2xl backdrop-blur-xl z-50">
+<div class="bg-surface-container-high border-l-2 border-primary h-9 flex items-center px-3 gap-3">
+<span class="material-symbols-outlined text-primary scale-75">radio_button_checked</span>
+<span class="mono text-[11px] flex-1">#lira <span class="text-on-surface-variant/60 ml-2">— 'Lira'</span></span>
+</div>
+<div class="hover:bg-surface-container-high/40 h-9 flex items-center px-3 gap-3 transition-colors cursor-pointer">
+<span class="material-symbols-outlined text-on-surface-variant scale-75">grid_view</span>
+<span class="mono text-[11px] flex-1">#a2k9 <span class="text-on-surface-variant/60 ml-2">— 'Sprint shot 01'</span></span>
+</div>
+<div class="hover:bg-surface-container-high/40 h-9 flex items-center px-3 gap-3 transition-colors cursor-pointer">
+<span class="material-symbols-outlined text-on-surface-variant scale-75">grid_view</span>
+<span class="mono text-[11px] flex-1">#7fx3 <span class="text-on-surface-variant/60 ml-2">— 'Sprint shot 02'</span></span>
+</div>
+<div class="bg-surface-container-low px-3 py-1.5 border-t border-outline-variant/40 flex justify-between items-center">
+<span class="text-[9px] text-on-surface-variant uppercase tracking-widest">↑↓ select · ↵ insert</span>
+<span class="text-[9px] text-on-surface-variant/60">esc cancel</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-3 mt-4">
+<div class="w-7 h-7 rounded bg-surface-container-high border border-outline-variant/40 flex items-center justify-center">
+<span class="material-symbols-outlined text-primary scale-75" style="font-variation-settings: 'FILL' 1;">smart_toy</span>
+</div>
+<div class="flex gap-1.5">
+<div class="w-1.5 h-1.5 rounded-full bg-outline-variant animate-bounce" style="animation-delay: 0s;"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-outline-variant animate-bounce" style="animation-delay: 0.2s;"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-outline-variant animate-bounce" style="animation-delay: 0.4s;"></div>
+</div>
+</div>
+</div>
+<div class="h-44 p-6 border-t border-outline-variant/40 flex flex-col gap-3 flex-shrink-0 bg-surface-container-low/80 backdrop-blur-md">
+<div class="relative flex-1">
+<div class="w-full h-full bg-surface-container-highest border border-outline-variant/60 rounded-xl p-4 pr-12">
+<span class="text-on-surface-variant/50 text-[13px]">Describe intent · # to mention a node...</span>
+</div>
+<button class="absolute top-3 right-3 text-on-surface-variant/40 hover:text-on-surface transition-colors">
+<span class="material-symbols-outlined scale-75">close</span>
+</button>
+<div class="absolute bottom-3 left-4 flex gap-4">
+<span class="material-symbols-outlined text-on-surface-variant/60 hover:text-primary transition-colors cursor-pointer">attach_file</span>
+<span class="material-symbols-outlined text-on-surface-variant/60 hover:text-primary transition-colors cursor-pointer">tag</span>
+<span class="material-symbols-outlined text-on-surface-variant/60 hover:text-primary transition-colors cursor-pointer">auto_awesome</span>
+</div>
+<div class="absolute bottom-3 right-3 flex items-center gap-3">
+<span class="mono text-[10px] text-on-surface-variant/40">⌘↵</span>
+<button class="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white active:scale-95 transition-transform">
+<span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">send</span>
+</button>
+</div>
+</div>
+<div class="flex justify-center">
+<span class="text-[10px] text-on-surface-variant/40 uppercase tracking-[0.1em]">mention nodes with # · drop files to add refs · ⌘Enter to send</span>
+</div>
+</div>
+</section>
+</main>
+</div>
+</body></html>

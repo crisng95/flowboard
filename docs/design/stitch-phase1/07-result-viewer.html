@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "surface": "#0b0c10",
+            "surface-container-low": "#14161c",
+            "surface-container-high": "#1c1f27",
+            "surface-container-highest": "#232630",
+            "primary": "#7c5cff",
+            "on-surface": "#e6e8ec",
+            "on-surface-variant": "#8a8f99",
+            "outline-variant": "rgba(42, 46, 56, 0.4)",
+            "success": "#6ee7b7",
+            "warning": "#f5b301",
+            "error": "#ef4444"
+          },
+          borderRadius: {
+            "DEFAULT": "0.25rem",
+            "lg": "0.5rem",
+            "xl": "0.75rem",
+            "full": "9999px"
+          },
+          fontFamily: {
+            "headline": ["Inter", "sans-serif"],
+            "display": ["Inter", "sans-serif"],
+            "body": ["Inter", "sans-serif"],
+            "label": ["Inter", "sans-serif"],
+            "mono": ["ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "monospace"]
+          }
+        },
+      },
+    }
+  </script>
+<style>
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      font-size: 18px;
+    }
+    .dot-grid {
+      background-image: radial-gradient(#2a2e38 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+    .status-pulse {
+      box-shadow: 0 0 0 0 rgba(110, 231, 183, 0.4);
+      animation: pulse-green 2s infinite;
+    }
+    @keyframes pulse-green {
+      0% { box-shadow: 0 0 0 0 rgba(110, 231, 183, 0.4); }
+      70% { box-shadow: 0 0 0 6px rgba(110, 231, 183, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(110, 231, 183, 0); }
+    }
+  </style>
+</head>
+<body class="bg-surface font-body text-on-surface antialiased overflow-hidden">
+<!-- Workspace Background (Dimmed with Dot Grid) -->
+<div class="fixed inset-0 dot-grid opacity-60 pointer-events-none"></div>
+<div class="fixed inset-0 bg-surface/20 backdrop-blur-md"></div>
+<!-- Shared Component: TopNavBar (Simulated background) -->
+<header class="flex items-center justify-between px-4 w-full z-50 bg-[#14161c] docked full-width top-0 h-12 border-b border-[#2a2e38]/40 font-sans text-[13px] tracking-tight antialiased">
+<div class="flex items-center gap-6">
+<span class="text-sm font-bold tracking-[-0.02em] text-[#e6e8ec] uppercase">Flowboard</span>
+<nav class="flex gap-4">
+<span class="text-[#7c5cff] font-semibold cursor-pointer">Canvas</span>
+<span class="text-[#8a8f99] hover:bg-[#1c1f27] hover:text-[#e6e8ec] transition-colors px-2 py-0.5 rounded cursor-pointer">Library</span>
+<span class="text-[#8a8f99] hover:bg-[#1c1f27] hover:text-[#e6e8ec] transition-colors px-2 py-0.5 rounded cursor-pointer">Workflows</span>
+</nav>
+</div>
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-[#8a8f99] cursor-pointer">notifications</span>
+<span class="material-symbols-outlined text-[#8a8f99] cursor-pointer">settings</span>
+<button class="bg-primary text-white px-3 py-1 rounded font-medium ml-2">Share</button>
+</div>
+</header>
+<!-- Modal Overlay Container -->
+<div class="fixed inset-0 flex items-center justify-center z-[100] p-4">
+<!-- Main Modal -->
+<div class="relative w-[1120px] h-[720px] bg-surface-container-highest rounded-xl border border-[#2a2e38]/20 flex flex-col overflow-hidden">
+<!-- Content Area -->
+<div class="flex-1 flex overflow-hidden">
+<!-- LEFT PANE: Preview (68%) -->
+<div class="w-[760px] bg-surface relative flex items-center justify-center overflow-hidden border-r border-[#2a2e38]/40">
+<!-- Cinematic Preview Image -->
+<div class="w-full aspect-[2.39/1] relative">
+<img class="w-full h-full object-cover" data-alt="cinematic shot of a character running through a dimly lit forest at golden hour, terracotta and teal color grading, realistic motion blur" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDsjQOLrOL_fWBejDHlp0JTqGZ7tCQfnxW6_aTGCBTKBj7bAv3jsTH1zWVj_NA29ae6UOAl9TICcda-ABz4ipiuTimAsP2aZHWYTl4PQLLYhS09yf3KN1CA7YxD_laYkylNgKDt2AcXgXSMcQEMsB1eNDpEGX7CBMhrGT5mmSMJoWzwcLoOPW-9wanx2TjElTxCtXRprNHXA9la8Bz4ff6MAJEZfVZmb7OeyKM0YPj05_Dvv6dGrUArPLZcLjlUHCWqN9MBkCHdtkI"/>
+<!-- Top-Left Overlay: Breadcrumbs -->
+<div class="absolute top-4 left-4 flex items-center gap-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
+<span class="material-symbols-outlined text-[14px] text-on-surface-variant">grid_view</span>
+<span class="text-[11px] font-medium text-on-surface-variant">image / <span class="text-on-surface font-mono">#a2k9</span> / Sprint shot 01</span>
+<div class="w-1.5 h-1.5 rounded-full bg-success ml-1"></div>
+</div>
+<!-- Top-Right Overlay: Actions -->
+<div class="absolute top-4 right-4 flex gap-2">
+<button class="w-7 h-7 flex items-center justify-center bg-black/40 backdrop-blur-md rounded border border-white/10 hover:bg-black/60 transition-colors">
+<span class="material-symbols-outlined text-white text-[16px]">download</span>
+</button>
+<button class="w-7 h-7 flex items-center justify-center bg-black/40 backdrop-blur-md rounded border border-white/10 hover:bg-black/60 transition-colors">
+<span class="material-symbols-outlined text-white text-[16px]">content_copy</span>
+</button>
+<button class="w-7 h-7 flex items-center justify-center bg-black/40 backdrop-blur-md rounded border border-white/10 hover:bg-black/60 transition-colors">
+<span class="material-symbols-outlined text-white text-[16px]">fullscreen</span>
+</button>
+</div>
+<!-- Bottom-Center Overlay: Variant Switcher -->
+<div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3">
+<span class="text-[10px] font-mono tracking-widest text-on-surface-variant bg-black/40 px-2 py-0.5 rounded">VARIANT 2 OF 3</span>
+<div class="flex gap-2">
+<div class="w-20 h-11 bg-surface-container-low rounded border border-white/5 overflow-hidden opacity-60 hover:opacity-100 transition-opacity cursor-pointer">
+<img class="w-full h-full object-cover" data-alt="forest landscape variant 1" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDYjxflpZde9w8GhargBOoh5FAmaQWKBcALbwtg1MyDcrfcprBHNA07M7tvegZokNVrQCmXAJjd1A49FunQg6tCugXvSagd_CDXfHFNeVZnjzuqrKAg9c-bY9pwTRPg9zqCO3yyT8lnvJYOPLnPs4HSqhL5IelwrIo3VkcKenMVxrDAfo_nZc-l5NJJ7ntKTk9rlaQazYMHRKSFXkXQCT2HcuHTKPIhxibXdP6V4bTDoGABs_RMTl1IOR8rKIJ0uT9cWvo7bdyULao"/>
+</div>
+<div class="w-20 h-11 bg-surface-container-low rounded border-2 border-primary overflow-hidden cursor-default">
+<img class="w-full h-full object-cover" data-alt="forest landscape variant 2" src="https://lh3.googleusercontent.com/aida-public/AB6AXuALTYLL0gtiGFIJuW0hwT49ho_hVNWFrvISRyNy6Qx4W8sn4M2ND_SteF7UvggkBCLWjRaGo32adBd0gV2pnMObNAjkdNSarsxTW3NpgNQPxiMJuhaphu_VtJtLXHlZWie07ZLUWuh78EYKsaZNviqKCPOpK2CCaKHMjy8dW3pN-Fa8-t_WG958QmkFA0jLuTwagAM-jQgDBj6C6pDIMOLp8cHOzgUYuvQawHLwTXTyL5Idh8PdBr5i3cdDBwcmc7FHzYWLm4GVGJw"/>
+</div>
+<div class="w-20 h-11 bg-surface-container-low rounded border border-white/5 overflow-hidden opacity-60 hover:opacity-100 transition-opacity cursor-pointer">
+<img class="w-full h-full object-cover" data-alt="forest landscape variant 3" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA38R1rrld4Zx7mgo59cOx-H9J6gz4yyofQJb0DDBpTCzgZL-oZDECg2y6sQ55z_ZEubMOfDNWQzrrcu_gA_U_RWcgE-Lffca30BwA6miM7QEeUNRVb5et6iZSXoHV4KjNABOpLnqfoghEA6K7_E9zzv1MUnTL4FF3XS9XqoQ1yFnrkAVNJ8wS99Vp2DhKYjM44NlMGgB9SMFd6BpT1fxx_EPDa4bO1exQWt6FsXiQj9pwgUwJY-bi0X2_mo7_vjhv48yWEh4QOOtc"/>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- RIGHT PANE: Sidebar (32%) -->
+<div class="w-[360px] bg-surface-container-low p-6 flex flex-col gap-8 overflow-y-auto">
+<!-- Header Info -->
+<div>
+<div class="flex items-center gap-2 mb-1">
+<div class="w-2 h-2 rounded-full bg-success"></div>
+<span class="text-[11px] font-medium text-on-surface-variant uppercase tracking-wider">Rendered · 12.4s</span>
+</div>
+<div class="flex items-baseline gap-2">
+<h1 class="text-xl font-bold text-on-surface">Sprint shot 01</h1>
+<span class="text-sm font-mono text-on-surface-variant">#a2k9</span>
+</div>
+</div>
+<!-- Prompt Section -->
+<section>
+<h3 class="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-3">Prompt</h3>
+<div class="p-3 bg-surface rounded-lg border border-[#2a2e38]/40">
+<p class="text-[13px] leading-relaxed text-on-surface">
+                A lone runner navigating deep through a misty woodland at twilight, 
+                <span class="text-primary/80 font-mono bg-primary/10 px-1 rounded">cinematic</span> 
+                lighting, 
+                <span class="text-primary/80 font-mono bg-primary/10 px-1 rounded">anamorphic</span> 
+                lens flare, orange and teal tones, high motion blur, ultra-detailed textures.
+              </p>
+<a class="inline-block mt-3 text-[12px] font-medium text-primary hover:underline transition-all" href="#">Edit prompt →</a>
+</div>
+</section>
+<!-- References Section -->
+<section>
+<h3 class="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-3">References</h3>
+<div class="flex gap-4">
+<div class="flex flex-col gap-1.5">
+<div class="w-[60px] h-[60px] rounded bg-surface border border-[#2a2e38]/40 overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="reference character portrait" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBjwohxjEv7Gv6J08SDCbFAsjFXo6yaWVEpXEsiKIEdCn9b90n_3jwJF5V8c_FrgzevaSu2ZbwLQOZhZ0CE6qsXeoRsWtt3XnhBA0S8i_Jw5oBG_Lp7bX2wyfiXXCOhR3_BZtJb86Zq9_mRstA2MNzgbxhDyVToCNtQVqev3dKtId97kzeD1lfu0rz2oDIabfzYtdPduRT2Qq_qPBRh09ZqC_kuXHGXJEtz_IGt0rkM3LsCujDVX_4k2YRSDqXi5y0b0GcEdYf_D9g"/>
+</div>
+<span class="text-[10px] font-mono text-center text-on-surface-variant">#lira</span>
+</div>
+<div class="flex flex-col gap-1.5">
+<div class="w-[60px] h-[60px] rounded bg-surface border border-[#2a2e38]/40 overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="reference motion moodboard" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAjoJLg3Yu3BNrJdvzBzMsLk89NfFFJsQDBWN9itNunC1cQcOTCGsxRJuGtJj36wpfrUneQQe4Hr2j97aTfXy_gfycj_m2T08kc16z1LSD3MvG9ZzqACW0OyWtyT3wSmRm-UvpSWKIFiN2jmcoKguXW5YqrYrjcRAHDZ0iFeg_mxz9oWEbhk_kjytwLDl8RAW7MCR0IDFQKaBSTMkDEiH6fHmz_leI2WOP7UnIkS37mpYmXlzVlRPGmB7bc6Q2ii-1nbr_MaZGXFto"/>
+</div>
+<span class="text-[10px] font-mono text-center text-on-surface-variant">#mot</span>
+</div>
+</div>
+</section>
+<!-- Metadata Grid -->
+<section>
+<h3 class="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-3">Metadata</h3>
+<div class="grid grid-cols-2 gap-y-4 gap-x-2 text-[12px]">
+<div>
+<span class="block text-on-surface-variant text-[11px] mb-0.5">Model</span>
+<span class="text-on-surface font-medium">imagen-3 std</span>
+</div>
+<div>
+<span class="block text-on-surface-variant text-[11px] mb-0.5">Size</span>
+<span class="text-on-surface font-medium">2560×1072</span>
+</div>
+<div>
+<span class="block text-on-surface-variant text-[11px] mb-0.5">Seed</span>
+<span class="text-on-surface font-mono">8273</span>
+</div>
+<div>
+<span class="block text-on-surface-variant text-[11px] mb-0.5">Time</span>
+<span class="text-on-surface font-medium">12.4s</span>
+</div>
+<div>
+<span class="block text-on-surface-variant text-[11px] mb-0.5">Cost</span>
+<span class="text-success font-medium">Free</span>
+</div>
+<div>
+<span class="block text-on-surface-variant text-[11px] mb-0.5">When</span>
+<span class="text-on-surface font-medium">2 min ago</span>
+</div>
+</div>
+</section>
+<!-- Actions -->
+<section class="mt-auto pt-6 flex flex-col gap-3">
+<button class="w-full h-10 bg-primary text-white rounded-lg font-semibold text-[13px] flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all">
+              Regenerate
+              <kbd class="bg-black/20 px-1.5 py-0.5 rounded text-[10px] font-mono border border-white/10">⌘R</kbd>
+</button>
+<div class="grid grid-cols-2 gap-3">
+<button class="h-9 border border-[#2a2e38] text-on-surface rounded-lg text-[12px] font-medium hover:bg-surface-container-high transition-colors">
+                New variant +
+              </button>
+<button class="h-9 border border-[#2a2e38] text-on-surface rounded-lg text-[12px] font-medium hover:bg-surface-container-high transition-colors">
+                Send to video →
+              </button>
+</div>
+</section>
+</div>
+</div>
+<!-- FOOTER -->
+<footer class="h-12 border-t border-[#2a2e38]/40 flex items-center justify-between px-6 bg-surface-container-highest">
+<div class="flex-1">
+<button class="text-[12px] text-on-surface-variant hover:text-on-surface flex items-center gap-2 transition-colors">
+<span class="material-symbols-outlined text-[16px]">arrow_back</span>
+            Previous: <span class="font-mono text-[11px]">#lira</span>
+</button>
+</div>
+<div class="flex items-center gap-6 text-[10px] text-on-surface-variant font-medium tracking-tight uppercase">
+<div class="flex items-center gap-1.5">
+<kbd class="bg-surface-container-low border border-[#2a2e38] px-1.5 py-0.5 rounded text-[9px] text-on-surface">ESC</kbd>
+<span>close</span>
+</div>
+<div class="flex items-center gap-1.5">
+<kbd class="bg-surface-container-low border border-[#2a2e38] px-1.5 py-0.5 rounded text-[9px] text-on-surface">SPACE</kbd>
+<span>next variant</span>
+</div>
+<div class="flex items-center gap-1.5">
+<kbd class="bg-surface-container-low border border-[#2a2e38] px-1.5 py-0.5 rounded text-[9px] text-on-surface">← / →</kbd>
+<span>navigate</span>
+</div>
+</div>
+<div class="flex-1 flex justify-end">
+<button class="text-[12px] text-on-surface-variant hover:text-on-surface flex items-center gap-2 transition-colors">
+            Next: Sprint 02
+            <span class="material-symbols-outlined text-[16px]">arrow_forward</span>
+</button>
+</div>
+</footer>
+</div>
+</div>
+<!-- Shared Component: SideNavBar (Project Alpha Context) -->
+<aside class="fixed right-0 top-12 h-[calc(100vh-48px)] w-80 bg-[#14161c] border-l border-[#2a2e38]/40 z-40 flex flex-col pointer-events-none opacity-40">
+<div class="p-4 border-b border-[#2a2e38]/40">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-[#1c1f27] border border-[#2a2e38]/40 flex items-center justify-center">
+<span class="material-symbols-outlined text-[#7c5cff]">terminal</span>
+</div>
+<div>
+<h2 class="text-xs font-mono text-[#8a8f99]">Project Alpha</h2>
+<p class="text-[10px] text-[#8a8f99]/60 uppercase tracking-widest">v0.4.2-stable</p>
+</div>
+</div>
+</div>
+<div class="flex-1 py-4">
+<div class="px-4 py-2 border-r-2 border-[#7c5cff] text-[#7c5cff] bg-[#1c1f27] flex items-center gap-3">
+<span class="material-symbols-outlined">terminal</span>
+<span class="font-sans text-[13px]">Console</span>
+</div>
+<div class="px-4 py-2 text-[#8a8f99] flex items-center gap-3">
+<span class="material-symbols-outlined">account_tree</span>
+<span class="font-sans text-[13px]">Nodes</span>
+</div>
+<div class="px-4 py-2 text-[#8a8f99] flex items-center gap-3">
+<span class="material-symbols-outlined">folder_open</span>
+<span class="font-sans text-[13px]">Assets</span>
+</div>
+<div class="px-4 py-2 text-[#8a8f99] flex items-center gap-3">
+<span class="material-symbols-outlined">history</span>
+<span class="font-sans text-[13px]">History</span>
+</div>
+</div>
+</aside>
+</body></html>

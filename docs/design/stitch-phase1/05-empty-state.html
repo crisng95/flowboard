@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>flowboard — start</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@400;500;700&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "on-secondary": "#32246b",
+                        "surface-variant": "#343439",
+                        "secondary-container": "#483c83",
+                        "surface-container-high": "#292a2e",
+                        "on-tertiary": "#4e2600",
+                        "on-primary-fixed-variant": "#4816cb",
+                        "surface-tint": "#cabeff",
+                        "primary": "#cabeff",
+                        "on-primary-fixed": "#1c0062",
+                        "on-secondary-container": "#b9abfa",
+                        "tertiary-container": "#d7791f",
+                        "error-container": "#93000a",
+                        "surface-container": "#1f1f24",
+                        "primary-fixed": "#e6deff",
+                        "outline-variant": "#484555",
+                        "error": "#ffb4ab",
+                        "secondary": "#cabeff",
+                        "on-surface": "#e3e2e8",
+                        "on-tertiary-fixed-variant": "#6f3800",
+                        "on-error-container": "#ffdad6",
+                        "surface": "#121317",
+                        "on-surface-variant": "#c9c4d8",
+                        "inverse-primary": "#603ce2",
+                        "on-error": "#690005",
+                        "background": "#121317",
+                        "secondary-fixed": "#e6deff",
+                        "inverse-on-surface": "#2f3035",
+                        "tertiary-fixed": "#ffdcc4",
+                        "tertiary-fixed-dim": "#ffb780",
+                        "on-primary": "#31009a",
+                        "surface-dim": "#121317",
+                        "surface-container-highest": "#343439",
+                        "primary-container": "#947dff",
+                        "surface-container-low": "#1a1b20",
+                        "on-background": "#e3e2e8",
+                        "on-tertiary-container": "#442000",
+                        "on-primary-container": "#2a0088",
+                        "tertiary": "#ffb780",
+                        "secondary-fixed-dim": "#cabeff",
+                        "primary-fixed-dim": "#cabeff",
+                        "surface-bright": "#38393e",
+                        "on-tertiary-fixed": "#2f1400",
+                        "on-secondary-fixed-variant": "#483c83",
+                        "inverse-surface": "#e3e2e8",
+                        "surface-container-lowest": "#0d0e12",
+                        "outline": "#938ea1",
+                        "on-secondary-fixed": "#1c0a55"
+                    },
+                    fontFamily: {
+                        "headline": ["Inter", "sans-serif"],
+                        "display": ["Inter", "sans-serif"],
+                        "body": ["Inter", "sans-serif"],
+                        "label": ["Space Grotesk", "monospace"]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body {
+            background-color: #0b0c10;
+            background-image: radial-gradient(#2a2e38 1px, transparent 1px);
+            background-size: 24px 24px;
+            background-repeat: repeat;
+            /* 20% opacity for the dot grid */
+            background-blend-mode: overlay;
+        }
+        .dot-grid-overlay {
+            position: fixed;
+            inset: 0;
+            background-image: radial-gradient(rgba(42, 46, 56, 0.2) 1px, transparent 0);
+            background-size: 24px 24px;
+            pointer-events: none;
+            z-index: 0;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .pulse-dots::after {
+            content: '...';
+            display: inline-block;
+            width: 1em;
+            text-align: left;
+        }
+    </style>
+</head>
+<body class="font-body text-on-surface antialiased overflow-hidden min-h-screen flex flex-col items-center justify-center relative">
+<div class="dot-grid-overlay"></div>
+<!-- Top Left Status Indicators -->
+<header class="fixed top-3 left-3 flex gap-2 z-50">
+<div class="flex items-center h-[22px] px-2 bg-[#14161c] rounded-full border border-outline-variant/10">
+<span class="text-[11px] font-label text-slate-400 flex items-center gap-1.5 lowercase tracking-tight">
+<span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                agent · <span class="pulse-dots">connecting</span>
+</span>
+</div>
+<div class="flex items-center h-[22px] px-2 bg-[#14161c] rounded-full border border-outline-variant/10">
+<span class="text-[11px] font-label text-slate-400 flex items-center gap-1.5 lowercase tracking-tight">
+<span class="w-1.5 h-1.5 rounded-full border border-slate-600"></span>
+                extension · offline
+                <a class="text-primary-container hover:text-primary ml-1 transition-colors" href="#">Load unpacked →</a>
+</span>
+</div>
+</header>
+<!-- Main Hero Content -->
+<main class="relative z-10 max-w-[640px] w-full px-6 flex flex-col items-center text-center">
+<!-- Logo & Brand -->
+<div class="mb-8 flex flex-col items-center">
+<div class="grid grid-cols-4 gap-1 mb-3 opacity-80">
+<div class="w-1 h-1 bg-[#7c5cff] rounded-full"></div>
+<div class="w-1 h-1 bg-[#7c5cff] rounded-full"></div>
+<div class="w-1 h-1 bg-[#7c5cff] rounded-full"></div>
+<div class="w-1 h-1 bg-[#7c5cff] rounded-full"></div>
+<div class="w-1 h-1 bg-[#7c5cff] rounded-full"></div>
+<div class="w-1 h-1 bg-[#7c5cff] rounded-full"></div>
+<div class="w-1 h-1 bg-[#7c5cff] rounded-full"></div>
+<div class="w-1 h-1 bg-[#7c5cff] rounded-full"></div>
+</div>
+<span class="text-[14px] font-semibold text-[#8a8f99] tracking-tight lowercase">flowboard</span>
+</div>
+<h1 class="text-[28px] font-bold text-[#e6e8ec] leading-tight mb-4">Start a new board.</h1>
+<p class="text-[14px] text-[#8a8f99] leading-relaxed mb-10 max-w-[500px]">
+            Drop characters, generate images from references, animate into video — all on one infinite canvas. Chat to plan a pipeline, watch nodes stream in live.
+        </p>
+<!-- CTA Section -->
+<div class="flex items-center gap-4 mb-12">
+<button class="bg-[#7c5cff] hover:bg-[#6c4be8] text-[#f4f3fb] h-10 px-6 rounded-lg font-medium text-sm flex items-center gap-3 transition-all active:scale-95 group">
+                New board
+                <span class="bg-white/10 text-white/60 text-[10px] px-1.5 py-0.5 rounded border border-white/5 font-label tracking-widest">⌘N</span>
+</button>
+<a class="text-[#8a8f99] hover:text-[#e6e8ec] text-sm transition-colors flex items-center gap-1" href="#">
+                Open example →
+            </a>
+</div>
+<!-- Divider -->
+<div class="flex items-center gap-4 w-[400px] mb-10">
+<div class="h-px flex-1 bg-outline-variant/20"></div>
+<span class="text-[11px] font-label text-slate-500 uppercase tracking-[0.1em]">OR START FROM</span>
+<div class="h-px flex-1 bg-outline-variant/20"></div>
+</div>
+<!-- Example Cards Row -->
+<div class="grid grid-cols-3 gap-4 w-full">
+<!-- Card 1 (Hover State Simulation) -->
+<button class="flex flex-col text-left h-[120px] bg-[#1c1f27] border-l-2 border-[#7c5cff] rounded-xl p-4 transition-all hover:bg-[#222631] relative overflow-hidden group">
+<div class="absolute top-0 right-0 p-3 opacity-40">
+<svg class="stroke-primary" fill="none" height="40" viewbox="0 0 60 40" width="60">
+<circle cx="10" cy="10" fill="currentColor" r="2"></circle>
+<circle cx="30" cy="20" fill="currentColor" r="2"></circle>
+<circle cx="50" cy="10" fill="currentColor" r="2"></circle>
+<path d="M12 12C20 18 20 18 28 18M32 18C40 12 40 12 48 12" stroke-dasharray="2 2" stroke-width="0.5"></path>
+</svg>
+</div>
+<span class="text-sm font-semibold text-[#e6e8ec] mb-1">Character study</span>
+<span class="text-[11px] font-label text-slate-500 lowercase leading-tight">1 character · 6 image refs · 1 video</span>
+</button>
+<!-- Card 2 -->
+<button class="flex flex-col text-left h-[120px] bg-[#14161c] border border-outline-variant/10 rounded-xl p-4 transition-all hover:bg-[#1c1f27] relative overflow-hidden group">
+<div class="absolute top-0 right-0 p-3 opacity-20 group-hover:opacity-40">
+<svg class="stroke-slate-500 group-hover:stroke-primary" fill="none" height="40" viewbox="0 0 60 40" width="60">
+<circle cx="10" cy="30" fill="currentColor" r="2"></circle>
+<circle cx="30" cy="15" fill="currentColor" r="2"></circle>
+<circle cx="50" cy="30" fill="currentColor" r="2"></circle>
+<path d="M12 28L28 17M32 17L48 28" stroke-width="0.5"></path>
+</svg>
+</div>
+<span class="text-sm font-semibold text-[#e6e8ec] mb-1">Short scene</span>
+<span class="text-[11px] font-label text-slate-500 lowercase leading-tight">3 characters · 4 images · 2 videos</span>
+</button>
+<!-- Card 3 -->
+<button class="flex flex-col text-left h-[120px] bg-[#14161c] border border-outline-variant/10 rounded-xl p-4 transition-all hover:bg-[#1c1f27] relative overflow-hidden group">
+<div class="absolute top-0 right-0 p-3 opacity-20 group-hover:opacity-40">
+<svg class="stroke-slate-500 group-hover:stroke-primary" fill="none" height="40" viewbox="0 0 60 40" width="60">
+<circle cx="15" cy="20" fill="currentColor" r="2"></circle>
+<circle cx="45" cy="20" fill="currentColor" r="2"></circle>
+<path d="M17 20H43" stroke-width="0.5"></path>
+</svg>
+</div>
+<span class="text-sm font-semibold text-[#e6e8ec] mb-1">Title card</span>
+<span class="text-[11px] font-label text-slate-500 lowercase leading-tight">1 prompt · 1 image · 1 video</span>
+</button>
+</div>
+</main>
+<!-- Footer -->
+<footer class="fixed bottom-20 z-10 w-full flex justify-center">
+<div class="flex items-center gap-3 text-[11px] font-label text-slate-500 lowercase tracking-wider">
+<span>local-only</span>
+<span class="text-slate-700">·</span>
+<span>single-user</span>
+<span class="text-slate-700">·</span>
+<span>no cloud</span>
+<span class="text-slate-700">·</span>
+<span>no auth</span>
+<span class="text-slate-700">·</span>
+<a class="text-primary-container hover:text-primary transition-colors flex items-center gap-1 group" href="#">
+                docs <span class="group-hover:translate-x-0.5 transition-transform">→</span>
+</a>
+</div>
+</footer>
+<!-- Shared Component: TopAppBar (Integrated as Shell) -->
+<div class="fixed top-0 w-full flex justify-between items-center px-6 h-14 z-40 bg-[#0b0c10] border-b border-[#2a2e38]/20">
+<div class="flex items-center gap-6">
+<span class="text-xl font-medium text-white lowercase tracking-tighter font-headline">flowboard</span>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 rounded hover:bg-[#1a1b20] transition-colors text-[#7c5cff] scale-100 active:scale-95">
+<span class="material-symbols-outlined text-[20px]">sensors</span>
+</button>
+<button class="p-2 rounded hover:bg-[#1a1b20] transition-colors text-slate-500 scale-100 active:scale-95">
+<span class="material-symbols-outlined text-[20px]">extension_off</span>
+</button>
+</div>
+</div>
+<!-- Shared Component: Footer (Integrated as Shell) -->
+<div class="fixed bottom-0 w-full flex justify-between items-center px-6 h-10 z-40 bg-[#0b0c10] border-t border-[#2a2e38]/20">
+<span class="font-label uppercase text-[10px] tracking-[0.05em] text-slate-500">local-only · single-user · v0.1.0</span>
+<div class="flex gap-4">
+<a class="font-label uppercase text-[10px] tracking-[0.05em] text-slate-500 hover:text-white transition-colors" href="#">documentation</a>
+<a class="font-label uppercase text-[10px] tracking-[0.05em] text-slate-500 hover:text-white transition-colors" href="#">privacy</a>
+</div>
+</div>
+</body></html>

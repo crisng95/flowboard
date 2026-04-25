@@ -1,17 +1,45 @@
 {
   "manifest_version": 3,
   "name": "Flowboard Bridge",
-  "version": "0.0.1",
-  "description": "Bridges Flowboard agent to labs.google via authenticated browser context.",
-  "permissions": ["storage", "scripting", "tabs", "webRequest"],
-  "host_permissions": ["https://labs.google/*", "https://*.google.com/*"],
+  "version": "0.0.3",
+  "description": "Local bridge that proxies Flowboard agent requests to authenticated labs.google sessions.",
+  "permissions": ["storage", "alarms", "tabs", "webRequest", "scripting", "declarativeNetRequest"],
+  "host_permissions": [
+    "https://aisandbox-pa.googleapis.com/*",
+    "https://labs.google/*",
+    "http://127.0.0.1:8100/*",
+    "http://localhost:8100/*"
+  ],
   "background": {
-    "service_worker": "background.js",
-    "type": "module"
+    "service_worker": "background.js"
   },
   "action": {
     "default_title": "Flowboard Bridge",
     "default_popup": "popup.html"
   },
-  "icons": {}
+  "content_scripts": [
+    {
+      "matches": [
+        "https://labs.google/fx/tools/flow*",
+        "https://labs.google/fx/*/tools/flow*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["injected.js"],
+      "matches": ["https://labs.google/*"]
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "flowboard_rules",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  }
 }

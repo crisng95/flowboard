@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Flowboard — Workspace</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "primary": "#7c5cff",
+            "surface": "#0b0c10",
+            "surface-container-low": "#14161c",
+            "surface-container-high": "#1c1f27",
+            "surface-container-highest": "#232630",
+            "outline-variant": "#2a2e38",
+            "success": "#6ee7b7",
+            "warning": "#f5b301",
+            "error": "#ef4444",
+            "on-surface": "#e6e8ec",
+            "on-surface-muted": "#8a8f99"
+          },
+          fontFamily: {
+            headline: ["Inter", "sans-serif"],
+            display: ["Inter", "sans-serif"],
+            body: ["Inter", "sans-serif"],
+            label: ["Inter", "sans-serif"],
+            mono: ["JetBrains Mono", "monospace"]
+          }
+        },
+      },
+    }
+  </script>
+<style>
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+      font-size: 18px;
+    }
+    .dot-grid {
+      background-image: radial-gradient(circle, #2a2e38 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+    @keyframes pulse-ring {
+      0% { transform: scale(.33); opacity: 0; }
+      80%, 100% { opacity: 0; }
+    }
+    .status-pulse {
+      animation: pulse-ring 2s cubic-bezier(0.455, 0.03, 0.515, 0.955) infinite;
+    }
+    .running-bar-glow {
+      box-shadow: 0 0 12px rgba(124, 92, 255, 0.4);
+    }
+  </style>
+</head>
+<body class="bg-surface text-on-surface font-body selection:bg-primary/30 overflow-hidden h-screen w-screen flex flex-col">
+<!-- TopNavBar (Shared Component) -->
+<header class="bg-[#0b0c10] dark:bg-[#0b0c10] border-b border-[#2a2e38]/40 h-[48px] flex justify-between items-center w-full px-6 z-50">
+<div class="flex items-center gap-8">
+<div class="text-lg font-bold tracking-tighter text-[#e6e8ec]">Flowboard</div>
+<nav class="hidden md:flex gap-6 items-center">
+<a class="font-['Inter'] text-[13px] font-semibold tracking-tight text-[#7c5cff] transition-colors" href="#">Canvas</a>
+<a class="font-['Inter'] text-[13px] font-medium tracking-tight text-[#8a8f99] hover:text-[#e6e8ec] transition-colors" href="#">Library</a>
+<a class="font-['Inter'] text-[13px] font-medium tracking-tight text-[#8a8f99] hover:text-[#e6e8ec] transition-colors" href="#">Workflows</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="relative flex items-center bg-[#14161c] px-3 py-1 rounded border border-[#2a2e38]/40">
+<span class="material-symbols-outlined text-[#8a8f99] text-sm mr-2">search</span>
+<input class="bg-transparent border-none focus:ring-0 text-[12px] p-0 w-32 placeholder-[#8a8f99]" placeholder="Search..." type="text"/>
+</div>
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-[#8a8f99] hover:text-[#e6e8ec] cursor-pointer">settings</span>
+<span class="material-symbols-outlined text-[#8a8f99] hover:text-[#e6e8ec] cursor-pointer">notifications</span>
+<button class="bg-[#7c5cff] text-white text-[12px] font-semibold px-4 py-1.5 rounded active:opacity-80 transition-opacity">Deploy</button>
+</div>
+</div>
+</header>
+<main class="flex-1 flex overflow-hidden relative">
+<!-- Canvas Area -->
+<div class="flex-1 relative dot-grid overflow-hidden">
+<!-- Status Pill Top Left -->
+<div class="absolute top-4 left-4 z-10 flex items-center gap-2 bg-surface-container-low border border-outline-variant/40 px-3 py-1.5 rounded-full font-mono text-[11px] font-medium tracking-wider">
+<div class="flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></span>
+<span class="text-on-surface">AGENT</span>
+</div>
+<span class="text-outline-variant mx-1">·</span>
+<div class="flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></span>
+<span class="text-on-surface">EXTENSION</span>
+</div>
+<span class="text-outline-variant mx-1">·</span>
+<div class="flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></span>
+<span class="text-primary">RUN #012</span>
+</div>
+</div>
+<!-- Node Graph (Mockup) -->
+<div class="absolute inset-0 p-20 flex items-center justify-center gap-16">
+<!-- Node #lira (Done) -->
+<div class="w-[240px] bg-surface-container-low rounded-xl border border-outline-variant/40 relative">
+<div class="absolute left-0 top-3 bottom-3 w-[3px] bg-success/80 rounded-r"></div>
+<div class="p-3 flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-success">account_circle</span>
+<span class="text-[13px] font-semibold">character</span>
+</div>
+<span class="font-mono text-[11px] text-on-surface-muted">#lira</span>
+</div>
+<div class="px-3 pb-3">
+<div class="aspect-square bg-surface-container-high rounded-lg overflow-hidden flex items-center justify-center">
+<img class="w-full h-full object-cover opacity-80" data-alt="close-up portrait of a woman with ethereal features and soft dramatic lighting on a dark background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAezyZDkiLM5PZhxXCCRFYcNbZjG3XVlwyPnMvDObcCUQS0_LfvO16sFxZkZauqA8hpguICFBtf33zQ-GNxgJV5HHm1XEwPyPxlpmPdWw6vblQIQm_XG3eZJvsZCjY-LRbB6f-xO1OiA-MEh1u0uqJQYAdzYCVBoGd8kNCN6s6JmxUeu16-A4FAzsEVOvb3kfV0CjG0ekGEyANrJ6A1PjAX8CL4oQehkH5YzYLAKKfns7b8ijaSIRAIZmlqoV92v3lSfGrEzMaNeTM"/>
+</div>
+<div class="mt-2 text-[12px] text-on-surface-muted">Lira v2.1 (Base)</div>
+</div>
+<div class="absolute -right-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-surface-container-low border-2 border-outline-variant"></div>
+</div>
+<!-- Node #a2k9 (Running) -->
+<div class="w-[240px] bg-surface-container-high rounded-xl border border-primary/40 relative ring-1 ring-primary/20">
+<div class="absolute left-0 top-3 bottom-3 w-[3px] bg-primary animate-pulse rounded-r"></div>
+<div class="p-3 flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">image</span>
+<span class="text-[13px] font-semibold">image</span>
+</div>
+<span class="font-mono text-[11px] text-on-surface-muted">#a2k9</span>
+</div>
+<div class="px-3 pb-3">
+<div class="aspect-video bg-surface-container-low rounded-lg overflow-hidden flex items-center justify-center relative">
+<div class="absolute inset-0 bg-primary/10 animate-pulse"></div>
+<img class="w-full h-full object-cover blur-sm opacity-50" data-alt="abstract digital artwork with flowing violet and indigo shapes and soft grain texture" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDQft6_la7S0J4FI1cZ4gbvLx5T_avNVfVqxJCenJtkIOiJq5B3t7ZPBRFjiJYxlzU0QlMLcnxFzQTUOykrFLnq5ol5uuqKqQHrCHty4GR7qE5rLtyp7sLG03xLX8aA6jNwqKOlxtENMT1IzRo2vEGs_WZ3dNRgDwcMyN88KkEmRQqUrcvwkyrJ2cuLnVI8F7xAyNUc8wqbOTJXyvvM-IUOj2lXsn4c0iZ_ON5fILE9qiW8bHC9gqiaYq5MyLaxxHHdeSOMf1HfHN0"/>
+<div class="absolute bottom-2 right-2 text-[10px] font-mono bg-primary text-white px-1.5 py-0.5 rounded">52%</div>
+</div>
+<div class="mt-2 text-[12px] text-primary">Refining frames...</div>
+</div>
+<div class="absolute -left-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-primary border-2 border-surface"></div>
+<div class="absolute -right-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-surface-container-high border-2 border-outline-variant"></div>
+</div>
+<div class="flex flex-col gap-12">
+<!-- Node #7fx3 (Queued) -->
+<div class="w-[240px] bg-surface-container-low rounded-xl border border-outline-variant/40 relative">
+<div class="absolute left-0 top-3 bottom-3 w-[3px] bg-warning/60 rounded-r"></div>
+<div class="p-3 flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-warning/60">image</span>
+<span class="text-[13px] font-semibold">image</span>
+</div>
+<span class="font-mono text-[11px] text-on-surface-muted">#7fx3</span>
+</div>
+<div class="px-3 pb-3">
+<div class="h-20 bg-surface-container-high/40 border border-dashed border-outline-variant/60 rounded-lg flex items-center justify-center">
+<span class="text-on-surface-muted font-mono text-[10px]">QUEUED</span>
+</div>
+</div>
+<div class="absolute -left-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-surface-container-low border-2 border-outline-variant"></div>
+</div>
+<!-- Node #v9k2 (Waiting) -->
+<div class="w-[240px] bg-surface-container-low rounded-xl border border-outline-variant/40 relative opacity-60">
+<div class="absolute left-0 top-3 bottom-3 w-[3px] bg-transparent rounded-r"></div>
+<div class="p-3 flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined">play_circle</span>
+<span class="text-[13px] font-semibold">video</span>
+</div>
+<span class="font-mono text-[11px] text-on-surface-muted">#v9k2</span>
+</div>
+<div class="px-3 pb-3">
+<div class="aspect-video bg-surface-container-high rounded-lg flex items-center justify-center">
+<span class="material-symbols-outlined text-on-surface-muted/40 text-4xl">movie</span>
+</div>
+</div>
+<div class="absolute -left-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-surface-container-low border-2 border-outline-variant"></div>
+</div>
+</div>
+</div>
+<!-- Minimap -->
+<div class="absolute bottom-6 right-6 w-48 h-32 bg-surface-container-highest border border-outline-variant/60 rounded-lg p-2 overflow-hidden">
+<div class="relative w-full h-full opacity-40">
+<!-- Graph proxy -->
+<div class="absolute left-4 top-1/2 -translate-y-1/2 w-8 h-8 rounded-sm bg-success/40"></div>
+<div class="absolute left-16 top-1/2 -translate-y-1/2 w-8 h-8 rounded-sm bg-primary/60 animate-pulse"></div>
+<div class="absolute left-28 top-6 w-8 h-4 rounded-sm bg-warning/40"></div>
+<div class="absolute left-28 bottom-6 w-8 h-4 rounded-sm bg-on-surface-muted/20"></div>
+<svg class="absolute inset-0 w-full h-full pointer-events-none" fill="none" stroke="currentColor" stroke-width="1">
+<path class="stroke-on-surface-muted/20" d="M40 32 L64 32 M96 32 L112 16 M96 32 L112 48"></path>
+</svg>
+</div>
+<div class="absolute top-2 right-2 flex gap-1">
+<div class="w-2 h-2 rounded-full bg-outline-variant"></div>
+<div class="w-2 h-2 rounded-full bg-outline-variant"></div>
+</div>
+</div>
+<!-- Floating Pipeline Run Panel -->
+<div class="absolute bottom-6 left-1/2 -translate-x-1/2 w-[720px] h-[180px] bg-[#232630] rounded-xl border border-outline-variant/40 flex flex-col z-40 overflow-hidden">
+<!-- Header -->
+<div class="h-12 border-b border-outline-variant/40 flex items-center justify-between px-4">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary animate-spin">refresh</span>
+<div class="flex items-center gap-2">
+<span class="text-on-surface-muted text-[11px] font-mono tracking-wider">RUN #012 · PIPELINE</span>
+<div class="flex items-center gap-1.5 bg-primary/20 px-2 py-0.5 rounded-full">
+<span class="w-1 h-1 rounded-full bg-primary animate-pulse"></span>
+<span class="text-primary font-mono text-[9px] font-bold">RUNNING</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-on-surface-muted text-sm cursor-pointer hover:text-on-surface">chevron_left</span>
+<span class="font-mono text-[11px] text-on-surface-muted">2 OF 4</span>
+<span class="material-symbols-outlined text-on-surface-muted text-sm cursor-pointer hover:text-on-surface">chevron_right</span>
+</div>
+<div class="h-4 w-px bg-outline-variant"></div>
+<div class="flex gap-2">
+<button class="text-on-surface text-[11px] font-medium border border-outline-variant px-3 py-1 rounded hover:bg-surface-container-high transition-colors">Pause</button>
+<button class="bg-error/20 text-error text-[11px] font-medium border border-error/40 px-3 py-1 rounded hover:bg-error/30 transition-colors">Cancel</button>
+</div>
+</div>
+</div>
+<!-- Timeline -->
+<div class="flex-1 px-8 flex items-center justify-between relative">
+<!-- Connectors -->
+<div class="absolute top-1/2 left-20 right-20 h-px bg-outline-variant"></div>
+<div class="absolute top-1/2 left-20 w-[45%] h-px bg-primary"></div>
+<!-- Step 1 Done -->
+<div class="relative z-10 flex flex-col items-center gap-2">
+<div class="w-4 h-4 rounded-full bg-success flex items-center justify-center">
+<span class="material-symbols-outlined text-[10px] text-surface font-bold">check</span>
+</div>
+<div class="flex flex-col items-center">
+<span class="font-mono text-[9px] text-on-surface-muted">#lira</span>
+<span class="text-[11px] font-medium text-success">Finished</span>
+</div>
+</div>
+<!-- Step 2 Running -->
+<div class="relative z-10 flex flex-col items-center gap-2">
+<div class="w-6 h-6 rounded-full bg-primary flex items-center justify-center running-bar-glow">
+<div class="w-2 h-2 rounded-full bg-white animate-pulse"></div>
+</div>
+<div class="flex flex-col items-center">
+<span class="font-mono text-[9px] text-on-surface-muted">#a2k9</span>
+<span class="text-[11px] font-bold text-primary">In Progress</span>
+</div>
+<div class="absolute top-[32px] w-24 h-1 bg-surface-container-low rounded-full overflow-hidden">
+<div class="bg-primary h-full w-[52%] running-bar-glow"></div>
+</div>
+</div>
+<!-- Step 3 Queued -->
+<div class="relative z-10 flex flex-col items-center gap-2">
+<div class="w-4 h-4 rounded-full bg-warning/40 border-2 border-warning/60"></div>
+<div class="flex flex-col items-center">
+<span class="font-mono text-[9px] text-on-surface-muted">#7fx3</span>
+<span class="text-[11px] font-medium text-on-surface-muted">Queued</span>
+</div>
+</div>
+<!-- Step 4 Waiting -->
+<div class="relative z-10 flex flex-col items-center gap-2">
+<div class="w-4 h-4 rounded-full bg-outline-variant"></div>
+<div class="flex flex-col items-center">
+<span class="font-mono text-[9px] text-on-surface-muted">#v9k2</span>
+<span class="text-[11px] font-medium text-on-surface-muted">Pending</span>
+</div>
+</div>
+</div>
+<!-- Live Log -->
+<div class="h-10 bg-surface px-4 flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></span>
+<span class="text-success font-mono text-[9px] font-bold">LIVE</span>
+</div>
+<div class="font-mono text-[10px] text-on-surface-muted truncate max-w-[480px]">
+<span class="text-on-surface-muted/60">14:22:07 ·</span> POST labs.google.com/mlib/... · rendering frame 24/48 · steps 12/24
+            </div>
+</div>
+<a class="text-primary text-[10px] font-bold hover:underline" href="#">View logs →</a>
+</div>
+</div>
+</div>
+<!-- SideNavBar (Shared Component Identity) / Right Sidebar -->
+<aside class="bg-[#14161c] dark:bg-[#14161c] border-l border-[#2a2e38]/40 w-[320px] flex flex-col h-full z-50">
+<!-- Sidebar Header -->
+<div class="p-4 border-b border-outline-variant/40 space-y-3">
+<div class="flex items-center justify-between">
+<span class="font-['Inter'] uppercase tracking-[0.04em] text-[11px] font-semibold text-on-surface">CHAT · SCENE 01</span>
+<div class="flex items-center gap-1.5 bg-primary/10 px-2 py-0.5 rounded border border-primary/20">
+<span class="w-1 h-1 rounded-full bg-primary animate-pulse"></span>
+<span class="text-primary font-mono text-[8px] font-bold">PIPELINE RUNNING</span>
+</div>
+</div>
+<div class="text-[10px] text-on-surface-muted font-mono">Active Session: #wf_8291</div>
+</div>
+<!-- Chat Feed -->
+<div class="flex-1 overflow-y-auto p-4 space-y-4">
+<!-- User Bubble -->
+<div class="flex flex-col items-end gap-1.5">
+<div class="bg-surface-container-highest px-3 py-2 rounded-xl rounded-tr-none text-[13px] text-on-surface max-w-[85%] border border-outline-variant/20">
+            Approve and begin full pipeline execution for scene 01.
+          </div>
+<span class="text-[10px] text-on-surface-muted font-mono">14:18</span>
+</div>
+<!-- Assistant Message -->
+<div class="flex flex-col items-start gap-3">
+<div class="flex items-center gap-2">
+<div class="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center">
+<span class="material-symbols-outlined text-primary text-[14px]">bolt</span>
+</div>
+<span class="text-[11px] font-bold text-on-surface">Flow Agent</span>
+</div>
+<div class="bg-surface-container-low px-3 py-2 rounded-xl rounded-tl-none text-[13px] text-on-surface-muted leading-relaxed">
+            Running 4-step pipeline for <span class="text-primary font-mono">#scene_01</span>. Analyzing reference nodes and synthesizing video sequences.
+          </div>
+<!-- Pipeline Status Chips -->
+<div class="w-full space-y-2 pt-2">
+<div class="flex items-center justify-between p-2 rounded bg-surface border border-outline-variant/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-success text-sm">check_circle</span>
+<span class="font-mono text-[11px] text-on-surface">#lira</span>
+</div>
+<span class="text-success text-[10px] font-bold">DONE</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded bg-primary/5 border border-primary/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-sm animate-spin">refresh</span>
+<span class="font-mono text-[11px] text-on-surface">#a2k9</span>
+</div>
+<span class="text-primary text-[10px] font-bold">52%</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded bg-surface/50 border border-outline-variant/10 opacity-60">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-warning text-sm">hourglass_empty</span>
+<span class="font-mono text-[11px] text-on-surface-muted">#7fx3</span>
+</div>
+<span class="text-on-surface-muted text-[10px] font-bold">QUEUED</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded bg-surface/30 border border-outline-variant/5 opacity-40">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-sm">pending</span>
+<span class="font-mono text-[11px] text-on-surface-muted">#v9k2</span>
+</div>
+<span class="text-on-surface-muted text-[10px] font-bold">WAITING</span>
+</div>
+</div>
+<!-- Milestones -->
+<div class="w-full pt-2 border-t border-outline-variant/20 space-y-1.5">
+<div class="flex items-center gap-2 text-[11px] text-success">
+<span class="material-symbols-outlined text-[12px]">done_all</span>
+<span>#lira character embeddings prepared</span>
+</div>
+<div class="flex items-center gap-2 text-[11px] text-on-surface-muted">
+<span class="material-symbols-outlined text-[12px] animate-pulse">sync</span>
+<span>#a2k9 rendering keyframes...</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Chat Composer (Disabled State) -->
+<div class="p-4 border-t border-outline-variant/40 bg-surface-container-low/50">
+<div class="relative bg-surface-container-highest/40 rounded-lg border border-outline-variant/40 px-3 py-2 cursor-not-allowed opacity-60">
+<span class="text-on-surface-muted text-[12px]">Agent is processing pipeline...</span>
+<div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-2">
+<span class="material-symbols-outlined text-on-surface-muted/40">mic</span>
+<span class="material-symbols-outlined text-on-surface-muted/40">send</span>
+</div>
+</div>
+</div>
+</aside>
+</main>
+<!-- BottomNavBar (Execution Controls) -->
+<footer class="fixed bottom-6 left-1/2 -translate-x-1/2 rounded-full px-6 py-2 w-auto min-w-[300px] bg-[#1c1f27] border border-[#7c5cff]/40 shadow-2xl shadow-[#7c5cff]/10 flex items-center justify-between gap-8 z-50">
+<div class="flex items-center gap-2 text-[#7c5cff] animate-pulse">
+<span class="material-symbols-outlined">play_arrow</span>
+<span class="font-mono text-[11px]">Executing...</span>
+</div>
+<div class="flex items-center gap-2 text-[#8a8f99] hover:text-[#e6e8ec] transition-colors cursor-pointer active:scale-95 transition-transform">
+<span class="material-symbols-outlined">pause</span>
+<span class="font-mono text-[11px]">Pause</span>
+</div>
+<div class="flex items-center gap-2 text-[#8a8f99] hover:text-[#ef4444] transition-colors cursor-pointer active:scale-95 transition-transform">
+<span class="material-symbols-outlined">stop</span>
+<span class="font-mono text-[11px]">Stop</span>
+</div>
+</footer>
+</body></html>

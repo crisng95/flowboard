@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              primary: "#7c5cff",
+              surface: "#0b0c10",
+              "surface-container-low": "#14161c",
+              "surface-container-high": "#1c1f27",
+              "surface-container-highest": "#232630",
+              "outline-variant": "#2a2e38",
+              on: "#e6e8ec",
+              muted: "#8a8f99",
+              success: "#6ee7b7",
+              warning: "#f5b301",
+              error: "#ef4444",
+            },
+            borderRadius: {
+              DEFAULT: "0.25rem",
+              lg: "0.5rem",
+              xl: "0.75rem",
+              full: "9999px"
+            },
+            fontFamily: {
+              headline: ["Inter", "sans-serif"],
+              display: ["Inter", "sans-serif"],
+              body: ["Inter", "sans-serif"],
+              label: ["Inter", "sans-serif"],
+              mono: ["JetBrains Mono", "monospace"]
+            }
+          }
+        }
+      }
+    </script>
+<style>
+      body { background-color: #0b0c10; font-family: 'Inter', sans-serif; color: #e6e8ec; }
+      .canvas-dot-grid {
+        background-image: radial-gradient(#2a2e38 1px, transparent 1px);
+        background-size: 24px 24px;
+        opacity: 0.6;
+      }
+      .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+        font-size: 18px;
+      }
+      .caret-pulse {
+        animation: pulse-opacity 1s infinite step-start;
+      }
+      @keyframes pulse-opacity {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0; }
+      }
+    </style>
+</head>
+<body class="overflow-hidden antialiased">
+<!-- TopNavBar -->
+<header class="fixed top-0 left-0 w-full h-12 flex items-center justify-between px-4 z-50 bg-[#14161c] dark:bg-[#14161c] border-b border-[#2a2e38]/40">
+<div class="flex items-center gap-6">
+<span class="text-[15px] font-bold tracking-tighter text-[#e6e8ec]">Flowboard</span>
+<nav class="flex items-center gap-4">
+<span class="font-sans text-[13px] font-semibold tracking-[-0.01em] uppercase text-[#7c5cff]">Canvas</span>
+<span class="font-sans text-[13px] font-semibold tracking-[-0.01em] uppercase text-[#8a8f99] hover:text-[#e6e8ec] transition-colors cursor-pointer">Workflows</span>
+<span class="font-sans text-[13px] font-semibold tracking-[-0.01em] uppercase text-[#8a8f99] hover:text-[#e6e8ec] transition-colors cursor-pointer">Datasets</span>
+</nav>
+</div>
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-[#8a8f99] hover:text-[#e6e8ec] cursor-pointer">add_box</span>
+<span class="material-symbols-outlined text-[#8a8f99] hover:text-[#e6e8ec] cursor-pointer">settings</span>
+<span class="material-symbols-outlined text-[#8a8f99] hover:text-[#e6e8ec] cursor-pointer">account_circle</span>
+</div>
+</header>
+<!-- Sidebar (Right) -->
+<aside class="fixed right-0 top-12 w-80 h-[calc(100vh-48px)] flex flex-col z-40 bg-[#14161c] dark:bg-[#14161c] border-l border-[#2a2e38]/40 blur-[2px]">
+<div class="p-4 border-b border-[#2a2e38]/40">
+<div class="font-mono text-[11px] uppercase tracking-[0.04em] text-[#7c5cff]">PIPELINE CONSOLE</div>
+<div class="text-[10px] text-[#8a8f99] mt-0.5">v1.0.4-stable</div>
+</div>
+<div class="flex-1 overflow-y-auto p-4 space-y-6">
+<div class="space-y-3">
+<div class="flex items-center justify-between text-[11px] uppercase tracking-wider text-[#8a8f99] font-semibold">
+<span>Logs</span>
+<span class="material-symbols-outlined !text-[14px]">terminal</span>
+</div>
+<div class="font-mono text-[11px] space-y-1 opacity-50">
+<div class="text-success">[09:41:22] Agent connected</div>
+<div class="text-muted">[09:41:25] Fetching schema...</div>
+<div class="text-muted">[09:42:01] Listening for triggers</div>
+</div>
+</div>
+</div>
+<div class="flex flex-col border-t border-[#2a2e38]/40">
+<div class="flex items-center gap-3 px-4 h-12 text-[#7c5cff] border-r-2 border-[#7c5cff] bg-[#1c1f27] cursor-pointer">
+<span class="material-symbols-outlined">schema</span>
+<span class="font-mono text-[11px] uppercase tracking-[0.04em]">Nodes</span>
+</div>
+<div class="flex items-center gap-3 px-4 h-12 text-[#8a8f99] hover:bg-[#1c1f27] hover:text-[#e6e8ec] cursor-pointer transition-all duration-150 ease-in-out">
+<span class="material-symbols-outlined">terminal</span>
+<span class="font-mono text-[11px] uppercase tracking-[0.04em]">Console</span>
+</div>
+<div class="flex items-center gap-3 px-4 h-12 text-[#8a8f99] hover:bg-[#1c1f27] hover:text-[#e6e8ec] cursor-pointer transition-all duration-150 ease-in-out">
+<span class="material-symbols-outlined">folder_open</span>
+<span class="font-mono text-[11px] uppercase tracking-[0.04em]">Assets</span>
+</div>
+<div class="flex items-center gap-3 px-4 h-12 text-[#8a8f99] hover:bg-[#1c1f27] hover:text-[#e6e8ec] cursor-pointer transition-all duration-150 ease-in-out">
+<span class="material-symbols-outlined">tune</span>
+<span class="font-mono text-[11px] uppercase tracking-[0.04em]">Settings</span>
+</div>
+</div>
+</aside>
+<!-- Canvas Workspace -->
+<main class="fixed inset-0 top-12 right-80 canvas-dot-grid blur-[2px] opacity-40">
+<!-- Node Card 1 (Image) -->
+<div class="absolute left-20 top-20 w-[240px] bg-surface-container-low rounded-xl overflow-hidden border border-outline-variant/40">
+<div class="h-[3px] bg-success/80"></div>
+<div class="px-3 py-2 flex items-center justify-between border-b border-outline-variant/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined !text-[14px]">grid_view</span>
+<span class="text-[13px] font-semibold text-on">image</span>
+</div>
+<span class="font-mono text-[11px] text-muted">#28f1</span>
+</div>
+<div class="p-3">
+<div class="aspect-square bg-surface-container-high rounded-lg overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="abstract digital render with flowing purple and blue curves in high contrast lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCrfYOSJm9V79s0omsLUVt_Q90TnNiMWtuiQ0BO6IcloIkY3km0860DHlZDV7cq_4p2dT7RzWni-z8sMtb4jzmg9oMm_uRcANUlqcsrwNnwqDEKljBr7Pbexfn1ZNENg4JHn27Kq4V44VdthFM-mfE55U53zchZ6D6rrMrQvigMSvC4vtmjBOfzq8nf-UoOJ_zhCx4k1A9cxpUqRXZzrrWqR4cm1Zdgqi1gWSH4c1dm9TVzII68uilVnzn32G8PWXxV6m3VSAslkL0"/>
+</div>
+</div>
+</div>
+<!-- Node Card 2 (Prompt) -->
+<div class="absolute left-[300px] top-[140px] w-[240px] bg-surface-container-low rounded-xl overflow-hidden border border-outline-variant/40">
+<div class="h-[3px] bg-primary/60"></div>
+<div class="px-3 py-2 flex items-center justify-between border-b border-outline-variant/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined !text-[14px]">auto_awesome</span>
+<span class="text-[13px] font-semibold text-on">prompt</span>
+</div>
+<span class="font-mono text-[11px] text-muted">#92a4</span>
+</div>
+<div class="p-3">
+<p class="font-mono text-[11px] text-muted leading-relaxed">
+<span class="text-primary">/imagine</span> futuristic cityscape, neon lights, cinematic lighting, 8k --v 6
+                </p>
+</div>
+</div>
+<!-- Node Card 3 (Character) -->
+<div class="absolute left-[80px] top-[400px] w-[240px] bg-surface-container-low rounded-xl overflow-hidden border border-outline-variant/40">
+<div class="h-[3px] bg-transparent"></div>
+<div class="px-3 py-2 flex items-center justify-between border-b border-outline-variant/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined !text-[14px]">person</span>
+<span class="text-[13px] font-semibold text-on">character</span>
+</div>
+<span class="font-mono text-[11px] text-muted">#11b5</span>
+</div>
+<div class="p-3 flex items-center gap-3">
+<div class="w-10 h-10 rounded-full overflow-hidden bg-surface-container-high">
+<img class="w-full h-full object-cover" data-alt="close-up portrait of a man with focused expression in studio lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuADUQ4peISU78YcItOHZc5B2bxBn9FwBqG1cxdTM62fFpG4pg6Aa5I_rHWDOoHWFF8qemXD8ddkzaCLC5Vds12c8VYSzgu5CwhHafSnlS5OMTObdIC7bEBj1djC5wP8pux8RQlHxKwPfLCNVaI4kuLOZrMsjWYep3CeS7E_BAjKBAl3cSzuSio8ONbxGBNSJNtsAeSX8ru5wE8CLmqPFm63q4I4deplGb4BaUIy6QHaqCI7RvNI0mJskXi4muSUI1ptQ5MdSPi-J_I"/>
+</div>
+<span class="text-[13px] text-on">Arthur_C</span>
+</div>
+</div>
+<!-- Zoom Controls -->
+<div class="absolute bottom-6 left-6 flex items-center gap-1 bg-surface-container-low p-1 rounded-lg border border-outline-variant/40">
+<button class="p-1 hover:bg-surface-container-high rounded"><span class="material-symbols-outlined !text-[16px]">remove</span></button>
+<span class="text-[11px] font-mono w-10 text-center">85%</span>
+<button class="p-1 hover:bg-surface-container-high rounded"><span class="material-symbols-outlined !text-[16px]">add</span></button>
+</div>
+</main>
+<!-- Command Palette Overlay Backdrop -->
+<div class="fixed inset-0 z-[60] bg-[#0b0c10]/55 backdrop-blur-[12px] flex flex-col items-center">
+<!-- Cmd K Pill Badge Above -->
+<div class="mt-[22%] mb-4 px-2 py-1 bg-surface-container-highest/80 border border-outline-variant/20 rounded-md">
+<span class="font-mono text-[10px] text-primary uppercase tracking-widest">Cmd K</span>
+</div>
+<!-- Palette Container -->
+<div class="w-[520px] bg-[#232630] rounded-xl border border-outline-variant/20 flex flex-col overflow-hidden">
+<!-- Search Row -->
+<div class="h-14 flex items-center px-4 gap-3 border-b border-outline-variant/20">
+<span class="material-symbols-outlined text-muted !text-[16px]">search</span>
+<div class="flex-1 flex items-center text-[14px]">
+<span class="text-on">ima</span>
+<span class="w-[2px] h-[18px] bg-primary caret-pulse ml-0.5"></span>
+</div>
+<div class="px-1.5 py-0.5 bg-surface-container-high border border-outline-variant/40 rounded text-[10px] font-mono text-muted">esc</div>
+</div>
+<!-- Result List -->
+<div class="flex flex-col py-2 relative">
+<!-- Row: Image (Focused) -->
+<div class="h-[44px] px-4 flex items-center gap-3 bg-[#1c1f27] relative group cursor-pointer">
+<div class="absolute left-0 top-0 bottom-0 w-[2px] bg-primary"></div>
+<div class="w-7 h-7 flex items-center justify-center rounded bg-primary/10 text-primary">
+<span class="material-symbols-outlined !text-[18px]" style="font-variation-settings: 'FILL' 1;">grid_view</span>
+</div>
+<div class="flex items-center gap-2 text-[13px]">
+<span class="text-on font-semibold">image</span>
+<span class="text-muted">—</span>
+<span class="text-on">Adds an image node for reference or generation</span>
+</div>
+<!-- Tooltip Ghost -->
+<div class="absolute left-[105%] top-1/2 -translate-y-1/2 bg-[#1c1f27] border border-outline-variant/40 px-3 py-2 rounded-lg whitespace-nowrap shadow-2xl pointer-events-none">
+<div class="text-[11px] text-muted flex items-center gap-2">
+<span>Adds an image node at cursor</span>
+<span class="w-1 h-1 rounded-full bg-outline-variant"></span>
+<span><span class="font-mono text-on">⌘</span>-drop to insert referenced</span>
+</div>
+</div>
+</div>
+<!-- Row: Character -->
+<div class="h-[44px] px-4 flex items-center gap-3 hover:bg-surface-container-high transition-colors group cursor-pointer">
+<div class="w-7 h-7 flex items-center justify-center rounded bg-amber-500/10 text-amber-500/80">
+<span class="material-symbols-outlined !text-[18px]">person</span>
+</div>
+<div class="flex items-center gap-2 text-[13px]">
+<span class="text-muted">character</span>
+<span class="text-muted">—</span>
+<span class="text-muted group-hover:text-on transition-colors">Consistency anchor for character synthesis</span>
+</div>
+</div>
+<!-- Row: Video -->
+<div class="h-[44px] px-4 flex items-center gap-3 hover:bg-surface-container-high transition-colors group cursor-pointer">
+<div class="w-7 h-7 flex items-center justify-center rounded bg-blue-500/10 text-blue-500/80">
+<span class="material-symbols-outlined !text-[18px]">play_circle</span>
+</div>
+<div class="flex items-center gap-2 text-[13px]">
+<span class="text-muted">video</span>
+<span class="text-muted">—</span>
+<span class="text-muted group-hover:text-on transition-colors">Temporal synthesis and animation sequences</span>
+</div>
+</div>
+<!-- Row: Prompt -->
+<div class="h-[44px] px-4 flex items-center gap-3 hover:bg-surface-container-high transition-colors group cursor-pointer">
+<div class="w-7 h-7 flex items-center justify-center rounded bg-primary/10 text-primary/80">
+<span class="material-symbols-outlined !text-[18px]">auto_awesome</span>
+</div>
+<div class="flex items-center gap-2 text-[13px]">
+<span class="text-muted">prompt</span>
+<span class="text-muted">—</span>
+<span class="text-muted group-hover:text-on transition-colors">LLM-powered instructions for agents</span>
+</div>
+</div>
+<!-- Row: Note -->
+<div class="h-[44px] px-4 flex items-center gap-3 hover:bg-surface-container-high transition-colors group cursor-pointer">
+<div class="w-7 h-7 flex items-center justify-center rounded bg-outline-variant/40 text-muted">
+<span class="material-symbols-outlined !text-[18px]">edit_note</span>
+</div>
+<div class="flex items-center gap-2 text-[13px]">
+<span class="text-muted">note</span>
+<span class="text-muted">—</span>
+<span class="text-muted group-hover:text-on transition-colors">Markdown workspace for pipeline docs</span>
+</div>
+</div>
+</div>
+<!-- Footer -->
+<div class="h-9 flex items-center justify-between px-4 bg-[#1e2028] border-t border-outline-variant/20">
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-1.5">
+<span class="text-[10px] font-mono text-muted">↑↓</span>
+<span class="text-[10px] text-muted">navigate</span>
+</div>
+<div class="flex items-center gap-1.5">
+<span class="text-[10px] font-mono text-muted">↵</span>
+<span class="text-[10px] text-muted">add</span>
+</div>
+<div class="flex items-center gap-1.5">
+<span class="text-[10px] font-mono text-muted">⌘K</span>
+<span class="text-[10px] text-muted">toggle</span>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<span class="text-[10px] uppercase tracking-wider text-muted font-bold">Recents</span>
+<div class="flex items-center gap-1">
+<div class="flex items-center gap-1 px-1.5 py-0.5 bg-surface-container-low rounded border border-outline-variant/40">
+<span class="material-symbols-outlined !text-[10px] text-muted">grid_view</span>
+<span class="text-[9px] text-muted font-medium">image</span>
+</div>
+<div class="flex items-center gap-1 px-1.5 py-0.5 bg-surface-container-low rounded border border-outline-variant/40">
+<span class="material-symbols-outlined !text-[10px] text-muted">person</span>
+<span class="text-[9px] text-muted font-medium">character</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Primary-Purple Anchor Line Below -->
+<div class="mt-6 w-10 h-0.5 bg-primary opacity-30 rounded-full"></div>
+</div>
+</body></html>

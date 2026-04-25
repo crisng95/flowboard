@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Flowboard — AI Workspace</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        'surface': '#0b0c10',
+                        'surface-container-low': '#14161c',
+                        'surface-container-high': '#1c1f27',
+                        'surface-container-highest': '#232630',
+                        'outline-variant': '#2a2e38',
+                        'primary': '#7c5cff',
+                        'on-primary': '#ffffff',
+                        'success': '#6ee7b7',
+                        'warning': '#f5b301',
+                        'error': '#ef4444',
+                        'muted': '#8a8f99',
+                        'text-main': '#e6e8ec'
+                    },
+                    fontFamily: {
+                        'sans': ['Inter', 'sans-serif'],
+                        'mono': ['JetBrains Mono', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+            font-size: 18px;
+        }
+        .dot-grid {
+            background-image: radial-gradient(#2a2e38 1px, transparent 1px);
+            background-size: 24px 24px;
+            opacity: 0.6;
+        }
+        .node-handle {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #14161c;
+            border: 1px solid #3c414d;
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        .pulse-running {
+            background: linear-gradient(180deg, #7c5cff 0%, #a78bfa 50%, #7c5cff 100%);
+            background-size: 100% 200%;
+        }
+        .bezier-path {
+            stroke: #3c414d;
+            stroke-width: 1.5;
+            fill: none;
+        }
+    </style>
+</head>
+<body class="bg-surface text-text-main font-sans overflow-hidden h-screen flex flex-col">
+<!-- (1) TopNavBar (From Shared Components JSON Mapping) -->
+<header class="bg-[#14161c] dark:bg-[#14161c] flex justify-between items-center w-full px-4 h-12 border-b border-[#2a2e38]/40 z-50">
+<div class="flex items-center gap-4">
+<span class="text-[13px] font-bold tracking-tight text-[#e6e8ec]">flowboard</span>
+<div class="h-4 w-px bg-outline-variant/40"></div>
+<div class="flex items-center gap-2">
+<span class="font-['Inter'] text-[13px] font-semibold tracking-[-0.01em] text-[#e6e8ec]">Scene 01</span>
+<span class="material-symbols-outlined text-muted text-sm" style="font-size: 14px;">edit</span>
+</div>
+</div>
+<!-- Trailing Icons -->
+<div class="flex items-center gap-3">
+<button class="w-8 h-8 flex items-center justify-center rounded hover:bg-[#1c1f27] hover:text-[#e6e8ec] text-[#8a8f99] transition-colors duration-150">
+<span class="material-symbols-outlined">undo</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center rounded hover:bg-[#1c1f27] hover:text-[#e6e8ec] text-[#8a8f99] transition-colors duration-150">
+<span class="material-symbols-outlined">redo</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center rounded hover:bg-[#1c1f27] hover:text-[#e6e8ec] text-[#8a8f99] transition-colors duration-150">
+<span class="material-symbols-outlined">fullscreen_exit</span>
+</button>
+<button class="px-3 h-8 flex items-center gap-2 rounded bg-primary/10 text-primary hover:bg-primary/20 transition-colors duration-150">
+<span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
+<span class="font-['Inter'] text-[11px] font-bold uppercase tracking-[0.04em]">Run Pipeline</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center rounded hover:bg-[#1c1f27] hover:text-[#e6e8ec] text-[#8a8f99] transition-colors duration-150">
+<span class="material-symbols-outlined">settings</span>
+</button>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden relative">
+<!-- (2) Center Canvas Zone -->
+<main class="flex-1 relative overflow-hidden bg-surface">
+<div class="absolute inset-0 dot-grid pointer-events-none"></div>
+<!-- Floating Top-Left Status -->
+<div class="absolute top-3 left-3 flex items-center gap-2 bg-surface-container-low px-2 py-1 rounded border border-outline-variant/20 z-10">
+<div class="flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-success"></span>
+<span class="font-mono text-[11px] font-medium text-muted uppercase tracking-wider">agent</span>
+</div>
+<div class="w-px h-3 bg-outline-variant/40"></div>
+<div class="flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-success"></span>
+<span class="font-mono text-[11px] font-medium text-muted uppercase tracking-wider">extension</span>
+</div>
+</div>
+<!-- Floating Add-Node Chip Bar -->
+<div class="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-surface-container-highest px-2 py-1.5 rounded-full shadow-2xl z-10">
+<span class="material-symbols-outlined text-muted px-1" style="font-size: 16px;">add</span>
+<div class="flex items-center gap-1">
+<button class="flex items-center gap-2 px-3 py-1 rounded-full hover:bg-surface-container-high text-muted text-[11px] font-medium uppercase transition-colors">
+<span class="material-symbols-outlined" style="font-size: 14px;">person</span> character
+                    </button>
+<button class="flex items-center gap-2 px-3 py-1 rounded-full hover:bg-surface-container-high text-muted text-[11px] font-medium uppercase transition-colors">
+<span class="material-symbols-outlined" style="font-size: 14px;">image</span> image
+                    </button>
+<button class="flex items-center gap-2 px-3 py-1 rounded-full hover:bg-surface-container-high text-muted text-[11px] font-medium uppercase transition-colors">
+<span class="material-symbols-outlined" style="font-size: 14px;">movie</span> video
+                    </button>
+<button class="flex items-center gap-2 px-3 py-1 rounded-full hover:bg-surface-container-high text-muted text-[11px] font-medium uppercase transition-colors">
+<span class="material-symbols-outlined" style="font-size: 14px;">auto_awesome</span> prompt
+                    </button>
+<button class="flex items-center gap-2 px-3 py-1 rounded-full hover:bg-surface-container-high text-muted text-[11px] font-medium uppercase transition-colors">
+<span class="material-symbols-outlined" style="font-size: 14px;">edit_note</span> note
+                    </button>
+</div>
+</div>
+<!-- SVG Connections Layer -->
+<svg class="absolute inset-0 pointer-events-none w-full h-full">
+<!-- Character to Image 01 -->
+<path class="bezier-path" d="M320 250 C 380 250, 360 160, 420 160"></path>
+<!-- Character to Image 02 -->
+<path class="bezier-path" d="M320 250 C 380 250, 360 380, 420 380"></path>
+<!-- Image 01 to Prompt -->
+<path class="bezier-path" d="M660 160 C 720 160, 700 270, 760 270"></path>
+<!-- Prompt to Video -->
+<path class="bezier-path" d="M1000 270 C 1060 270, 1040 270, 1100 270"></path>
+</svg>
+<!-- Node Graphs -->
+<div class="relative w-full h-full p-20 flex items-center overflow-auto">
+<!-- Node 1: Character (#lira) -->
+<div class="absolute left-80 top-1/2 -translate-y-1/2 w-[240px] bg-surface-container-low rounded-xl flex overflow-hidden">
+<div class="w-1 bg-success shrink-0"></div>
+<div class="flex-1 p-3">
+<div class="flex items-center justify-between mb-3">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-muted" style="font-size: 14px;">trip_origin</span>
+<span class="text-[13px] font-semibold text-text-main">Lira</span>
+</div>
+<span class="font-mono text-[11px] text-muted">#lira</span>
+</div>
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full overflow-hidden bg-surface-container-high border border-outline-variant/40">
+<img alt="Character Portrait" data-alt="minimalist stylized avatar of a female elf character with silver hair and pointed ears on dark background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCLB871wdwxltYyD3klx6cFXo9tbl1_feG94rt81MPtvgi4WjSsHVFgPtAd_U6EbQoKOuV1CvCHKnvSbwMGxMWgUZbjoNY4tNndRSlOJKFPsy-xmaR0QvoTOjArN8t6BoIiAbYqFToyx4YyN2QwKr_ssLL6K5mYx6SkF_IyEQruhfHb4gojanYeYOJBHnv0XgTe4w_Mf93FxR7UlN79azCcqqikEJMfJPLrH2bZDitMhE9jfYzcv65nQiQ5gLkUYI3qcgcUu7LPKpE"/>
+</div>
+<div>
+<p class="text-[13px] text-text-main">Lira — elf scout</p>
+<span class="text-[11px] text-success uppercase font-medium tracking-wide">Done</span>
+</div>
+</div>
+</div>
+<div class="node-handle -right-1"></div>
+</div>
+<!-- Node 2: Image Top (#a2k9) -->
+<div class="absolute left-[420px] top-[160px] w-[240px] bg-surface-container-low rounded-xl flex overflow-hidden">
+<div class="node-handle -left-1"></div>
+<div class="w-1 bg-success shrink-0"></div>
+<div class="flex-1 p-3">
+<div class="flex items-center justify-between mb-2">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-muted" style="font-size: 14px;">grid_view</span>
+<span class="text-[13px] font-semibold text-text-main">Sprint shot 01</span>
+</div>
+<span class="font-mono text-[11px] text-muted">#a2k9</span>
+</div>
+<div class="aspect-video w-full rounded-lg bg-surface-container-high overflow-hidden border border-outline-variant/40 mb-2">
+<img class="w-full h-full object-cover opacity-80" data-alt="dramatic cinematic action shot of a hooded character running through a mystical forest at dusk, cool tones" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDwkrR70YMyn57d5XF78I1RNH8_8gFSQDVOSakH1NuYkJtUmQnLMfvPlmQKBaubN9Khcx8wYMgdXCIup9-lLTpjfLfTAVD3KA8isT0wBohI1Vj2CPOfR0F-yinghacyFnvNR9Kny_o_qJUyaUs8_7c88MhVkQMJkYU-4ZMZTdLogd9m6aImsgoby86Y_XtQZuT1PnMRJBlsyNx0G7dyfv5cGe4c1BCoJACPNzTs3Fp4iPI6KBD9NE9mrfA0O2FgzqxM0vNTo9zBEqY"/>
+</div>
+<span class="text-[11px] text-success uppercase font-medium tracking-wide">Done</span>
+</div>
+<div class="node-handle -right-1"></div>
+</div>
+<!-- Node 3: Image Bottom (#7fx3) -->
+<div class="absolute left-[420px] top-[380px] w-[240px] bg-surface-container-low rounded-xl flex overflow-hidden">
+<div class="node-handle -left-1"></div>
+<div class="w-1 bg-warning/60 shrink-0"></div>
+<div class="flex-1 p-3">
+<div class="flex items-center justify-between mb-2">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-muted" style="font-size: 14px;">grid_view</span>
+<span class="text-[13px] font-semibold text-text-main">Sprint shot 02</span>
+</div>
+<span class="font-mono text-[11px] text-muted">#7fx3</span>
+</div>
+<div class="aspect-video w-full rounded-lg bg-surface-container-high flex flex-col items-center justify-center border border-dashed border-outline-variant/60 mb-2">
+<span class="material-symbols-outlined text-muted/40 mb-1">hourglass_top</span>
+</div>
+<p class="text-[13px] text-muted">Waiting · 2 in queue</p>
+</div>
+</div>
+<!-- Node 4: Prompt (#p0rt) -->
+<div class="absolute left-[760px] top-1/2 -translate-y-1/2 w-[240px] bg-surface-container-low rounded-xl flex overflow-hidden">
+<div class="node-handle -left-1"></div>
+<div class="w-1 pulse-running shrink-0"></div>
+<div class="flex-1 p-3">
+<div class="flex items-center justify-between mb-2">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary" style="font-size: 14px;">auto_awesome</span>
+<span class="text-[13px] font-semibold text-text-main">Motion Prompt</span>
+</div>
+<span class="font-mono text-[11px] text-muted">#p0rt</span>
+</div>
+<div class="bg-surface-container-highest p-2 rounded border border-outline-variant/40">
+<code class="font-mono text-[11px] text-primary/80 block leading-relaxed">
+                                cinematic handheld, <span class="text-text-main/40">golden hour</span>, slow-mo 120fps, forest debris...
+                            </code>
+</div>
+</div>
+<div class="node-handle -right-1"></div>
+</div>
+<!-- Node 5: Video (Selected #v9k2) -->
+<div class="absolute left-[1100px] top-1/2 -translate-y-1/2 w-[240px] bg-surface-container-low rounded-xl flex overflow-hidden outline outline-2 outline-primary/80 ring-offset-4 ring-offset-surface">
+<div class="node-handle -left-1"></div>
+<div class="w-1.5 pulse-running shrink-0 translate-x-px"></div>
+<div class="flex-1 p-3">
+<div class="flex items-center justify-between mb-2">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-muted" style="font-size: 14px;">play_circle</span>
+<span class="text-[13px] font-semibold text-text-main">Sprint 01 · 8s</span>
+</div>
+<span class="font-mono text-[11px] text-muted">#v9k2</span>
+</div>
+<div class="aspect-video w-full rounded-lg bg-surface-container-high overflow-hidden relative border border-outline-variant/40 mb-2">
+<img class="w-full h-full object-cover opacity-50 grayscale" data-alt="misty mountain peak at sunrise, moody and atmospheric, cinematic lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBzYVW1naB8sDPxgG5IE1JHNaH16gaoepk0epvChBSi0P3gaHda8DnzN9HgSd6higMMHXX9OfNK7SVg_hT3M6wcrt3b-TeDr5FdfDm-4FJ90_Q4bexTKAH2dciadiSKGrxGm1TuZbvUUZpyzsO66W7z9WMqKX-3rg_lZLhQ5DuTkH9pbHJzzX_b87cjRu-G1v7ZSP53szbO45eH3iEIt59Lo0jdqpe3vPMlhWoFGqokiajGnVnwc1mICyTt439vV-b_idTvy0QrfRI"/>
+<div class="absolute inset-0 flex items-center justify-center">
+<div class="w-8 h-8 rounded-full bg-surface-container-low/80 flex items-center justify-center">
+<span class="material-symbols-outlined text-text-main" style="font-size: 20px;">play_arrow</span>
+</div>
+</div>
+<div class="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 bg-black/60 rounded font-mono text-[9px] text-white">0:08</div>
+</div>
+<div class="flex items-center justify-between">
+<span class="text-[11px] text-primary uppercase font-bold tracking-wider">rendering · 42%</span>
+<div class="w-12 h-1 bg-surface-container-highest rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[42%]"></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Bottom Left: Zoom Controls -->
+<div class="absolute bottom-4 left-4 flex flex-col gap-1 bg-surface-container-low p-1 rounded-lg border border-outline-variant/20">
+<button class="w-8 h-8 flex items-center justify-center text-muted hover:text-text-main hover:bg-surface-container-high transition-all">
+<span class="material-symbols-outlined" style="font-size: 18px;">add</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center text-muted hover:text-text-main hover:bg-surface-container-high transition-all">
+<span class="material-symbols-outlined" style="font-size: 18px;">remove</span>
+</button>
+<div class="h-px bg-outline-variant/40 mx-1"></div>
+<button class="w-8 h-8 flex items-center justify-center text-muted hover:text-text-main hover:bg-surface-container-high transition-all">
+<span class="material-symbols-outlined" style="font-size: 18px;">fit_screen</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center text-muted hover:text-text-main hover:bg-surface-container-high transition-all">
+<span class="material-symbols-outlined" style="font-size: 18px;">lock_open</span>
+</button>
+</div>
+<!-- Bottom Right: Minimap -->
+<div class="absolute bottom-4 right-4 w-[160px] h-[100px] bg-surface-container-low rounded-lg border border-outline-variant/40 overflow-hidden shadow-2xl">
+<div class="relative w-full h-full opacity-40">
+<div class="absolute inset-0 dot-grid scale-50"></div>
+<!-- Miniature DAG nodes -->
+<div class="absolute top-1/2 left-4 w-6 h-4 bg-success/40 rounded-sm"></div>
+<div class="absolute top-4 left-10 w-6 h-4 bg-success/40 rounded-sm"></div>
+<div class="absolute bottom-4 left-10 w-6 h-4 bg-warning/40 rounded-sm"></div>
+<div class="absolute top-1/2 left-16 w-6 h-4 bg-primary/40 rounded-sm"></div>
+<div class="absolute top-1/2 left-22 w-6 h-4 bg-primary/40 rounded-sm outline outline-1 outline-primary"></div>
+<!-- Viewport Rectangle -->
+<div class="absolute inset-2 border border-primary/60 bg-primary/5 rounded-sm"></div>
+</div>
+</div>
+</main>
+<!-- (3) Right Sidebar: Chat / Console -->
+<aside class="w-80 bg-[#14161c] border-l border-[#2a2e38]/40 flex flex-col h-full z-20">
+<div class="p-4 flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="font-['Inter'] text-[11px] font-medium uppercase tracking-[0.04em] text-[#8a8f99]">CHAT</span>
+<span class="bg-surface-container-highest text-muted px-1.5 py-0.5 rounded font-mono text-[10px]">· scene 01</span>
+</div>
+<span class="material-symbols-outlined text-muted" style="font-size: 16px;">more_horiz</span>
+</div>
+<div class="flex-1 overflow-y-auto px-4 space-y-6">
+<!-- User Message -->
+<div class="flex flex-col items-end">
+<div class="bg-primary/10 border border-primary/20 p-3 rounded-2xl rounded-tr-none max-w-[90%]">
+<p class="text-[13px] text-text-main leading-relaxed">Generate 3 variants of <span class="text-primary font-medium">#lira</span> running, handheld cinematic</p>
+</div>
+</div>
+<!-- Assistant Message -->
+<div class="flex flex-col items-start">
+<div class="bg-transparent p-3 rounded-2xl rounded-tl-none max-w-[90%] border-l-2 border-outline-variant">
+<p class="text-[13px] text-muted leading-relaxed">Planning pipeline — 3 image nodes from character refs, 1 video per best pick</p>
+<div class="mt-3 flex flex-wrap gap-2">
+<div class="flex items-center gap-1.5 bg-surface-container-highest px-2 py-1 rounded border border-outline-variant/40">
+<span class="w-1.5 h-1.5 rounded-full bg-success"></span>
+<span class="font-mono text-[10px] text-text-main">img_a2k9</span>
+</div>
+<div class="flex items-center gap-1.5 bg-surface-container-highest px-2 py-1 rounded border border-outline-variant/40">
+<span class="w-1.5 h-1.5 rounded-full bg-warning"></span>
+<span class="font-mono text-[10px] text-text-main">img_7fx3</span>
+</div>
+<div class="flex items-center gap-1.5 bg-surface-container-highest px-2 py-1 rounded border border-outline-variant/40 opacity-50">
+<span class="w-1.5 h-1.5 rounded-full bg-warning"></span>
+<span class="font-mono text-[10px] text-text-main">img_b1m4</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Thinking State -->
+<div class="flex items-center gap-2 px-3 py-1">
+<span class="text-[11px] font-mono text-muted uppercase tracking-widest">Composing plan</span>
+<div class="flex gap-1">
+<span class="w-1 h-1 bg-muted rounded-full animate-pulse"></span>
+<span class="w-1 h-1 bg-muted rounded-full animate-pulse delay-75"></span>
+<span class="w-1 h-1 bg-muted rounded-full animate-pulse delay-150"></span>
+</div>
+</div>
+</div>
+<!-- Composer -->
+<div class="p-4 bg-surface-container-low border-t border-outline-variant/20">
+<div class="relative bg-surface-container-highest rounded-xl border border-outline-variant/40 p-3 mb-2">
+<textarea class="w-full bg-transparent border-none focus:ring-0 p-0 text-[13px] text-text-main placeholder-muted/60 resize-none h-16" placeholder="Describe intent · # to mention a node"></textarea>
+<button class="absolute bottom-3 right-3 w-7 h-7 bg-primary rounded-full flex items-center justify-center text-on-primary hover:bg-primary/90 transition-colors">
+<span class="material-symbols-outlined" style="font-size: 16px;">arrow_upward</span>
+</button>
+</div>
+<div class="flex items-center gap-2 text-[10px] text-muted/60 font-mono pl-1">
+<span>⌘Enter send</span>
+<span>·</span>
+<span># mention</span>
+<span>·</span>
+<span>drop files to add refs</span>
+</div>
+</div>
+</aside>
+</div>
+</body></html>

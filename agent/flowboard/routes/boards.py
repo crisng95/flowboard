@@ -12,6 +12,10 @@ class BoardCreate(BaseModel):
     name: str
 
 
+class BoardUpdate(BaseModel):
+    name: str
+
+
 @router.get("")
 def list_boards():
     with get_session() as s:
@@ -37,3 +41,16 @@ def get_board(board_id: int):
         nodes = s.exec(select(Node).where(Node.board_id == board_id)).all()
         edges = s.exec(select(Edge).where(Edge.board_id == board_id)).all()
         return {"board": board, "nodes": nodes, "edges": edges}
+
+
+@router.patch("/{board_id}")
+def update_board(board_id: int, body: BoardUpdate):
+    with get_session() as s:
+        board = s.get(Board, board_id)
+        if not board:
+            raise HTTPException(404, "board not found")
+        board.name = body.name
+        s.add(board)
+        s.commit()
+        s.refresh(board)
+        return board

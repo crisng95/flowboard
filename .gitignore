@@ -37,3 +37,7 @@ storage/
 build/
 coverage/
 .turbo/
+**/tsconfig.tsbuildinfo
+
+# OMC ephemeral state (session caches, runtime checkpoints) — plans/ kept
+.omc/state/

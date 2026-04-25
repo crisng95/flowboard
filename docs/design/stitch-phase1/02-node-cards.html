@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Flowboard Node Specimen</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "surface": "#0b0c10",
+            "surface-container-low": "#14161c",
+            "surface-container-high": "#1c1f27",
+            "surface-container-highest": "#232630",
+            "primary": "#7c5cff",
+            "success": "#6ee7b7",
+            "warning": "#f5b301",
+            "error": "#ef4444",
+            "on-surface": "#e6e8ec",
+            "on-surface-muted": "#8a8f99",
+            "outline-variant": "#2a2e38",
+          },
+          fontFamily: {
+            sans: ["Inter", "sans-serif"],
+            mono: ["JetBrains Mono", "monospace"],
+          },
+          borderRadius: {
+            "DEFAULT": "0.25rem",
+            "lg": "0.5rem",
+            "xl": "0.75rem",
+            "node": "12px",
+            "full": "9999px"
+          }
+        },
+      },
+    }
+  </script>
+<style>
+    body {
+      background-color: #0b0c10;
+      background-image: radial-gradient(#2a2e38 1px, transparent 1px);
+      background-size: 24px 24px;
+      color: #e6e8ec;
+    }
+    .status-pulse {
+      animation: pulse-glow 2s infinite ease-in-out;
+    }
+    @keyframes pulse-glow {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 1; filter: drop-shadow(0 0 4px #7c5cff); }
+    }
+    .node-handle {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #14161c;
+      border: 1px solid #2a2e38;
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    .node-handle-left { left: -4px; }
+    .node-handle-right { right: -4px; }
+    .node-handle:hover { border-color: #7c5cff; }
+  </style>
+</head>
+<body class="min-h-screen font-sans selection:bg-primary/30 antialiased overflow-x-hidden">
+<!-- TopAppBar via JSON mapping -->
+<header class="flex justify-between items-center w-full px-4 h-12 bg-[#0b0c10] border-b border-[#2a2e38]/40 sticky top-0 z-50">
+<div class="flex items-center gap-4">
+<span class="text-sm font-bold tracking-[-0.01em] text-[#e6e8ec] uppercase">Flowboard</span>
+<div class="h-4 w-px bg-[#2a2e38]/60"></div>
+<div class="flex flex-col">
+<span class="font-['Inter'] text-[13px] font-semibold tracking-tight text-[#e6e8ec]">Node cards</span>
+<span class="font-mono text-[11px] uppercase tracking-[0.04em] font-medium text-[#8a8f99]">5 types × 5 states · flowboard@0.1</span>
+</div>
+</div>
+<div class="flex items-center gap-3">
+<div class="flex items-center bg-[#14161c] rounded-lg px-2 py-1 gap-2 border border-[#2a2e38]/40">
+<span class="material-symbols-outlined text-[#8a8f99] text-[16px]">search</span>
+<span class="text-[11px] text-[#8a8f99] font-mono">CMD+K</span>
+</div>
+<div class="flex gap-1">
+<button class="p-1.5 hover:bg-[#1c1f27] transition-colors rounded text-[#8a8f99]">
+<span class="material-symbols-outlined text-[20px]">add_box</span>
+</button>
+<button class="p-1.5 hover:bg-[#1c1f27] transition-colors rounded text-[#8a8f99]">
+<span class="material-symbols-outlined text-[20px]">play_arrow</span>
+</button>
+<button class="p-1.5 hover:bg-[#1c1f27] transition-colors rounded text-[#8a8f99]">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+</button>
+</div>
+</div>
+</header>
+<main class="w-[1280px] mx-auto p-12 space-y-16">
+<!-- Row 1: Node Types -->
+<section>
+<header class="mb-6 flex items-center gap-3">
+<span class="font-mono text-[11px] uppercase tracking-[0.04em] text-primary">01</span>
+<h2 class="text-[13px] font-semibold tracking-tight uppercase text-on-surface">Node Types</h2>
+</header>
+<div class="flex gap-8">
+<!-- CHARACTER NODE -->
+<div class="w-[240px] bg-surface-container-low rounded-node relative border border-outline-variant/40 flex flex-col">
+<div class="node-handle node-handle-left"></div>
+<div class="node-handle node-handle-right"></div>
+<div class="absolute left-0 top-3 bottom-3 w-[3px] bg-success/80 rounded-r-full"></div>
+<div class="p-3 pb-2 flex items-center justify-between border-b border-outline-variant/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px] text-primary" style="font-variation-settings: 'FILL' 1;">radio_button_checked</span>
+<span class="text-[13px] font-semibold text-on-surface">Lira</span>
+</div>
+<span class="font-mono text-[11px] text-on-surface-muted">#lira</span>
+</div>
+<div class="p-3 flex items-center gap-3">
+<div class="w-16 h-16 rounded-full overflow-hidden bg-surface-container-high border border-outline-variant/40">
+<img class="w-full h-full object-cover" data-alt="close-up portrait of an elven scout woman with fantasy makeup and green hood in soft atmospheric lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCQq_H7S2ZqBCj4ROfnUrhDMhw4h8rwtaaLCuj0t3TjBr-8ilNsxY6ENA4EOMZ4fWQHSV9slHlNXkWByN48xfPScz9BolUEHkx69EMa3lrqdG5YNnqEk6_Kil51Uh8-D7kCoYCNrFDS9tE56b9M67EeXzuPxj_hkDRpa-T1Puijo5rU87w3z0bjnRsrs3RovOgKyLIPvMINAYsfHhRnYB8joxgALq2vXHX9Dv9NtLpjyoEE4QGiY4t-2val8z5BR2bhOd15KMyhwZI"/>
+</div>
+<div class="flex flex-col">
+<span class="font-mono text-[11px] uppercase tracking-wider text-on-surface-muted">Character</span>
+<span class="text-[13px] text-on-surface">Elf scout, 20s</span>
+</div>
+</div>
+</div>
+<!-- IMAGE NODE -->
+<div class="w-[240px] bg-surface-container-low rounded-node relative border border-outline-variant/40 flex flex-col">
+<div class="node-handle node-handle-left"></div>
+<div class="node-handle node-handle-right"></div>
+<div class="absolute left-0 top-3 bottom-3 w-[3px] bg-success/80 rounded-r-full"></div>
+<div class="p-3 pb-2 flex items-center justify-between border-b border-outline-variant/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px] text-on-surface-muted">grid_view</span>
+<span class="text-[13px] font-semibold text-on-surface">Sprint shot 01</span>
+</div>
+<span class="font-mono text-[11px] text-on-surface-muted">#a2k9</span>
+</div>
+<div class="p-3 grid grid-cols-2 gap-1">
+<div class="aspect-square bg-[#723d46] rounded-sm overflow-hidden">
+<img class="w-full h-full object-cover opacity-60" data-alt="abstract terracotta colored smooth 3d landscape with soft shadows" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC605n3AqmrZrgkdros5UH0M2VkfHKZzlf_tZxgLFFkDSXFv4Jb_7D0ij403GTjkp4VltKmLO8dANTcJ_hd8jegNTEfmIK450EI4qDlkyAox9d-eiIF1bH9NezgXmXKYHyMQ2p-IQHBioXlbO5rCGRS8JzleWti8ZWotTeqb7rYwzwrdk-MxvxHaFTUBJBsJlpbzfFWoFz-VGbpq1wmd5d1R-t8lNxAV5wrn-68-fg8_olZhbESbeTJkALEGYWEujoyjC_8afcqqeU"/>
+</div>
+<div class="aspect-square bg-[#2d5a5a] rounded-sm overflow-hidden">
+<img class="w-full h-full object-cover opacity-60" data-alt="abstract teal colored geometric shapes with minimalist lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD2SY7tqTk3m_zjH19x6fdr8y9Y784J-OC6ETq2N8t3G03_rZWaOT1FLx_RnWTVT5E7_qupFePcpk8og6uD0ucEUcxpgWbyZD85KQpjBKu53eAQNxdMJ2HrWGuU_qN6QHJ2bOMbI9HWT66U45-roxpJ0FMEb5LjnFnxeMw4s6bBpKlcLLTHwCkUcjj8V-ffY-LMe1Kxx9ftgb1qgEBwkQ_HrQzjn2JGTwJwmpcJ8-IWGmyzEb9ibvYdCKVmzHh90dc6QdGJ4T6U6pQ"/>
+</div>
+<div class="aspect-square bg-[#2d5a5a] rounded-sm overflow-hidden"></div>
+<div class="aspect-square bg-[#723d46] rounded-sm overflow-hidden"></div>
+</div>
+<div class="px-3 pb-3">
+<span class="font-mono text-[11px] text-on-surface-muted">1024×1024 · jpg</span>
+</div>
+</div>
+<!-- VIDEO NODE -->
+<div class="w-[240px] bg-surface-container-low rounded-node relative border border-outline-variant/40 flex flex-col">
+<div class="node-handle node-handle-left"></div>
+<div class="node-handle node-handle-right"></div>
+<div class="absolute left-0 top-3 bottom-3 w-[3px] bg-success/80 rounded-r-full"></div>
+<div class="p-3 pb-2 flex items-center justify-between border-b border-outline-variant/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px] text-on-surface-muted">play_arrow</span>
+<span class="text-[13px] font-semibold text-on-surface">Sprint 01</span>
+</div>
+<span class="font-mono text-[11px] text-on-surface-muted">#v9k2</span>
+</div>
+<div class="p-3">
+<div class="aspect-video bg-surface-container-high rounded border border-outline-variant/20 relative overflow-hidden group">
+<img class="w-full h-full object-cover grayscale brightness-50" data-alt="dramatic cinematic wide shot of futuristic cityscape at night with neon lights and rain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCaRq2FLeLgQwhCAW53PbkvZEib_pxcMdBZ8w0pz3_HA7Z1dTYBZ8mGi4kt-BjGfAsKkj2YS_fx9NMYv0z99jNAVH6KW_k_yk7oHSiPhhM38mtOGLdFOy-CklXIE7tYUbH30uBnwzybbpXcINaOLnllCll0YwLYowSfXuO46LPTNIgTTlJqBRASR2zM7QDBrL3dRt6xZi3thAESrqXj9T3s-rUR1eA-uUivn98ur4nrmOA_Y1U5mrSc8rNW7EtAPRlVStgqKcr4qVE"/>
+<div class="absolute inset-0 flex items-center justify-center">
+<span class="material-symbols-outlined text-on-surface-muted opacity-60">play_circle</span>
+</div>
+<div class="absolute bottom-2 right-2 bg-surface/80 px-1.5 py-0.5 rounded text-[10px] font-mono border border-outline-variant/40">0:08</div>
+</div>
+</div>
+<div class="px-3 pb-3 flex justify-between items-center">
+<span class="font-mono text-[11px] text-on-surface-muted">mp4 · 1080p</span>
+</div>
+</div>
+<!-- PROMPT NODE -->
+<div class="w-[240px] bg-surface-container-low rounded-node relative border border-outline-variant/40 flex flex-col">
+<div class="node-handle node-handle-left"></div>
+<div class="node-handle node-handle-right"></div>
+<div class="absolute left-0 top-3 bottom-3 w-[3px] bg-success/80 rounded-r-full"></div>
+<div class="p-3 pb-2 flex items-center justify-between border-b border-outline-variant/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px] text-on-surface-muted">auto_awesome</span>
+<span class="text-[13px] font-semibold text-on-surface">Hero sprint</span>
+</div>
+<span class="font-mono text-[11px] text-on-surface-muted">#p0rt</span>
+</div>
+<div class="p-3">
+<div class="bg-[#1e2028] rounded p-2 border border-outline-variant/20 min-h-[80px]">
+<p class="font-mono text-[12px] leading-relaxed text-on-surface-muted">
+                Portrait of a warrior, <span class="text-primary font-medium">cinematic</span> lighting, sharp focus, <span class="text-primary font-medium">anamorphic</span> lens, 8k resolution...
+              </p>
+</div>
+</div>
+</div>
+<!-- NOTE NODE -->
+<div class="w-[240px] bg-surface-container-low rounded-node relative border border-dashed border-outline-variant flex flex-col">
+<div class="p-3 pb-2 flex items-center justify-between border-b border-outline-variant/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px] text-on-surface-muted">edit</span>
+<span class="text-[13px] font-semibold text-on-surface">Scene beats</span>
+</div>
+<span class="font-mono text-[11px] text-on-surface-muted">#n0te</span>
+</div>
+<div class="p-3">
+<ul class="text-[13px] text-on-surface-muted space-y-2">
+<li class="flex gap-2"><span class="text-primary-muted text-[10px] mt-1">•</span> Establish mood</li>
+<li class="flex gap-2"><span class="text-primary-muted text-[10px] mt-1">•</span> Intro Lira character</li>
+<li class="flex gap-2"><span class="text-primary-muted text-[10px] mt-1">•</span> Render 4 variants</li>
+</ul>
+</div>
+</div>
+</div>
+</section>
+<!-- Row 2: Node States -->
+<section>
+<header class="mb-6 flex items-center gap-3">
+<span class="font-mono text-[11px] uppercase tracking-[0.04em] text-primary">02</span>
+<h2 class="text-[13px] font-semibold tracking-tight uppercase text-on-surface">Node States</h2>
+</header>
+<div class="flex gap-8">
+<!-- IDLE STATE -->
+<div class="w-[240px] bg-surface-container-low rounded-node relative border border-outline-variant/40 flex flex-col opacity-60">
+<div class="absolute left-0 top-3 bottom-3 w-[3px] bg-transparent rounded-r-full"></div>
+<div class="p-3 pb-2 flex items-center justify-between border-b border-outline-variant/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px] text-on-surface-muted">image</span>
+<span class="text-[13px] font-semibold text-on-surface">Ref image</span>
+</div>
+<span class="font-mono text-[11px] text-on-surface-muted">#id00</span>
+</div>
+<div class="p-3 flex flex-col items-center justify-center aspect-square border-2 border-dashed border-outline-variant/40 m-3 rounded">
+<span class="material-symbols-outlined text-on-surface-muted mb-2">upload_file</span>
+<span class="text-[11px] text-on-surface-muted">drop image</span>
+</div>
+</div>
+<!-- QUEUED STATE -->
+<div class="w-[240px] bg-surface-container-low rounded-node relative border border-outline-variant/40 flex flex-col">
+<div class="absolute left-0 top-3 bottom-3 w-[3px] bg-warning/60 rounded-r-full"></div>
+<div class="p-3 pb-2 flex items-center justify-between border-b border-outline-variant/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px] text-warning">schedule</span>
+<span class="text-[13px] font-semibold text-on-surface">Image gen</span>
+</div>
+<span class="font-mono text-[11px] text-on-surface-muted">#q8u1</span>
+</div>
+<div class="p-3">
+<div class="aspect-square bg-surface-container-high rounded animate-pulse"></div>
+</div>
+<div class="px-3 pb-3 flex items-center gap-2">
+<span class="text-[11px] text-on-surface-muted">Waiting · pos 2 in queue</span>
+</div>
+</div>
+<!-- RUNNING STATE -->
+<div class="w-[240px] bg-surface-container-low rounded-node relative border border-primary/20 flex flex-col ring-1 ring-primary/10">
+<div class="absolute left-0 top-3 bottom-3 w-[3px] bg-primary status-pulse rounded-r-full"></div>
+<div class="p-3 pb-2 flex items-center justify-between border-b border-outline-variant/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px] text-primary status-pulse">refresh</span>
+<span class="text-[13px] font-semibold text-on-surface">Rendering</span>
+</div>
+<span class="font-mono text-[11px] text-on-surface-muted">#r9n0</span>
+</div>
+<div class="p-3 relative">
+<div class="aspect-square bg-surface-container-high rounded overflow-hidden">
+<img class="w-full h-full object-cover blur-sm opacity-50" data-alt="abstract cosmic scene with glowing blue nebula and network lines with subtle film grain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAtRzEChsDvFQPWsH9C7VzXhO8d8YvOsvr9tu0GrZ5SvP1JSth7jQfO0mBvJLSnRzemc7wg59wnq-ymr2g6osn-LlSW_atgGkYOQ4VGubmQaIucfqfBucvB2PkHdO2FTeq0bU6Wz3VJN6iYrivEHA1coqavyAeSIrRVkTVN2ke8vBIwy7h5HnUMXh6mYDu1gezWMYur7vruew86hC-UNMdKCXTtyFldg-doUF_lPRpmfCUbvLcaKMgbgKVNV2UYytWLQ8b9RrPku6w"/>
+<div class="absolute inset-0 bg-gradient-to-tr from-primary/10 via-transparent to-transparent"></div>
+</div>
+<div class="absolute inset-0 flex flex-col items-center justify-center p-8">
+<span class="text-[11px] font-mono text-on-surface mb-2">Rendering · 42%</span>
+<div class="w-full h-1 bg-surface-container-highest rounded-full overflow-hidden">
+<div class="h-full bg-primary status-pulse" style="width: 42%;"></div>
+</div>
+</div>
+</div>
+</div>
+<!-- DONE STATE -->
+<div class="w-[240px] bg-surface-container-low rounded-node relative border border-outline-variant/40 flex flex-col">
+<div class="absolute left-0 top-3 bottom-3 w-[3px] bg-success rounded-r-full"></div>
+<div class="p-3 pb-2 flex items-center justify-between border-b border-outline-variant/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px] text-success" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+<span class="text-[13px] font-semibold text-on-surface">Finished</span>
+</div>
+<span class="font-mono text-[11px] text-on-surface-muted">#d0ne</span>
+</div>
+<div class="p-3">
+<div class="aspect-square bg-surface-container-high rounded overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="clear detailed futuristic cosmic nebula with intricate details and network nodes" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDr5-rp0LXScak4gWgnbpCQL7IfcTR_gTyadMcz0HxkT_Ywd6w2naWv5halJVIG6caDMEkfV9fK62uVrkeK-Mg3V84XHinfMlGUULy1LuN4S-MHqdf3Z6DsHrWtg4bGUeI0q3MODuKq6SLZ65Thi7wPJyfCmY7kDF--lN4DX7hH_YTCVStyOi2EW-KHceDnxSxLfSDc9coSvPpdMrt83dnry1-ZlZ6U-9adBGJnQO6L7KHHwvAmEIZe64eHJ1vtGgTZJkT_7R5eEeE"/>
+</div>
+</div>
+<div class="px-3 pb-3 flex items-center">
+<span class="text-[10px] font-mono bg-success/10 text-success px-2 py-0.5 rounded border border-success/20">✓ rendered</span>
+</div>
+</div>
+<!-- ERROR STATE -->
+<div class="w-[240px] bg-surface-container-low rounded-node relative border border-error/20 flex flex-col">
+<div class="absolute left-0 top-3 bottom-3 w-[3px] bg-error rounded-r-full"></div>
+<div class="p-3 pb-2 flex items-center justify-between border-b border-outline-variant/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px] text-error" style="font-variation-settings: 'FILL' 1;">error</span>
+<span class="text-[13px] font-semibold text-on-surface">Failed</span>
+</div>
+<span class="font-mono text-[11px] text-on-surface-muted">#e0r1</span>
+</div>
+<div class="p-3">
+<div class="aspect-square bg-surface-container-high rounded overflow-hidden grayscale opacity-40">
+<img class="w-full h-full object-cover" data-alt="blurry atmospheric cosmic texture" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD84VA01TAFTtvy7j2LXDUvYRyHprfeSah8iT9BR_kflgpe1zC0zyqCVxDMKWaFpEMGm9nq-5Lr4iSW758PZPy2HkcoN9NW7Q65k8NivHxaieGj_dkJADzoJqv8Wnar2U1ceEdWRXwosIN7TNbRiIfSc_8vHvDidUIlaC3eu18c7Phxwqv0tcIlN_ufXo2a8U2eqfRiclEzaLiaU5fOUoDWJvp-SFgsopxo_ll-K_rHa6R2Hza02hevQIvKFDdWDwpvG7gZAg3AKGM"/>
+</div>
+</div>
+<div class="px-3 pb-3 flex flex-col gap-1">
+<span class="text-[11px] text-error">Error · quota exceeded</span>
+<button class="text-[11px] text-primary text-left font-medium hover:underline">Retry action</button>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- Bottom Legend -->
+<footer class="fixed bottom-0 left-0 right-0 h-12 flex items-center justify-center gap-8 bg-surface/80 backdrop-blur-sm border-t border-outline-variant/40">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-sm border border-outline-variant bg-transparent"></div>
+<span class="font-mono text-[11px] text-on-surface-muted">idle</span>
+</div>
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-sm bg-warning/60"></div>
+<span class="font-mono text-[11px] text-on-surface-muted">queued</span>
+</div>
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-sm bg-primary"></div>
+<span class="font-mono text-[11px] text-on-surface-muted">running</span>
+</div>
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-sm bg-success"></div>
+<span class="font-mono text-[11px] text-on-surface-muted">done</span>
+</div>
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-sm bg-error"></div>
+<span class="font-mono text-[11px] text-on-surface-muted">error</span>
+</div>
+</footer>
+</body></html>

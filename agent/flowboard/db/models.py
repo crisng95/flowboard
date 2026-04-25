@@ -1,13 +1,17 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlmodel import Field, SQLModel, Column, JSON
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class Board(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class Node(SQLModel, table=True):
@@ -21,7 +25,7 @@ class Node(SQLModel, table=True):
     h: float = 160.0
     data: dict = Field(default_factory=dict, sa_column=Column(JSON))
     status: str = "idle"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class Edge(SQLModel, table=True):
@@ -40,18 +44,24 @@ class Request(SQLModel, table=True):
     status: str = "queued"
     result: dict = Field(default_factory=dict, sa_column=Column(JSON))
     error: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     finished_at: Optional[datetime] = None
 
 
 class Asset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    node_id: int = Field(foreign_key="node.id", index=True)
+    # node_id is optional — assets can arrive from TRPC before any node
+    # binding (e.g. the user browses an old Flow project).
+    node_id: Optional[int] = Field(default=None, foreign_key="node.id", index=True)
     kind: str  # image | video | thumbnail
-    uuid_media_id: Optional[str] = Field(default=None, index=True)
+    # Media id (the hex uuid from Google Flow). Unique so ingest can upsert.
+    uuid_media_id: Optional[str] = Field(default=None, index=True, unique=True)
+    # Latest captured signed GCS URL (expires — refreshed when user reopens
+    # Flow tab).
+    url: Optional[str] = None
     local_path: Optional[str] = None
     mime: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class ChatMessage(SQLModel, table=True):
@@ -60,7 +70,7 @@ class ChatMessage(SQLModel, table=True):
     role: str  # user | assistant | system
     content: str
     mentions: list = Field(default_factory=list, sa_column=Column(JSON))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class Plan(SQLModel, table=True):
@@ -68,7 +78,7 @@ class Plan(SQLModel, table=True):
     board_id: int = Field(foreign_key="board.id", index=True)
     spec: dict = Field(default_factory=dict, sa_column=Column(JSON))
     status: str = "draft"  # draft | approved | running | done | failed
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class PlanRevision(SQLModel, table=True):
@@ -77,7 +87,7 @@ class PlanRevision(SQLModel, table=True):
     rev_no: int
     spec: dict = Field(default_factory=dict, sa_column=Column(JSON))
     edits: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class PipelineRun(SQLModel, table=True):
@@ -87,3 +97,13 @@ class PipelineRun(SQLModel, table=True):
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     error: Optional[str] = None
+
+
+class BoardFlowProject(SQLModel, table=True):
+    """1:1 link between a local board and a Google Flow project_id.
+
+    Kept as a separate table so we don't have to migrate the Board schema.
+    """
+    board_id: int = Field(primary_key=True, foreign_key="board.id")
+    flow_project_id: str
+    created_at: datetime = Field(default_factory=_utcnow)

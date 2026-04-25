@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Flowboard — Node Generation</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        surface: "#0b0c10",
+                        "surface-container-low": "#14161c",
+                        "surface-container-high": "#1c1f27",
+                        "surface-container-highest": "#232630",
+                        "on-surface": "#e6e8ec",
+                        "on-surface-muted": "#8a8f99",
+                        primary: "#7c5cff",
+                        "outline-variant": "rgba(255, 255, 255, 0.1)",
+                        success: "#6ee7b7",
+                        warning: "#f5b301",
+                        error: "#ef4444"
+                    },
+                    fontFamily: {
+                        sans: ["Inter", "sans-serif"],
+                        mono: ["JetBrains Mono", "monospace"]
+                    },
+                    fontSize: {
+                        'display-lg': ['28px', { lineHeight: '1.2', letterSpacing: '-0.02em', fontWeight: '700' }],
+                        'title-md': ['13px', { lineHeight: '1.4', letterSpacing: '-0.01em', fontWeight: '600' }],
+                        'body-md': ['13px', { lineHeight: '1.5', fontWeight: '400' }],
+                        'label-sm': ['11px', { lineHeight: '1', fontWeight: '500' }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            font-size: 18px;
+        }
+        .dot-grid {
+            background-image: radial-gradient(#2a2e38 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+    </style>
+</head>
+<body class="bg-surface text-on-surface font-sans selection:bg-primary/30">
+<!-- Canvas Background Layer (Dimmed) -->
+<div class="fixed inset-0 dot-grid opacity-60 z-0"></div>
+<div class="fixed inset-0 bg-black/35 backdrop-blur-[12px] z-10"></div>
+<!-- Navigation Shell (TopAppBar from Shared Components) -->
+<header class="flex justify-between items-center w-full px-4 z-50 bg-[#14161c] border-b border-white/5 h-12 fixed top-0 left-0 right-0">
+<div class="flex items-center gap-6">
+<span class="text-sm font-bold tracking-tight text-[#e6e8ec]">Flowboard</span>
+<nav class="flex gap-4 h-full items-center">
+<a class="text-[#7c5cff] border-b-2 border-[#7c5cff] pb-3 text-[11px] font-mono uppercase tracking-[0.04em]" href="#">Canvas</a>
+<a class="text-[#8a8f99] hover:text-[#e6e8ec] text-[11px] font-mono uppercase tracking-[0.04em] transition-colors" href="#">Library</a>
+<a class="text-[#8a8f99] hover:text-[#e6e8ec] text-[11px] font-mono uppercase tracking-[0.04em] transition-colors" href="#">Workflows</a>
+</nav>
+</div>
+<div class="flex items-center gap-3">
+<div class="flex gap-2">
+<button class="material-symbols-outlined text-[#8a8f99] hover:bg-[#1c1f27] p-1.5 rounded transition-all">account_tree</button>
+<button class="material-symbols-outlined text-[#8a8f99] hover:bg-[#1c1f27] p-1.5 rounded transition-all">settings</button>
+<button class="material-symbols-outlined text-[#8a8f99] hover:bg-[#1c1f27] p-1.5 rounded transition-all">notifications</button>
+</div>
+<button class="bg-[#7c5cff] text-[#f4f3fb] px-3 py-1 rounded text-[11px] font-semibold hover:opacity-90 active:scale-95 transition-all">Deploy</button>
+</div>
+</header>
+<!-- SideNavBar (Right) -->
+<aside class="fixed right-0 top-12 bottom-0 w-80 bg-[#0b0c10] border-l border-white/5 flex flex-col z-40">
+<div class="p-4 border-b border-white/5">
+<div class="flex justify-between items-end mb-1">
+<span class="font-mono text-[10px] text-[#8a8f99] tracking-widest uppercase">PIPELINE</span>
+<span class="font-mono text-[9px] text-[#8a8f99]/50">v2.4.0-stable</span>
+</div>
+<button class="w-full mt-2 py-2 border border-dashed border-white/10 rounded text-[11px] font-mono uppercase text-[#8a8f99] hover:bg-white/5 transition-colors cursor-crosshair">New Node</button>
+</div>
+<div class="flex-1 flex flex-col">
+<div class="flex flex-col">
+<div class="flex items-center gap-3 px-4 py-3 text-[#7c5cff] border-r-2 border-[#7c5cff] bg-[#14161c]">
+<span class="material-symbols-outlined">info</span>
+<span class="font-mono text-[11px] tracking-[0.04em] uppercase">Inspector</span>
+</div>
+<div class="flex items-center gap-3 px-4 py-3 text-[#8a8f99] hover:bg-[#1c1f27] transition-colors cursor-crosshair">
+<span class="material-symbols-outlined">terminal</span>
+<span class="font-mono text-[11px] tracking-[0.04em] uppercase">Console</span>
+</div>
+<div class="flex items-center gap-3 px-4 py-3 text-[#8a8f99] hover:bg-[#1c1f27] transition-colors cursor-crosshair">
+<span class="material-symbols-outlined">folder_open</span>
+<span class="font-mono text-[11px] tracking-[0.04em] uppercase">Assets</span>
+</div>
+<div class="flex items-center gap-3 px-4 py-3 text-[#8a8f99] hover:bg-[#1c1f27] transition-colors cursor-crosshair">
+<span class="material-symbols-outlined">list_alt</span>
+<span class="font-mono text-[11px] tracking-[0.04em] uppercase">Logs</span>
+</div>
+</div>
+</div>
+</aside>
+<!-- Modal Overlay Container -->
+<main class="fixed inset-0 flex items-center justify-center z-50 p-4">
+<!-- Generate Image Dialog -->
+<div class="w-[760px] h-[600px] bg-surface-container-highest rounded-xl border border-white/10 flex flex-col overflow-hidden">
+<!-- Modal Header -->
+<header class="h-14 px-5 flex items-center justify-between shrink-0">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-lg bg-teal-500/20 flex items-center justify-center">
+<span class="material-symbols-outlined text-teal-400 text-base">square</span>
+</div>
+<div class="flex flex-col">
+<h2 class="text-on-surface text-title-md">Generate image</h2>
+<span class="text-on-surface-muted text-label-sm">New image node · 1 parent · #lira</span>
+</div>
+</div>
+<div class="px-2 py-1 bg-surface-container-low border border-white/5 rounded text-label-sm font-mono text-on-surface-muted">
+                    esc
+                </div>
+</header>
+<!-- Main Content Grid -->
+<div class="flex-1 p-5 grid grid-cols-[360px_160px_160px] gap-6 overflow-y-auto">
+<!-- Left Column: Inputs -->
+<div class="space-y-6">
+<!-- Prompt Field -->
+<div class="space-y-2">
+<div class="flex justify-between items-center">
+<label class="text-[10px] uppercase font-medium tracking-[0.04em] text-on-surface-muted">Prompt</label>
+<span class="text-label-sm font-mono text-on-surface-muted">97/500</span>
+</div>
+<div class="w-full h-44 bg-[#1e2028] rounded-lg p-3 text-body-md border border-white/5 focus-within:border-primary/40 transition-colors">
+<p class="leading-relaxed">
+<span class="text-primary bg-primary/10 px-1 rounded">cinematic</span> handheld, golden hour, low-angle tracking, wet leaves scattering, <span class="text-primary bg-primary/10 px-1 rounded">anamorphic</span> 2.39:1, 35mm film grain
+                            </p>
+</div>
+</div>
+<!-- References Field -->
+<div class="space-y-3">
+<label class="text-[10px] uppercase font-medium tracking-[0.04em] text-on-surface-muted">References · up to 4</label>
+<div class="flex gap-3">
+<!-- Ref 1 -->
+<div class="flex flex-col items-center gap-1.5">
+<div class="w-16 h-16 rounded-lg overflow-hidden border border-white/10 relative">
+<img class="w-full h-full object-cover" data-alt="close-up portrait of a woman with ethereal lighting and soft facial features" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAZ_FDrU79ULtUTtI8KjkcuHOtDdnh35XNRVKBC28VOnHoKO8tckqAJELtr5UIcryHx5toW_TCLt4yzuO5nFTPxiZ-EzuIIb6vYM_9k1oUKPxilr8IoOPm2ts5Ze1dfhHKSXNC4ZtgQAj9rP2TjXHUr1U0Ez96yfcKuCOYHrAd41kDP7k0GKmWtSH2_rpOiCmVgH4hEmByTV11wMya7fHfMlqLqL97e08_-CB5dcN9Hwzx8czWRBN6SPjIo03-_z7WGvosHVOQW-Gw"/>
+</div>
+<span class="text-[9px] font-mono text-on-surface-muted">#lira</span>
+</div>
+<!-- Ref 2 -->
+<div class="flex flex-col items-center gap-1.5">
+<div class="w-16 h-16 rounded-lg overflow-hidden border border-white/10 relative">
+<img class="w-full h-full object-cover grayscale opacity-60" data-alt="motion blur landscape photography of mountains at dusk with long exposure effects" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCeeEoDYdykUIOS1fXs3fhwStkB7HlCqsZGAht8o7KlWg8bQlaBX38NqeYPctOgBrKG-rbcCICL-_9iJ2T00N-SGjxjAUwNlTtQjnZoyTvtsXAjtKc8p2mdavjMi9uUSkMaE2O-BOFsoF-fuG-UByg3O0j503ksW-3xjY-4hv3ExB3gxDmTPbW-VZwqNtLKOkHoPmsUbYD5rXhGTjDK1Nk_KXP_vjY3xeilAPzYm-nLCbrJvxiL-2Z_TI2oCuUS_u-y8HuoO5l2qVQ"/>
+</div>
+<span class="text-[9px] font-mono text-on-surface-muted">#mot</span>
+</div>
+<!-- Slot 3 -->
+<div class="w-16 h-16 rounded-lg border border-dashed border-white/20 flex items-center justify-center hover:bg-white/5 transition-colors cursor-pointer group">
+<span class="material-symbols-outlined text-on-surface-muted group-hover:text-on-surface">add</span>
+</div>
+<!-- Slot 4 -->
+<div class="w-16 h-16 rounded-lg border border-dashed border-white/20 flex items-center justify-center hover:bg-white/5 transition-colors cursor-pointer group">
+<span class="material-symbols-outlined text-on-surface-muted group-hover:text-on-surface">add</span>
+</div>
+</div>
+<p class="text-label-sm text-on-surface-muted">Drag nodes here · drop files · ⌘+click node</p>
+</div>
+<!-- Advanced Section -->
+<div class="space-y-3 pt-2">
+<div class="flex items-center gap-2 cursor-pointer">
+<span class="material-symbols-outlined text-on-surface-muted rotate-90">chevron_right</span>
+<span class="text-[10px] uppercase font-medium tracking-[0.04em] text-on-surface-muted">Advanced</span>
+</div>
+<div class="space-y-3 pl-6">
+<div class="flex items-center gap-4">
+<span class="text-label-sm font-mono text-on-surface-muted w-12">Seed</span>
+<div class="flex items-center gap-2">
+<div class="px-3 py-1 bg-surface-container-low border border-white/5 rounded-full text-label-sm font-mono text-on-surface">8273</div>
+<button class="material-symbols-outlined text-on-surface-muted hover:text-on-surface transition-colors">casino</button>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<span class="text-label-sm font-mono text-on-surface-muted w-12">Negative</span>
+<input class="bg-transparent border-none p-0 text-body-md text-on-surface-muted focus:ring-0 w-full" readonly="" type="text" value="no text, no watermark, no logo"/>
+</div>
+</div>
+</div>
+</div>
+<!-- Middle Column: Pickers -->
+<div class="space-y-6">
+<div class="space-y-3">
+<label class="text-[10px] uppercase font-medium tracking-[0.04em] text-on-surface-muted">Model</label>
+<div class="space-y-2">
+<!-- Model Selected -->
+<div class="h-9 px-3 bg-surface-container-high border-l-2 border-primary flex flex-col justify-center cursor-pointer transition-all">
+<div class="flex justify-between items-baseline">
+<span class="text-label-sm text-on-surface">imagen-3 · std</span>
+</div>
+<span class="text-[9px] font-mono text-on-surface-muted">3s/img · 1024px</span>
+</div>
+<!-- Model Idle -->
+<div class="h-9 px-3 hover:bg-surface-container-low flex flex-col justify-center cursor-pointer transition-all">
+<div class="flex justify-between items-baseline">
+<span class="text-label-sm text-on-surface-muted">imagen-3 · fast</span>
+</div>
+<span class="text-[9px] font-mono text-on-surface-muted/50">1.5s/img · 512px</span>
+</div>
+<!-- Model Beta -->
+<div class="h-9 px-3 hover:bg-surface-container-low flex flex-col justify-center cursor-pointer transition-all">
+<div class="flex justify-between items-center">
+<span class="text-label-sm text-on-surface-muted">gemini-nano</span>
+<span class="text-[8px] bg-warning/20 text-warning px-1 rounded-sm">BETA</span>
+</div>
+</div>
+</div>
+</div>
+<div class="space-y-3">
+<label class="text-[10px] uppercase font-medium tracking-[0.04em] text-on-surface-muted">Size</label>
+<div class="grid grid-cols-2 gap-2">
+<!-- Ratio Chips -->
+<div class="h-11 rounded-lg border border-white/10 flex items-center justify-center cursor-pointer hover:bg-white/5">
+<div class="w-5 h-5 border border-white/20"></div>
+<span class="ml-2 text-[10px] font-mono text-on-surface-muted">1:1</span>
+</div>
+<div class="h-11 rounded-lg border border-white/10 flex items-center justify-center cursor-pointer hover:bg-white/5">
+<div class="w-4 h-5 border border-white/20"></div>
+<span class="ml-2 text-[10px] font-mono text-on-surface-muted">3:4</span>
+</div>
+<div class="h-11 rounded-lg border border-white/10 flex items-center justify-center cursor-pointer hover:bg-white/5">
+<div class="w-6 h-4 border border-white/20"></div>
+<span class="ml-2 text-[10px] font-mono text-on-surface-muted">16:9</span>
+</div>
+<!-- Selected Ratio -->
+<div class="h-11 rounded-lg border border-primary bg-primary/5 flex items-center justify-center cursor-pointer relative overflow-hidden">
+<div class="w-7 h-3 border border-primary/60"></div>
+<span class="ml-2 text-[10px] font-mono text-primary">2.39:1</span>
+<div class="absolute bottom-1 right-1">
+<span class="material-symbols-outlined text-primary" style="font-size: 10px;">check</span>
+</div>
+</div>
+</div>
+</div>
+<div class="space-y-3">
+<label class="text-[10px] uppercase font-medium tracking-[0.04em] text-on-surface-muted">Variants</label>
+<div class="flex flex-col items-center gap-2">
+<div class="flex items-center justify-between w-full px-4 py-1 bg-surface-container-low rounded-lg border border-white/5">
+<button class="material-symbols-outlined text-on-surface-muted hover:text-on-surface">remove</button>
+<span class="font-mono text-lg font-medium">3</span>
+<button class="material-symbols-outlined text-on-surface-muted hover:text-on-surface">add</button>
+</div>
+<p class="text-[9px] text-on-surface-muted text-center leading-tight">1–4 · ⌘drag to queue more</p>
+</div>
+</div>
+</div>
+<!-- Right Column: Summary & CTA -->
+<div class="flex flex-col border-l border-white/5 pl-6 h-full">
+<label class="text-[10px] uppercase font-medium tracking-[0.04em] text-on-surface-muted mb-4">PLAN</label>
+<div class="space-y-2 flex-grow">
+<div class="flex justify-between text-body-md text-on-surface-muted">
+<span>Model</span>
+<span class="text-on-surface">imagen-3 · std</span>
+</div>
+<div class="flex justify-between text-body-md text-on-surface-muted">
+<span>Size</span>
+<span class="text-on-surface">2560×1072</span>
+</div>
+<div class="flex justify-between text-body-md text-on-surface-muted">
+<span>Refs</span>
+<span class="text-on-surface">2/4</span>
+</div>
+<div class="flex justify-between text-body-md text-on-surface-muted">
+<span>Variants</span>
+<span class="text-on-surface">3</span>
+</div>
+<div class="flex justify-between text-body-md text-on-surface-muted pt-2 border-t border-white/5">
+<span>Est. time</span>
+<span class="text-on-surface">~18s</span>
+</div>
+<div class="pt-2">
+<span class="px-2 py-0.5 bg-teal-500/10 text-teal-400 text-[10px] rounded-full border border-teal-500/20">Free · local quota</span>
+</div>
+</div>
+<div class="mt-auto space-y-3">
+<button class="w-full h-11 bg-primary text-[#f4f3fb] rounded-lg font-semibold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-opacity">
+                            Generate 3 images
+                            <span class="px-1.5 py-0.5 bg-black/20 rounded text-[9px] font-mono border border-white/10 uppercase">⌘↵</span>
+</button>
+<button class="w-full text-center text-on-surface-muted text-[11px] hover:text-on-surface transition-colors">
+                            Save as preset…
+                        </button>
+</div>
+</div>
+</div>
+<!-- Modal Footer -->
+<footer class="h-10 px-5 flex items-center justify-between border-t border-white/5 bg-surface-container-low shrink-0">
+<div class="flex items-center gap-2 text-[10px] font-mono text-on-surface-muted">
+<span>↵ generate</span>
+<span class="opacity-30">·</span>
+<span>⌘shift↵ queue</span>
+<span class="opacity-30">·</span>
+<span>esc close</span>
+</div>
+<div class="text-[10px] font-medium text-on-surface-muted">
+                    Scene 01 · 4 nodes
+                </div>
+</footer>
+</div>
+</main>
+<!-- Floating UI elements for context -->
+<div class="fixed bottom-6 left-6 z-40 flex items-center gap-2 px-3 py-1.5 bg-surface-container-low border border-white/10 rounded-full text-label-sm shadow-xl">
+<span class="w-2 h-2 rounded-full bg-success animate-pulse"></span>
+<span class="text-on-surface-muted">Agent connected · 12ms lat.</span>
+</div>
+</body></html>

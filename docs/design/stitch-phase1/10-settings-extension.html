@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            surface: "#0b0c10",
+            "surface-container-low": "#14161c",
+            "surface-container-high": "#1c1f27",
+            "surface-container-highest": "#232630",
+            primary: "#7c5cff",
+            success: "#6ee7b7",
+            warning: "#f5b301",
+            error: "#ef4444",
+            "on-surface": "#e6e8ec",
+            "on-surface-muted": "#8a8f99",
+            "outline-variant": "rgba(42, 46, 56, 0.4)"
+          },
+          fontFamily: {
+            headline: ["Inter", "sans-serif"],
+            display: ["Inter", "sans-serif"],
+            body: ["Inter", "sans-serif"],
+            label: ["Inter", "sans-serif"]
+          }
+        },
+      },
+    }
+  </script>
+<style>
+    body {
+      background-color: #0b0c10;
+      background-image: radial-gradient(#2a2e38 1px, transparent 1px);
+      background-size: 24px 24px;
+      color: #e6e8ec;
+    }
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+    }
+  </style>
+</head>
+<body class="font-body selection:bg-primary/30">
+<!-- TopNavBar Implementation from JSON -->
+<header class="flex justify-between items-center w-full px-4 h-12 z-50 fixed top-0 bg-[#0b0c10] border-b border-[#2a2e38]/40">
+<div class="flex items-center gap-4">
+<button class="flex items-center justify-center w-8 h-8 hover:bg-[#1c1f27] transition-colors rounded">
+<span class="material-symbols-outlined text-[#7c5cff]">arrow_back</span>
+</button>
+<span class="font-sans text-[13px] font-bold tracking-[-0.01em] text-[#e6e8ec]">flowboard · settings</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="font-sans text-[11px] font-medium tracking-tight text-[#8a8f99] uppercase">v1.0.42</span>
+<div class="flex gap-1">
+<button class="w-8 h-8 flex items-center justify-center hover:bg-[#1c1f27] transition-colors rounded text-[#8a8f99]">
+<span class="material-symbols-outlined">help</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center hover:bg-[#1c1f27] transition-colors rounded text-[#8a8f99]">
+<span class="material-symbols-outlined">account_circle</span>
+</button>
+</div>
+</div>
+</header>
+<div class="flex pt-12 h-screen">
+<!-- SideNavBar Implementation from JSON -->
+<aside class="fixed left-0 top-12 h-[calc(100vh-48px)] w-64 bg-[#14161c] border-r border-[#2a2e38]/40 flex flex-col py-4 z-40">
+<div class="px-6 mb-6">
+<h2 class="text-lg font-bold text-[#e6e8ec] uppercase tracking-[0.04em]">Settings</h2>
+<p class="text-[11px] text-[#8a8f99] font-medium">v1.0.42</p>
+</div>
+<nav class="flex flex-col flex-1">
+<a class="flex items-center gap-3 font-sans text-[13px] font-medium tracking-tight text-[#8a8f99] py-3 px-6 hover:text-[#e6e8ec] hover:bg-[#1c1f27] transition-all" href="#">
+<span class="material-symbols-outlined">hub</span>
+          Connections
+        </a>
+<a class="flex items-center gap-3 font-sans text-[13px] font-medium tracking-tight text-[#7c5cff] border-l-2 border-[#7c5cff] bg-[#1c1f27] py-3 px-6 transition-all translate-x-1" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">extension</span>
+          Extension
+        </a>
+<a class="flex items-center gap-3 font-sans text-[13px] font-medium tracking-tight text-[#8a8f99] py-3 px-6 hover:text-[#e6e8ec] hover:bg-[#1c1f27] transition-all" href="#">
+<span class="material-symbols-outlined">vpn_key</span>
+          Tokens
+        </a>
+<a class="flex items-center gap-3 font-sans text-[13px] font-medium tracking-tight text-[#8a8f99] py-3 px-6 hover:text-[#e6e8ec] hover:bg-[#1c1f27] transition-all" href="#">
+<span class="material-symbols-outlined">keyboard</span>
+          Shortcuts
+        </a>
+<div class="mt-auto">
+<a class="flex items-center gap-3 font-sans text-[13px] font-medium tracking-tight text-[#8a8f99] py-3 px-6 hover:text-[#e6e8ec] hover:bg-[#1c1f27] transition-all" href="#">
+<span class="material-symbols-outlined">settings</span>
+            General
+          </a>
+</div>
+</nav>
+</aside>
+<!-- Main Content Canvas -->
+<main class="ml-64 flex-1 p-8 overflow-y-auto">
+<div class="max-w-4xl mx-auto space-y-10">
+<!-- Header Section -->
+<section class="space-y-2">
+<h1 class="text-[28px] font-bold tracking-tight text-on-surface">Extension bridge</h1>
+<p class="text-on-surface-muted text-[13px] leading-relaxed max-w-[520px]">
+            Manage the secure tunnel between your browser and Flowboard. The bridge captures auth tokens and synchronizes session state for seamless pipeline execution across domains.
+          </p>
+</section>
+<!-- Connection Card -->
+<section class="bg-surface-container-low rounded-xl p-6 border border-outline-variant">
+<div class="flex items-center justify-between mb-8">
+<div class="flex items-center gap-3">
+<div class="relative flex h-3 w-3">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
+<span class="relative inline-flex rounded-full h-3 w-3 bg-success"></span>
+</div>
+<span class="text-sm font-semibold tracking-tight">Connected</span>
+</div>
+<span class="font-mono text-[11px] text-on-surface-muted px-2 py-0.5 bg-surface-container-high rounded border border-outline-variant">#BRG-9921-X</span>
+</div>
+<div class="grid grid-cols-4 gap-4">
+<div class="space-y-1">
+<p class="text-[10px] uppercase tracking-wider text-on-surface-muted font-semibold">Uptime</p>
+<p class="text-[13px] font-medium text-on-surface">14d 2h 11m</p>
+</div>
+<div class="space-y-1">
+<p class="text-[10px] uppercase tracking-wider text-on-surface-muted font-semibold">Requests</p>
+<p class="text-[13px] font-medium text-on-surface">1.2k today</p>
+</div>
+<div class="space-y-1">
+<p class="text-[10px] uppercase tracking-wider text-on-surface-muted font-semibold">Last Token</p>
+<p class="text-[13px] font-medium text-on-surface">4m ago</p>
+</div>
+<div class="space-y-1">
+<p class="text-[10px] uppercase tracking-wider text-on-surface-muted font-semibold">Failures</p>
+<p class="text-[13px] font-medium text-on-surface">0</p>
+</div>
+</div>
+</section>
+<!-- Tokens Card -->
+<section class="space-y-4">
+<h3 class="text-[13px] font-semibold tracking-tight flex items-center gap-2">
+            Captured tokens
+            <span class="material-symbols-outlined text-[16px] text-on-surface-muted">info</span>
+</h3>
+<div class="bg-surface-container-low rounded-xl border border-outline-variant divide-y divide-[#2a2e38]/40">
+<!-- Row 1 -->
+<div class="flex items-center justify-between p-4 hover:bg-surface-container-high transition-colors">
+<div class="flex items-center gap-4">
+<span class="font-mono text-[11px] bg-primary/10 text-primary px-2 py-1 rounded">labs.google</span>
+<span class="font-mono text-[13px] text-on-surface-muted">••••••••••••••••p9w8</span>
+</div>
+<div class="flex gap-2">
+<button class="w-8 h-8 flex items-center justify-center hover:bg-surface-container-highest rounded text-on-surface-muted transition-colors">
+<span class="material-symbols-outlined text-[18px]">refresh</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center hover:bg-surface-container-highest rounded text-on-surface-muted transition-colors">
+<span class="material-symbols-outlined text-[18px]">content_copy</span>
+</button>
+</div>
+</div>
+<!-- Row 2 -->
+<div class="flex items-center justify-between p-4 hover:bg-surface-container-high transition-colors">
+<div class="flex items-center gap-4">
+<span class="font-mono text-[11px] bg-primary/10 text-primary px-2 py-1 rounded">anthropic.com</span>
+<span class="font-mono text-[13px] text-on-surface-muted">••••••••••••••••kL22</span>
+</div>
+<div class="flex gap-2">
+<button class="w-8 h-8 flex items-center justify-center hover:bg-surface-container-highest rounded text-on-surface-muted transition-colors">
+<span class="material-symbols-outlined text-[18px]">refresh</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center hover:bg-surface-container-highest rounded text-on-surface-muted transition-colors">
+<span class="material-symbols-outlined text-[18px]">content_copy</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+<!-- Shortcuts Card -->
+<section class="space-y-4">
+<h3 class="text-[13px] font-semibold tracking-tight">Keybindings &amp; Shortcuts</h3>
+<div class="grid grid-cols-3 gap-8 p-6 bg-surface-container-low rounded-xl border border-outline-variant">
+<!-- Canvas Column -->
+<div class="space-y-4">
+<p class="text-[10px] uppercase tracking-[0.06em] text-on-surface-muted font-bold">Canvas</p>
+<div class="space-y-3">
+<div class="flex items-center justify-between">
+<span class="text-[12px] text-on-surface-muted">Add node</span>
+<span class="font-mono text-[11px] px-1.5 py-0.5 rounded border border-[#2a2e38] bg-surface-container-high"><span class="text-primary/50">⌘</span> A</span>
+</div>
+<div class="flex items-center justify-between">
+<span class="text-[12px] text-on-surface-muted">Fit to view</span>
+<span class="font-mono text-[11px] px-1.5 py-0.5 rounded border border-[#2a2e38] bg-surface-container-high"><span class="text-primary/50">⌘</span> 1</span>
+</div>
+</div>
+</div>
+<!-- Chat Column -->
+<div class="space-y-4">
+<p class="text-[10px] uppercase tracking-[0.06em] text-on-surface-muted font-bold">Pipeline</p>
+<div class="space-y-3">
+<div class="flex items-center justify-between">
+<span class="text-[12px] text-on-surface-muted">Run flow</span>
+<span class="font-mono text-[11px] px-1.5 py-0.5 rounded border border-[#2a2e38] bg-surface-container-high"><span class="text-primary/50">⌘</span> ↵</span>
+</div>
+<div class="flex items-center justify-between">
+<span class="text-[12px] text-on-surface-muted">Cancel all</span>
+<span class="font-mono text-[11px] px-1.5 py-0.5 rounded border border-[#2a2e38] bg-surface-container-high"><span class="text-primary/50">⌘</span> .</span>
+</div>
+</div>
+</div>
+<!-- Global Column -->
+<div class="space-y-4">
+<p class="text-[10px] uppercase tracking-[0.06em] text-on-surface-muted font-bold">Global</p>
+<div class="space-y-3">
+<div class="flex items-center justify-between">
+<span class="text-[12px] text-on-surface-muted">Command</span>
+<span class="font-mono text-[11px] px-1.5 py-0.5 rounded border border-[#2a2e38] bg-surface-container-high"><span class="text-primary/50">⌘</span> K</span>
+</div>
+<div class="flex items-center justify-between">
+<span class="text-[12px] text-on-surface-muted">Settings</span>
+<span class="font-mono text-[11px] px-1.5 py-0.5 rounded border border-[#2a2e38] bg-surface-container-high"><span class="text-primary/50">⌘</span> ,</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Footer Actions -->
+<footer class="flex items-center justify-end gap-3 pt-6 border-t border-outline-variant">
+<button class="px-4 py-2 text-[13px] font-medium text-on-surface-muted hover:text-on-surface hover:bg-surface-container-high transition-colors rounded-lg">
+            Reload extension
+          </button>
+<button class="px-4 py-2 text-[13px] font-medium bg-error/10 text-error hover:bg-error/20 transition-colors rounded-lg">
+            Disconnect bridge
+          </button>
+</footer>
+</div>
+</main>
+</div>
+</body></html>
