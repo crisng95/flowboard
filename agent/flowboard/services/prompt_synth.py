@@ -21,23 +21,66 @@ logger = logging.getLogger(__name__)
 
 _SYNTH_SYSTEM_IMAGE = (
     "You are an image-generation prompt builder for a fashion / e-commerce "
-    "media pipeline. Given a list of source briefs (people and/or "
-    "products), produce ONE concise sentence (max 220 chars) describing a "
-    "photo that combines them. Style: photorealistic fashion product "
-    "photography, sharp focus, soft natural light, neutral indoor "
-    "background unless the user notes say otherwise. No marketing "
-    "language, no preamble — output the prompt only."
+    "media pipeline. Output ONE concise sentence (max 240 chars) for a "
+    "photoreal shot combining the input briefs.\n\n"
+    "POSE — CRITICAL when a product / wardrobe / object asset is in the "
+    "inputs: the subject MUST pose like a fashion editorial model — "
+    "confident expression, slight three-quarter body angle to camera, "
+    "ONE arm gesturing toward the garment (hand-on-hip, hand brushing "
+    "the sleeve, fingers near the collar), eyes engaging the lens. "
+    "Framing must be knees-up or full upper body so the PRODUCT is the "
+    "visual hero. Avoid plain arms-down portrait stances when a product "
+    "is present.\n\n"
+    "Style: photoreal editorial fashion photography, sharp focus, soft "
+    "even key light, neutral indoor or studio background unless the "
+    "notes override it. No marketing language, no preamble — output the "
+    "prompt only."
 )
 
-_SYNTH_SYSTEM_VIDEO = (
+_SYNTH_SYSTEM_VIDEO_DEFAULT = (
     "You are a video-motion prompt builder for an image-to-video pipeline "
-    "(5-8 second clip, Veo-style). Given the brief of the source still, "
-    "produce ONE concise motion sentence (max 200 chars) describing "
-    "subtle, natural movement: slow camera dolly-in or pan, gentle subject "
-    "shift, micro-expressions for a person, soft fabric/light play for a "
-    "product. No scene cuts, no dialogue, no text overlays. Output the "
-    "motion prompt only — no preamble."
+    "(8-second clip, Veo-style). The subject is a fashion model "
+    "showcasing a product. The model MUST perform a SEQUENCE of 2-3 "
+    "distinct editorial pose changes across the 8 seconds — a real "
+    "fashion model doesn't hold one pose. Structure it as time-coded "
+    "beats, e.g.:\n"
+    "  0-3s: turn to a three-quarter angle, hand sliding onto the hip\n"
+    "  3-6s: lift the other hand to brush across the sleeve / collar / hem\n"
+    "  6-8s: subtle head tilt, slow look-down then engage the camera\n"
+    "Smooth transitions between beats — no abrupt jumps. Keep blinks and "
+    "soft fabric breathing throughout. Output ONE prompt of max 360 "
+    "chars covering the full sequence. No scene cuts, no dialogue, no "
+    "text overlays. Output the motion prompt only — no preamble."
 )
+
+# Camera-aware variant. When the user picked `static` (e.g. for e-commerce
+# product shots) the synthesiser MUST NOT propose dolly/zoom/pan moves —
+# only subject-side motion. The model is still expected to perform a
+# multi-beat pose sequence to showcase the product though; static refers
+# to the CAMERA only, not the subject.
+_SYNTH_SYSTEM_VIDEO_STATIC = (
+    "You are a video-motion prompt builder for an image-to-video pipeline "
+    "(8-second clip, Veo-style). The CAMERA IS STATIC — locked-off, no "
+    "zoom, no pan, no dolly. The subject is a fashion model showcasing a "
+    "product still in frame.\n\n"
+    "The model MUST perform a SEQUENCE of 2-3 distinct editorial pose "
+    "changes across the 8 seconds — a real fashion model never holds one "
+    "pose for 8s. Structure as time-coded beats, e.g.:\n"
+    "  0-3s: turn to a three-quarter angle, hand sliding onto the hip\n"
+    "  3-6s: lift the other hand to brush across the sleeve / collar / hem\n"
+    "  6-8s: subtle head tilt, slow look-down then engage the camera\n"
+    "Smooth transitions, no abrupt jumps. Add natural blinks and soft "
+    "fabric breathing throughout. Keep the entire subject and product "
+    "framed the whole clip. Max 360 chars. No camera moves, no scene "
+    "cuts, no dialogue, no text overlays. Output the motion prompt only "
+    "— no preamble."
+)
+
+
+def _video_system_prompt(camera: Optional[str]) -> str:
+    if camera == "static":
+        return _SYNTH_SYSTEM_VIDEO_STATIC
+    return _SYNTH_SYSTEM_VIDEO_DEFAULT
 
 
 class PromptSynthError(RuntimeError):
@@ -105,21 +148,25 @@ def _format_user_message(records: list[dict], target: Node) -> str:
     return "\n\n".join(parts) + "\n\nReturn only the prompt sentence."
 
 
-async def auto_prompt(node_id: int) -> str:
+async def auto_prompt(node_id: int, *, camera: Optional[str] = None) -> str:
     """Compose a generation prompt by walking upstream + asking Claude.
 
     Branch by target type:
     - ``image`` (or anything else default) → photorealistic composition prompt
       that combines all upstream briefs.
     - ``video`` → motion/camera prompt for the single source image brief
-      (i2v has exactly one upstream image — multi-ref isn't a thing).
+      (i2v has exactly one upstream image — multi-ref isn't a thing). The
+      ``camera`` arg (e.g. ``"static"``) selects a system-prompt variant so
+      the synthesiser respects the user's framing constraint.
     """
     records, target = _collect_upstream(node_id)
     if target is None:
         raise PromptSynthError(f"node {node_id} not found")
 
     is_video = target.type == "video"
-    system_prompt = _SYNTH_SYSTEM_VIDEO if is_video else _SYNTH_SYSTEM_IMAGE
+    system_prompt = (
+        _video_system_prompt(camera) if is_video else _SYNTH_SYSTEM_IMAGE
+    )
     user_msg = _format_user_message(records, target)
 
     try:

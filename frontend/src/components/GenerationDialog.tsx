@@ -61,6 +61,34 @@ const VIDEO_ASPECT_RATIOS = [
   { key: "VIDEO_ASPECT_RATIO_PORTRAIT", label: "9:16 portrait" },
 ] as const;
 
+// Camera movement presets for video.
+// - `static` (default): locked-off, no zoom/pan — best for e-commerce
+//   product showcase since it keeps the product fully framed.
+// - `dynamic`: no camera constraint — the auto-prompt synthesiser is free
+//   to suggest dolly / pan / etc. as it sees fit. Empty instruction → no
+//   constraint string appended to the final prompt either.
+const CAMERA_MOVEMENTS = [
+  {
+    key: "static",
+    label: "Static",
+    instruction:
+      "Camera: locked-off static frame, no zoom and no pan. Keep the full "
+      + "subject and any product clearly visible in the frame for the "
+      + "entire clip. Background and crop must not change.",
+  },
+  {
+    key: "dynamic",
+    label: "Dynamic",
+    instruction: "",
+  },
+] as const;
+
+type CameraKey = (typeof CAMERA_MOVEMENTS)[number]["key"];
+
+function cameraInstruction(key: CameraKey): string {
+  return CAMERA_MOVEMENTS.find((c) => c.key === key)?.instruction ?? "";
+}
+
 type ImageAspectKey = (typeof IMAGE_ASPECT_RATIOS)[number]["key"];
 type VideoAspectKey = (typeof VIDEO_ASPECT_RATIOS)[number]["key"];
 type AspectKey = ImageAspectKey | VideoAspectKey;
@@ -77,6 +105,7 @@ export function GenerationDialog() {
     "PAYGATE_TIER_ONE",
   );
   const [variants, setVariants] = useState(1);
+  const [camera, setCamera] = useState<CameraKey>("static");
 
   // Character builder state — only used when targetType === "character".
   const [charGender, setCharGender] = useState<GenderKey | null>(null);
@@ -139,6 +168,7 @@ export function GenerationDialog() {
       );
       setPaygateTier("PAYGATE_TIER_ONE");
       setVariants(1);
+      setCamera("static");
       setCharGender(null);
       setCharCountry(null);
       setCharExtras("");
@@ -228,7 +258,7 @@ export function GenerationDialog() {
       }
       setAutoBuilding(true);
       try {
-        const res = await autoPromptApi(dbId);
+        const res = await autoPromptApi(dbId, isVideo ? { camera } : undefined);
         finalPrompt = res.prompt;
         setPrompt(finalPrompt);
         setAutoPromptUsed(true);
@@ -244,8 +274,16 @@ export function GenerationDialog() {
       setAutoBuilding(false);
     }
     if (isVideo) {
+      // Append the camera-movement constraint to whatever motion prompt
+      // we have (manual or auto-synthesised). Putting it last makes it
+      // the dominant instruction the model resolves against — overrides
+      // any conflicting "slow dolly-in" the synthesizer might have output.
+      const camInstruction = cameraInstruction(camera);
+      const videoPrompt = camInstruction
+        ? `${finalPrompt}. ${camInstruction}`
+        : finalPrompt;
       dispatchGeneration(rfId, {
-        prompt: finalPrompt,
+        prompt: videoPrompt,
         aspectRatio,
         paygateTier,
         kind: "video",
@@ -468,6 +506,31 @@ export function GenerationDialog() {
             ))}
           </div>
         </div>
+
+        {/* Camera movement (video only) */}
+        {isVideo && (
+          <div className="gen-dialog__field">
+            <span className="gen-dialog__label">Camera</span>
+            <div className="aspect-chip-row">
+              {CAMERA_MOVEMENTS.map((c) => (
+                <button
+                  key={c.key}
+                  className={`aspect-chip${camera === c.key ? " aspect-chip--active" : ""}`}
+                  onClick={() => setCamera(c.key)}
+                  type="button"
+                  title={c.instruction}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            <p className="gen-dialog__hint">
+              <strong>Static</strong> = locked-off, không zoom/pan — phù hợp
+              e-commerce product shot. <strong>Dynamic</strong> = để auto-prompt
+              tự quyết camera move (dolly / micro-shift / …).
+            </p>
+          </div>
+        )}
 
         {/* Paygate tier */}
         <div className="gen-dialog__field">

@@ -319,11 +319,14 @@ export interface AutoPromptResponse {
   prompt: string;
 }
 
-export async function autoPrompt(nodeId: number): Promise<AutoPromptResponse> {
+export async function autoPrompt(
+  nodeId: number,
+  opts?: { camera?: string },
+): Promise<AutoPromptResponse> {
   const res = await fetch("/api/prompt/auto", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ node_id: nodeId }),
+    body: JSON.stringify({ node_id: nodeId, camera: opts?.camera }),
   });
   if (!res.ok) {
     let detail: unknown;

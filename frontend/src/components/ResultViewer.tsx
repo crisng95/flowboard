@@ -220,6 +220,19 @@ export function ResultViewer() {
     openGenerationDialog(rfId, data.prompt ?? "");
   }
 
+  async function handleNewVariant() {
+    if (!rfId) return;
+    const newRfId = await useBoardStore
+      .getState()
+      .cloneNodeWithUpstream(rfId);
+    if (!newRfId) return;
+    closeResultViewer();
+    // Open the gen dialog on the fresh sibling so the user can hit
+    // Generate immediately (or tweak prompt first) — that's the natural
+    // next step after cloning.
+    openGenerationDialog(newRfId, data?.prompt ?? "");
+  }
+
   return (
     <div
       className="result-viewer-backdrop"
@@ -377,11 +390,8 @@ export function ResultViewer() {
             </button>
             <button
               className="result-viewer__btn"
-              onClick={() => {
-                if (mediaIds.length < 2) return;
-                setActiveIdx((i) => (i + 1) % mediaIds.length);
-              }}
-              disabled={mediaIds.length < 2}
+              onClick={handleNewVariant}
+              title="Clone this node onto the canvas with the same upstream refs"
             >
               New variant +
             </button>

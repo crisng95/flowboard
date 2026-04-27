@@ -76,6 +76,12 @@ interface BoardState {
   deleteNodeByRfId(rfId: string): Promise<void>;
   addEdgeFromConnection(source: string, target: string): Promise<void>;
   deleteEdgeByRfId(rfId: string): Promise<void>;
+  // Spawn an empty sibling node next to `rfId` with the same type and the
+  // same upstream edges. Returns the new node's rfId so callers can focus
+  // / open the generation dialog on it. Used by ResultViewer's
+  // "New variant +" — gives the user a fresh canvas to gen another shot
+  // sharing the original's source refs.
+  cloneNodeWithUpstream(rfId: string): Promise<string | null>;
 
   updateNodeData(rfId: string, partial: Partial<FlowboardNodeData>): void;
   setNodes(nodes: FlowNode[]): void;
@@ -269,6 +275,77 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     } catch {
       // ignore
     }
+  },
+
+  async cloneNodeWithUpstream(rfId) {
+    const { boardId, nodes, edges } = get();
+    if (boardId === null) return null;
+    const src = nodes.find((n) => n.id === rfId);
+    if (!src) return null;
+
+    // Position the clone to the lower-right of the source so it doesn't
+    // overlap. Title gets a " (variant)" suffix if not already present so
+    // it's easy to tell apart at a glance.
+    const offset = { x: 60, y: 60 };
+    const newPos = {
+      x: Math.round(src.position.x + offset.x),
+      y: Math.round(src.position.y + offset.y),
+    };
+    const baseTitle = src.data.title ?? TYPE_TITLE[src.data.type];
+    const newTitle = baseTitle.endsWith("(variant)")
+      ? baseTitle
+      : `${baseTitle} (variant)`;
+
+    let nodeDto;
+    try {
+      nodeDto = await createNode({
+        board_id: boardId,
+        type: src.data.type,
+        x: newPos.x,
+        y: newPos.y,
+        data: { title: newTitle },
+      });
+    } catch {
+      return null;
+    }
+
+    const newNode: FlowNode = {
+      id: String(nodeDto.id),
+      type: nodeDto.type,
+      position: { x: nodeDto.x, y: nodeDto.y },
+      data: {
+        type: nodeDto.type,
+        shortId: nodeDto.short_id,
+        title: (nodeDto.data["title"] as string | undefined) ?? newTitle,
+        status: nodeDto.status,
+      },
+    };
+    set((s) => ({ nodes: [...s.nodes, newNode] }));
+
+    // Replicate upstream edges: every (upstream → src) becomes (upstream → clone).
+    const upstreamSourceRfIds = edges
+      .filter((e) => e.target === rfId)
+      .map((e) => e.source);
+    for (const usrc of upstreamSourceRfIds) {
+      const sourceId = parseInt(usrc, 10);
+      if (isNaN(sourceId)) continue;
+      try {
+        const eDto = await createEdge({
+          board_id: boardId,
+          source_id: sourceId,
+          target_id: nodeDto.id,
+        });
+        const newEdge: Edge = {
+          id: String(eDto.id),
+          source: String(eDto.source_id),
+          target: String(eDto.target_id),
+        };
+        set((s) => ({ edges: [...s.edges, newEdge] }));
+      } catch {
+        // best-effort — partial edge replication still useful
+      }
+    }
+    return newNode.id;
   },
 
   async deleteEdgeByRfId(rfId) {
