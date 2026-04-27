@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="docs/assets/logo.svg" alt="Flowboard" width="160" />
+  <img src="docs/assets/logo.svg" alt="Flowboard" width="480" />
 </p>
-
-<h1 align="center">Flowboard</h1>
 
 <p align="center">
   <a href="#license"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"/></a>
@@ -14,6 +12,7 @@
   <img src="https://img.shields.io/badge/React%20Flow-12-8A2BE2?logo=react&logoColor=white" alt="React Flow"/>
   <img src="https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white" alt="Chrome MV3"/>
   <img src="https://img.shields.io/badge/Veo%203.1-i2v-FF6F00?logo=google&logoColor=white" alt="Veo 3.1"/>
+  <img src="https://img.shields.io/badge/Claude-CLI%20only-D97757?logo=anthropic&logoColor=white" alt="Claude CLI only"/>
   <img src="https://img.shields.io/badge/Tests-190%20passing-success?logo=pytest&logoColor=white" alt="190 passing"/>
   <img src="https://img.shields.io/badge/Status-personal%20local--only-orange" alt="Status"/>
 </p>
@@ -23,6 +22,12 @@
   Compose characters, products, scenes, and videos as a directed graph. Drive generation through a Chrome extension that proxies requests to Google Flow (Veo 3.1 / GEM_PIX_2).<br/>
   Every node is reusable, every edge is a real data-dependency, every variant is independently regenerable.
 </p>
+
+> **🔑 No API keys.** Auto-prompt + vision rely **only** on the
+> [**Claude CLI**](https://docs.claude.com/claude-code/install) shelled
+> out as a local subprocess — Flowboard does not use the Anthropic API,
+> OpenAI, Gemini, or any cloud LLM endpoint. Your existing Claude
+> subscription does the work; Flow does the pixels.
 
 <p align="center">
   <a href="#why">Why</a> ·
