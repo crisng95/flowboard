@@ -35,6 +35,17 @@
 
 ---
 
+## Demo
+
+<p align="center">
+  <a href="docs/assets/flowboard-intro.mp4">
+    <img src="docs/assets/flowboard-intro.gif" alt="Flowboard end-to-end walkthrough" width="720" />
+  </a><br/>
+  <sub>End-to-end walkthrough — refs → composed image → multi-source i2v. Click for full-quality MP4.</sub>
+</p>
+
+---
+
 ## Why
 
 E-commerce video creative is repetitive: same model, same product, many
