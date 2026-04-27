@@ -12,6 +12,34 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function extractErrorMessage(res: Response): Promise<string> {
+  let detail: unknown;
+  try {
+    detail = await res.json();
+  } catch {
+    try {
+      detail = await res.text();
+    } catch {
+      return `${res.status} ${res.statusText}`;
+    }
+  }
+  const inner =
+    typeof detail === "object" && detail !== null && "detail" in detail
+      ? (detail as { detail: unknown }).detail
+      : detail;
+  if (typeof inner === "string" && inner) return inner;
+  if (inner && typeof inner === "object") {
+    const obj = inner as Record<string, unknown>;
+    if (typeof obj.message === "string" && obj.message) return obj.message;
+    try {
+      return JSON.stringify(inner);
+    } catch {
+      // fall through
+    }
+  }
+  return `${res.status} ${res.statusText}`;
+}
+
 export interface WsStats {
   connected: boolean;
   flow_key_present: boolean;
@@ -304,17 +332,7 @@ export async function uploadImage(
   // Don't set Content-Type — the browser sets it with the correct boundary.
   const res = await fetch("/api/upload", { method: "POST", body: form });
   if (!res.ok) {
-    let detail: unknown;
-    try {
-      detail = await res.json();
-    } catch {
-      detail = await res.text();
-    }
-    const msg =
-      typeof detail === "object" && detail !== null && "detail" in detail
-        ? String((detail as { detail: unknown }).detail)
-        : `${res.status} ${res.statusText}`;
-    throw new Error(msg);
+    throw new Error(await extractErrorMessage(res));
   }
   return res.json() as Promise<UploadResponse>;
 }
@@ -345,17 +363,7 @@ export async function autoPromptBatch(
     body: JSON.stringify({ node_id: nodeId, count, camera: opts?.camera }),
   });
   if (!res.ok) {
-    let detail: unknown;
-    try {
-      detail = await res.json();
-    } catch {
-      detail = await res.text();
-    }
-    const msg =
-      typeof detail === "object" && detail !== null && "detail" in detail
-        ? String((detail as { detail: unknown }).detail)
-        : `${res.status} ${res.statusText}`;
-    throw new Error(msg);
+    throw new Error(await extractErrorMessage(res));
   }
   return res.json() as Promise<AutoPromptBatchResponse>;
 }
@@ -370,17 +378,7 @@ export async function autoPrompt(
     body: JSON.stringify({ node_id: nodeId, camera: opts?.camera }),
   });
   if (!res.ok) {
-    let detail: unknown;
-    try {
-      detail = await res.json();
-    } catch {
-      detail = await res.text();
-    }
-    const msg =
-      typeof detail === "object" && detail !== null && "detail" in detail
-        ? String((detail as { detail: unknown }).detail)
-        : `${res.status} ${res.statusText}`;
-    throw new Error(msg);
+    throw new Error(await extractErrorMessage(res));
   }
   return res.json() as Promise<AutoPromptResponse>;
 }
@@ -392,17 +390,7 @@ export async function describeMedia(mediaId: string): Promise<VisionDescribeResp
     body: JSON.stringify({ media_id: mediaId }),
   });
   if (!res.ok) {
-    let detail: unknown;
-    try {
-      detail = await res.json();
-    } catch {
-      detail = await res.text();
-    }
-    const msg =
-      typeof detail === "object" && detail !== null && "detail" in detail
-        ? String((detail as { detail: unknown }).detail)
-        : `${res.status} ${res.statusText}`;
-    throw new Error(msg);
+    throw new Error(await extractErrorMessage(res));
   }
   return res.json() as Promise<VisionDescribeResponse>;
 }
@@ -418,17 +406,7 @@ export async function uploadImageFromUrl(
     body: JSON.stringify({ url, project_id: projectId, node_id: nodeId }),
   });
   if (!res.ok) {
-    let detail: unknown;
-    try {
-      detail = await res.json();
-    } catch {
-      detail = await res.text();
-    }
-    const msg =
-      typeof detail === "object" && detail !== null && "detail" in detail
-        ? String((detail as { detail: unknown }).detail)
-        : `${res.status} ${res.statusText}`;
-    throw new Error(msg);
+    throw new Error(await extractErrorMessage(res));
   }
   return res.json() as Promise<UploadResponse>;
 }
