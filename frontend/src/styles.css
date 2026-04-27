@@ -305,14 +305,98 @@ button:disabled {
   flex-shrink: 0;
 }
 
-/* Handles */
+/* Handles — generous hit area, subtle dot, prominent hover.
 
+   The dot itself stays small (clean look) but the *clickable* surface is
+   20×20 so users don't have to pixel-hunt to start an edge drag. The
+   visible dot is drawn via ::after; the host element provides the hit
+   target. On hover the dot scales up + glows accent so it's obvious the
+   handle is grabbable. */
 .node-handle {
-  width: 8px !important;
-  height: 8px !important;
-  background: var(--panel-high) !important;
-  border: 1.5px solid var(--muted) !important;
+  width: 20px !important;
+  height: 20px !important;
+  background: transparent !important;
+  border: none !important;
   border-radius: 50% !important;
+  /* Do NOT set position here — React Flow needs `position: absolute` so
+     the handle stays anchored to the node's left/right edge. The ::after
+     dot positions relative to this absolute host, which works fine. */
+}
+
+.node-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: var(--panel-high);
+  border: 1.5px solid var(--muted);
+  transition: width 90ms ease, height 90ms ease, margin 90ms ease,
+    background 90ms ease, border-color 90ms ease, box-shadow 90ms ease;
+  pointer-events: none;
+}
+
+.node-handle:hover::after,
+.node-handle.connectionindicator:hover::after,
+.react-flow__handle.connecting.node-handle::after {
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(124, 92, 255, 0.28);
+}
+
+/* Drop-add popover — appears at the cursor when a connection drag ends on
+   empty canvas. Two quick-add buttons (Image / Video) so the user can wire
+   a new downstream node in one drag-and-click instead of: drop → add node
+   from palette → drag from old handle → drop on new handle. */
+.drop-popover {
+  position: fixed;
+  z-index: 220;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 8px;
+  background: var(--panel-higher);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  min-width: 132px;
+  animation: drop-popover-in 120ms ease-out;
+}
+@keyframes drop-popover-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.drop-popover__btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: var(--panel-high);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font-weight: 500;
+}
+.drop-popover__btn:hover,
+.drop-popover__btn:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  background: var(--panel);
+}
+.drop-popover__icon {
+  font-size: 13px;
+  color: var(--accent);
+  width: 16px;
+  text-align: center;
 }
 
 /* Edge selection — accent stroke + subtle glow so the user can clearly see
@@ -577,11 +661,6 @@ button:disabled {
   border-color: var(--accent);
   outline: none;
   transform: translateY(-1px);
-}
-
-.thumbnail-tile--active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .thumbnail-tile__placeholder {
@@ -875,6 +954,59 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Video grid — mirrors thumbnail-grid for the multi-source-i2v case where
+   one upstream image with N variants spawns N videos. Single-tile grid
+   stays at full width; 2-4 tiles use a 2-column layout so videos remain
+   legible at smaller sizes. */
+.video-grid {
+  display: grid;
+  gap: 4px;
+}
+.video-grid--1 {
+  grid-template-columns: 1fr;
+}
+.video-grid--2,
+.video-grid--3,
+.video-grid--4 {
+  grid-template-columns: 1fr 1fr;
+}
+
+.video-tile {
+  position: relative;
+  border-radius: 6px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  background: var(--panel-high);
+}
+.video-tile--clickable {
+  cursor: pointer;
+  transition: transform 80ms linear, box-shadow 80ms linear;
+}
+.video-tile--clickable:hover,
+.video-tile--clickable:focus-visible {
+  outline: none;
+  transform: translateY(-1px);
+}
+/* Placeholder fills the tile so each pending slot reserves a 16:9 box. */
+.video-tile .video-placeholder {
+  position: absolute;
+  inset: 0;
+  aspect-ratio: auto;
+  width: auto;
+  height: auto;
+}
+/* When loaded, the <video> takes the slot — same fitted display as the
+   single-video-with-media path. */
+.video-tile video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  border-radius: 6px;
 }
 
 .video-play {
@@ -1895,6 +2027,64 @@ button:disabled {
 }
 .source-image-row__label {
   font-family: ui-monospace, monospace;
+}
+
+/* Multi-select source variants for i2v video gen. Each thumb is a toggle
+   button; the checked state shows an accent ring + checkmark badge. */
+.source-thumb {
+  position: relative;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color 80ms linear, transform 80ms linear;
+}
+.source-thumb:hover {
+  border-color: var(--border);
+  transform: translateY(-1px);
+}
+.source-thumb--checked {
+  border-color: var(--accent);
+}
+.source-thumb__check {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 80ms linear;
+  opacity: 0;
+}
+.source-thumb--checked .source-thumb__check {
+  opacity: 1;
+}
+
+.source-select-actions {
+  display: flex;
+  gap: 4px;
+}
+.source-select-mini {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--panel-high);
+  color: var(--muted);
+  cursor: pointer;
+}
+.source-select-mini:hover {
+  color: var(--text);
+  border-color: var(--accent);
 }
 
 /* ── Reference images row (image gen dialog) ──────────────────────────────── */

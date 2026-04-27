@@ -84,9 +84,17 @@ async def run_claude(
     path because it sits inside an argv token (no shell), and we resolve to
     absolute so a CLI cwd surprise can't break the lookup.
 
+    For attachments to work the parent directory MUST be allow-listed via
+    ``--add-dir`` AND the Read tool must be auto-approved
+    (``--permission-mode bypassPermissions``); without these the CLI
+    prompts the user for permission and our `-p` non-interactive call gets
+    a refusal text back instead of a description.
+
     Raises ``ClaudeCliError`` on failure, timeout, or malformed envelope.
     The prompt is passed as a separate argv token — no shell interpolation.
     """
+    import os
+
     full_prompt = user_prompt
     if attachments:
         # `@<path>` syntax handled by the CLI for file attachments.
@@ -96,6 +104,17 @@ async def run_claude(
     args: list[str] = [_CLI_BIN, "-p", full_prompt, "--output-format", "json"]
     if system_prompt:
         args += ["--append-system-prompt", system_prompt]
+    if attachments:
+        # Allow-list each attachment's parent dir so the Read tool can
+        # access it, and bypass the interactive permission prompt that
+        # would otherwise stall a non-interactive `-p` invocation.
+        seen_dirs: set[str] = set()
+        for path in attachments:
+            parent = os.path.dirname(os.path.abspath(path))
+            if parent and parent not in seen_dirs:
+                seen_dirs.add(parent)
+                args += ["--add-dir", parent]
+        args += ["--permission-mode", "bypassPermissions"]
 
     try:
         proc = await asyncio.create_subprocess_exec(

@@ -279,6 +279,12 @@ export interface UploadResponse {
   media_id: string;
   mime: string;
   size: number;
+  // Detected by the agent from the image bytes; one of
+  // IMAGE_ASPECT_RATIO_{SQUARE,PORTRAIT,LANDSCAPE}. Optional because legacy
+  // responses (or formats we couldn't sniff) skip the field.
+  aspect_ratio?: string;
+  width?: number;
+  height?: number;
 }
 
 export async function uploadImage(
@@ -317,6 +323,37 @@ export interface VisionDescribeResponse {
 export interface AutoPromptResponse {
   node_id: number;
   prompt: string;
+}
+
+export interface AutoPromptBatchResponse {
+  node_id: number;
+  prompts: string[];
+}
+
+export async function autoPromptBatch(
+  nodeId: number,
+  count: number,
+  opts?: { camera?: string },
+): Promise<AutoPromptBatchResponse> {
+  const res = await fetch("/api/prompt/auto-batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ node_id: nodeId, count, camera: opts?.camera }),
+  });
+  if (!res.ok) {
+    let detail: unknown;
+    try {
+      detail = await res.json();
+    } catch {
+      detail = await res.text();
+    }
+    const msg =
+      typeof detail === "object" && detail !== null && "detail" in detail
+        ? String((detail as { detail: unknown }).detail)
+        : `${res.status} ${res.statusText}`;
+    throw new Error(msg);
+  }
+  return res.json() as Promise<AutoPromptBatchResponse>;
 }
 
 export async function autoPrompt(

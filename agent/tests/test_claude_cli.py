@@ -58,7 +58,10 @@ async def test_run_claude_passes_argv_and_returns_result():
 async def test_run_claude_attachments_embed_as_at_paths():
     """Claude CLI accepts file attachments via @<path> tokens in the prompt.
     `run_claude` joins them onto the user prompt; we never quote (argv) so
-    paths with spaces still work as a single token."""
+    paths with spaces still work as a single token. Critical: parent dirs
+    must be `--add-dir`-ed and `--permission-mode bypassPermissions` set
+    so the Read tool can open the files non-interactively (without these
+    the CLI returns a 'I need permission to read' message)."""
     proc = _FakeProc(_envelope("ok"))
     with patch(
         "flowboard.services.claude_cli.asyncio.create_subprocess_exec",
@@ -74,6 +77,29 @@ async def test_run_claude_attachments_embed_as_at_paths():
     assert "@/tmp/a.png" in prompt_arg
     assert "@/tmp/b.png" in prompt_arg
     assert "describe this" in prompt_arg
+    # Permission flags so Claude CLI doesn't refuse to open the file.
+    assert "--add-dir" in argv
+    add_dir_idx = argv.index("--add-dir")
+    assert argv[add_dir_idx + 1] == "/tmp"
+    assert "--permission-mode" in argv
+    pm_idx = argv.index("--permission-mode")
+    assert argv[pm_idx + 1] == "bypassPermissions"
+
+
+@pytest.mark.asyncio
+async def test_run_claude_no_attachments_skips_permission_flags():
+    """Plain text-only call must NOT add --add-dir or
+    --permission-mode bypassPermissions — those are only relevant when
+    we need the Read tool."""
+    proc = _FakeProc(_envelope("ok"))
+    with patch(
+        "flowboard.services.claude_cli.asyncio.create_subprocess_exec",
+        new=AsyncMock(return_value=proc),
+    ) as m:
+        await claude_cli.run_claude(user_prompt="say hi")
+    argv = list(m.call_args.args)
+    assert "--add-dir" not in argv
+    assert "--permission-mode" not in argv
 
 
 @pytest.mark.asyncio

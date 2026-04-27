@@ -75,13 +75,34 @@ async def test_auto_prompt_calls_claude_with_upstream_briefs(client, monkeypatch
     assert "Korean woman" in captured["prompt"]
     assert "white cotton crewneck" in captured["prompt"]
     # System prompt must set photo-realistic style + fashion-editorial pose
-    # guidance (so the model showcases the product instead of standing
-    # arms-down). These are the load-bearing instructions for hero shots.
+    # guidance with the load-bearing anchors:
+    #   - gaze must engage the camera (no profile / back / looking-away)
+    #   - stance pool for variety (so successive gens aren't identical)
+    #   - product-hero framing
     sp = (captured["system_prompt"] or "").lower()
     assert "photoreal" in sp
-    assert "pose" in sp
+    assert "engage the camera" in sp or "engage the lens" in sp
+    assert "no profile" in sp or "no looking-away" in sp
+    assert "stance" in sp
     assert "three-quarter" in sp or "three quarter" in sp
     assert "hero" in sp
+    # No-smile anchor — open-mouth smiles destabilise downstream i2v.
+    assert "no smiling" in sp
+    assert "closed-mouth" in sp
+    assert "no teeth" in sp
+    # Stance pool must list multiple options so the LLM has variety to
+    # rotate through — assert at least 4 distinct gestures present.
+    pool_options = [
+        "hands in pockets",
+        "brushing the collar",
+        "hand-on-hip",
+        "arms casually crossed",
+        "hand running through hair",
+        "walking towards camera",
+        "leaning weight on one hip",
+    ]
+    matches = sum(1 for opt in pool_options if opt in sp)
+    assert matches >= 4, f"only matched {matches} pose options in pool"
 
 
 @pytest.mark.asyncio
@@ -168,15 +189,58 @@ async def test_auto_prompt_video_static_camera_locks_system_prompt(client, monke
     sp = (captured["system_prompt"] or "").lower()
     # Camera lock — strict
     assert "static" in sp
-    assert "no zoom" in sp
-    assert "no pan" in sp
-    # Pose guidance — the model still moves to showcase the garment even
-    # with a locked-off camera, and must perform multiple beats over 8s.
-    assert "pose change" in sp or "pose-change" in sp or "pose shift" in sp
-    assert "three-quarter" in sp or "three quarter" in sp
-    # Time-coded beat structure
+    assert "no zoom" in sp or "no zoom / pan" in sp
+    # Anti-freeze + beat structure (model must shift pose, not stand still)
+    assert "anti-freeze" in sp or "leave the initial pose" in sp
     assert "0-3s" in sp
     assert "6-8s" in sp
+    # Scene-aware vocabulary mentioned (street + studio + café + beach)
+    assert "street" in sp
+    assert "studio" in sp
+    assert "café" in sp or "cafe" in sp
+    assert "beach" in sp or "park" in sp
+
+
+@pytest.mark.asyncio
+async def test_auto_prompt_video_default_includes_scene_vocab(client, monkeypatch):
+    """Both Static and Dynamic variants should embed the scene-aware
+    vocabulary (street / studio / café / beach) so the synth picks
+    appropriate motion verbs, plus the anti-freeze anchor."""
+    with get_session() as s:
+        b = Board(name="t")
+        s.add(b); s.commit(); s.refresh(b)
+        src = Node(
+            board_id=b.id, short_id="srcd", type="image",
+            x=0, y=0, w=240, h=180,
+            data={"title": "x", "aiBrief": "scene", "mediaId": "uuuuuuuu-bbbb-3333-3333-444444444444"},
+            status="done",
+        )
+        vid = Node(
+            board_id=b.id, short_id="vidd", type="video",
+            x=0, y=0, w=240, h=180,
+            data={"title": "v"},
+            status="idle",
+        )
+        s.add_all([src, vid]); s.commit(); s.refresh(src); s.refresh(vid)
+        s.add(Edge(board_id=b.id, source_id=src.id, target_id=vid.id))
+        s.commit()
+        vid_id = vid.id
+
+    captured: dict = {}
+
+    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+        captured["system_prompt"] = system_prompt
+        return "out"
+
+    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    await prompt_synth.auto_prompt(vid_id)  # Dynamic
+    sp = (captured["system_prompt"] or "").lower()
+    assert "street" in sp and "studio" in sp
+    assert "anti-freeze" in sp or "leave the initial pose" in sp
+    # Dynamic camera clause allows subtle movement
+    assert "subtle dolly" in sp or "pan is allowed" in sp
+    # Static-only constraint must NOT be in the dynamic variant
+    assert "no zoom / pan / dolly" not in sp
 
 
 @pytest.mark.asyncio
@@ -291,6 +355,107 @@ def test_route_passes_camera_arg_through(client, monkeypatch):
     )
     assert r.status_code == 200, r.text
     assert captured["camera"] == "static"
+
+
+@pytest.mark.asyncio
+async def test_auto_prompt_batch_returns_distinct_prompts(client, monkeypatch):
+    """Batch mode asks Claude for a JSON array of N pose-distinct prompts
+    so each variant renders a different stance instead of N seeds of one."""
+    ids = _seed_board_with_chain()
+    captured: dict = {}
+
+    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+        captured["system_prompt"] = system_prompt
+        return (
+            '[\n'
+            '  "Editorial photo, Korean woman, both hands in pockets, hip pop",\n'
+            '  "Editorial photo, Korean woman, hand-on-hip three-quarter angle",\n'
+            '  "Editorial photo, Korean woman, arms casually crossed, head tilt",\n'
+            '  "Editorial photo, Korean woman, walking towards camera mid-stride"\n'
+            ']'
+        )
+
+    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    out = await prompt_synth.auto_prompt_batch(ids["target_id"], 4)
+    assert isinstance(out, list)
+    assert len(out) == 4
+    assert all("Korean woman" in p for p in out)
+    # All four poses must be distinct.
+    assert len(set(out)) == 4
+    # System prompt should mention batch + JSON array
+    sp = (captured["system_prompt"] or "").lower()
+    assert "json array" in sp
+    assert "batch mode" in sp
+    assert "exactly 4" in sp
+
+
+@pytest.mark.asyncio
+async def test_auto_prompt_batch_count_1_falls_through_to_single(client, monkeypatch):
+    """count=1 should reuse the single-prompt path for efficiency."""
+    ids = _seed_board_with_chain()
+
+    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+        # Single auto_prompt path returns a plain string, not JSON
+        return "single prompt result"
+
+    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    out = await prompt_synth.auto_prompt_batch(ids["target_id"], 1)
+    assert out == ["single prompt result"]
+
+
+@pytest.mark.asyncio
+async def test_auto_prompt_batch_strips_markdown_fences(client, monkeypatch):
+    """Claude sometimes wraps JSON in ```json fences despite instructions."""
+    ids = _seed_board_with_chain()
+
+    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+        return '```json\n["a", "b"]\n```'
+
+    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    out = await prompt_synth.auto_prompt_batch(ids["target_id"], 2)
+    assert out == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_auto_prompt_batch_pads_short_response(client, monkeypatch):
+    """If Claude returns fewer prompts than requested, pad by repeating
+    the last so the dispatch still has count items."""
+    ids = _seed_board_with_chain()
+
+    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+        return '["only-one"]'
+
+    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    out = await prompt_synth.auto_prompt_batch(ids["target_id"], 3)
+    assert out == ["only-one", "only-one", "only-one"]
+
+
+def test_route_auto_batch_passes_through(client, monkeypatch):
+    """POST /api/prompt/auto-batch returns the array unchanged."""
+    ids = _seed_board_with_chain()
+    captured: dict = {}
+
+    async def stub(node_id, count, *, camera=None):
+        captured["count"] = count
+        return [f"prompt-{i}" for i in range(count)]
+
+    monkeypatch.setattr(prompt_synth, "auto_prompt_batch", stub)
+    r = client.post(
+        "/api/prompt/auto-batch",
+        json={"node_id": ids["target_id"], "count": 4},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["prompts"]) == 4
+    assert captured["count"] == 4
+
+
+def test_route_auto_batch_rejects_bad_count(client):
+    r = client.post(
+        "/api/prompt/auto-batch",
+        json={"node_id": 1, "count": 0},
+    )
+    assert r.status_code == 400
 
 
 def test_route_502_on_synth_failure(client, monkeypatch):

@@ -382,6 +382,80 @@ async def test_worker_gen_video_bails_on_per_op_error(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_worker_gen_video_dedupes_repeat_entries_across_polls(
+    client, monkeypatch,
+):
+    """Ops that finish early get re-listed as `done` on every subsequent
+    poll. The worker must collect each op's media_entries ONLY on the
+    transition; otherwise media_ids accumulates duplicates and the node
+    UI shows extra phantom variants (saw 7 chips on a 4-variant gen)."""
+    from flowboard.worker import processor as proc
+
+    monkeypatch.setattr(proc, "VIDEO_POLL_INTERVAL_S", 0.01)
+    monkeypatch.setattr(proc, "VIDEO_POLL_MAX_CYCLES", 50)
+
+    poll_state = {"n": 0}
+
+    class _StubSdk:
+        async def gen_video(self, **kwargs):
+            return {"raw": {}, "operation_names": ["op-1", "op-2", "op-3"]}
+
+        async def check_async(self, names):
+            poll_state["n"] += 1
+            n = poll_state["n"]
+            # Each op finishes on a different poll; once done it stays
+            # `done=True` in subsequent polls (Flow behaviour). Worker
+            # must not re-collect.
+            ops = []
+            for i, name in enumerate(["op-1", "op-2", "op-3"], start=1):
+                done = i <= n  # op 1 done at poll 1, op 2 at 2, etc.
+                entries = (
+                    [{"media_id": f"vid-{i}", "url": f"https://flow-content.google/video/vid-{i}", "mediaType": "video"}]
+                    if done
+                    else []
+                )
+                ops.append({
+                    "name": name,
+                    "done": done,
+                    "media_entries": entries,
+                    "status": "MEDIA_GENERATION_STATUS_SUCCESSFUL" if done else "MEDIA_GENERATION_STATUS_PENDING",
+                })
+            return {"raw": {}, "operations": ops}
+
+    monkeypatch.setattr(proc, "get_flow_sdk", lambda: _StubSdk())
+
+    row = client.post(
+        "/api/requests",
+        json={
+            "type": "gen_video",
+            "params": {
+                "prompt": "x",
+                "project_id": "abcd1234",
+                "start_media_id": "src",
+            },
+        },
+    ).json()
+
+    w = WorkerController(handlers={"gen_video": proc._handle_gen_video})
+    task = asyncio.create_task(w.start())
+    try:
+        w.enqueue(row["id"])
+        for _ in range(200):
+            await asyncio.sleep(0.02)
+            current = client.get(f"/api/requests/{row['id']}").json()
+            if current["status"] not in ("queued", "running"):
+                break
+        assert current["status"] == "done", current
+        media_ids = current["result"]["media_ids"]
+        # Exactly 3 unique videos — no duplicates from polls 2 and 3.
+        assert media_ids == ["vid-1", "vid-2", "vid-3"], media_ids
+        assert len(media_ids) == len(set(media_ids))
+    finally:
+        w.request_shutdown()
+        await asyncio.wait_for(task, timeout=2.0)
+
+
+@pytest.mark.asyncio
 async def test_worker_gen_video_rejects_missing_start(client):
     from flowboard.worker.processor import _handle_gen_video
 

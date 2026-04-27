@@ -229,6 +229,67 @@ async def test_gen_video_body_shape_and_captcha():
 
 
 @pytest.mark.asyncio
+async def test_gen_video_batch_with_multiple_start_media_ids():
+    """When the upstream image has N variants, gen_video must dispatch
+    one request_item per source so the batch produces N videos in a
+    single Flow call instead of generating only the first variant."""
+    c = RecordingClient()
+    c.api_response = {
+        "status": 200,
+        "data": {
+            "operations": [
+                {"operation": {"name": "op-1"}},
+                {"operation": {"name": "op-2"}},
+                {"operation": {"name": "op-3"}},
+            ]
+        },
+    }
+    sdk = FlowSDK(client=c)  # type: ignore[arg-type]
+    out = await sdk.gen_video(
+        prompt="wave",
+        project_id="proj-1",
+        start_media_ids=["src-1", "src-2", "src-3"],
+        aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE",
+    )
+    assert out["operation_names"] == ["op-1", "op-2", "op-3"]
+
+    body = c.api_calls[0]["body"]
+    items = body["requests"]
+    assert len(items) == 3
+    media_ids = [it["startImage"]["mediaId"] for it in items]
+    assert media_ids == ["src-1", "src-2", "src-3"]
+    # Distinct seeds so Flow doesn't dedupe
+    seeds = [it["seed"] for it in items]
+    assert len(set(seeds)) == 3
+
+
+@pytest.mark.asyncio
+async def test_gen_video_falls_back_to_single_start_media_id():
+    """Single source still works through the legacy path."""
+    c = RecordingClient()
+    c.api_response = {
+        "status": 200,
+        "data": {"operations": [{"operation": {"name": "op-only"}}]},
+    }
+    sdk = FlowSDK(client=c)  # type: ignore[arg-type]
+    out = await sdk.gen_video(
+        prompt="x", project_id="p", start_media_id="solo-id"
+    )
+    assert out["operation_names"] == ["op-only"]
+    items = c.api_calls[0]["body"]["requests"]
+    assert len(items) == 1
+    assert items[0]["startImage"]["mediaId"] == "solo-id"
+
+
+@pytest.mark.asyncio
+async def test_gen_video_returns_error_when_no_source_provided():
+    c = RecordingClient()
+    sdk = FlowSDK(client=c)  # type: ignore[arg-type]
+    out = await sdk.gen_video(prompt="x", project_id="p")
+    assert out.get("error") == "missing_start_media_id"
+
+
+@pytest.mark.asyncio
 async def test_gen_video_rejects_unknown_tier_aspect_combo():
     c = RecordingClient()
     sdk = FlowSDK(client=c)  # type: ignore[arg-type]

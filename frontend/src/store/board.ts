@@ -27,6 +27,13 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   mediaId?: string;
   mediaIds?: string[];
   variantCount?: number;
+  // The aspect-ratio enum the asset was generated / uploaded at — used to
+  // default-match downstream gen dialogs (e.g. a 9:16 visual_asset feeds
+  // into a downstream image / video that defaults to 9:16). Values are
+  // Flow's IMAGE_ASPECT_RATIO_* enum strings since that's what the upload
+  // route + gen worker produce. Video targets map them onto the matching
+  // VIDEO_ASPECT_RATIO_* enum at dialog-open time.
+  aspectRatio?: string;
   // AI-generated factual description of mediaId (set by /api/vision/describe).
   // Spliced into auto-prompts on downstream nodes for richer context.
   aiBrief?: string;
@@ -71,7 +78,10 @@ interface BoardState {
   refreshBoardState(): Promise<void>;
   renameBoard(name: string): Promise<void>;
 
-  addNodeOfType(type: NodeType, position: { x: number; y: number }): Promise<void>;
+  // Returns the new node's rfId on success, or null if creation failed.
+  // Callers that need to wire up an edge immediately (e.g. drop-popover
+  // shortcut) need the id back synchronously.
+  addNodeOfType(type: NodeType, position: { x: number; y: number }): Promise<string | null>;
   persistNodePosition(rfId: string, position: { x: number; y: number }): Promise<void>;
   deleteNodeByRfId(rfId: string): Promise<void>;
   addEdgeFromConnection(source: string, target: string): Promise<void>;
@@ -121,6 +131,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           mediaId: n.data["mediaId"] as string | undefined,
           mediaIds: n.data["mediaIds"] as string[] | undefined,
           variantCount: n.data["variantCount"] as number | undefined,
+          aspectRatio: n.data["aspectRatio"] as string | undefined,
           aiBrief: n.data["aiBrief"] as string | undefined,
         },
       }));
@@ -190,7 +201,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
 
   async addNodeOfType(type, position) {
     const { boardId } = get();
-    if (boardId === null) return;
+    if (boardId === null) return null;
     const title = TYPE_TITLE[type];
     try {
       const dto = await createNode({
@@ -212,9 +223,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         },
       };
       set((s) => ({ nodes: [...s.nodes, node] }));
+      return node.id;
     } catch {
       // surface silently for now
     }
+    return null;
   },
 
   async persistNodePosition(rfId, position) {

@@ -54,11 +54,12 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  function persistMedia(newMediaId: string) {
+  function persistMedia(newMediaId: string, aspectRatio?: string) {
     useBoardStore.getState().updateNodeData(rfId, {
       mediaId: newMediaId,
       status: "done",
       aiBrief: undefined,
+      aspectRatio,
     });
     const dbId = parseInt(rfId, 10);
     if (!isNaN(dbId)) {
@@ -69,6 +70,7 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
           prompt: data.prompt,
           mediaId: newMediaId,
           aiBrief: undefined,
+          aspectRatio,
         },
       }).catch(() => {});
     }
@@ -88,7 +90,7 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
       }
       const dbId = parseInt(rfId, 10);
       const resp = await uploadImage(file, projectId, isNaN(dbId) ? undefined : dbId);
-      persistMedia(resp.media_id);
+      persistMedia(resp.media_id, resp.aspect_ratio);
     } catch (err) {
       setError(err instanceof Error ? err.message : "upload failed");
     } finally {
@@ -227,14 +229,12 @@ function tileCountFor(data: FlowboardNodeData): number {
 function ImageTile({
   rfId,
   mediaId,
-  isActive,
   isProcessing,
   alt,
   onClick,
 }: {
   rfId: string;
   mediaId: string | undefined;
-  isActive: boolean;
   isProcessing: boolean;
   alt: string;
   onClick?: () => void;
@@ -269,7 +269,6 @@ function ImageTile({
   const src = attempt > 0 ? `${mediaUrl(mediaId)}?retry=${attempt}` : mediaUrl(mediaId);
   const cls =
     `thumbnail-tile thumbnail-tile--filled` +
-    (isActive ? " thumbnail-tile--active" : "") +
     (onClick ? " thumbnail-tile--clickable" : "");
 
   return (
@@ -277,8 +276,7 @@ function ImageTile({
       className={cls}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
-      aria-label={onClick ? `Apply variant for ${alt}` : undefined}
-      aria-pressed={onClick ? isActive : undefined}
+      aria-label={onClick ? `Open variant ${alt}` : undefined}
       onClick={onClick}
       onKeyDown={(e) => {
         if (!onClick) return;
@@ -313,23 +311,22 @@ function ImageTile({
 function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
   const tileCount = tileCountFor(data);
   const ids = data.mediaIds ?? (data.mediaId ? [data.mediaId] : []);
-  const activeMediaId = data.mediaId;
   const isProcessing = data.status === "queued" || data.status === "running";
 
   const tiles: JSX.Element[] = [];
   for (let i = 0; i < tileCount; i++) {
     const mid = ids[i];
-    const isActive = !!mid && mid === activeMediaId;
-    const onClick =
-      mid && ids.length > 1
-        ? () => useGenerationStore.getState().applyVariant(rfId, i)
-        : undefined;
+    // Click a tile → open viewer at that variant. There is no "active /
+    // selected variant" anymore — every variant is equally available
+    // downstream (image refs send all, video can multi-select).
+    const onClick = mid
+      ? () => useGenerationStore.getState().openResultViewer(rfId, i)
+      : undefined;
     tiles.push(
       <ImageTile
         key={i}
         rfId={rfId}
         mediaId={mid}
-        isActive={isActive}
         isProcessing={isProcessing && !mid}
         alt={data.title}
         onClick={onClick}
@@ -348,15 +345,23 @@ function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
 
 const MAX_VIDEO_RETRIES = 5;
 
-function VideoBody({ data }: { data: FlowboardNodeData }) {
-  const mediaId = data.mediaId;
+function VideoTile({
+  mediaId,
+  isProcessing,
+  isError,
+  alt,
+  onClick,
+}: {
+  mediaId: string | undefined;
+  isProcessing: boolean;
+  isError: boolean;
+  alt: string;
+  onClick?: () => void;
+}) {
   const [attempt, setAttempt] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isProcessing = data.status === "queued" || data.status === "running";
-  const isError = data.status === "error";
 
-  // Reset loader state when media id changes
   useEffect(() => {
     setLoaded(false);
     setAttempt(0);
@@ -379,21 +384,31 @@ function VideoBody({ data }: { data: FlowboardNodeData }) {
   );
 
   if (!mediaId) {
-    return (
-      <div className="node-body node-body--video">
-        {placeholder}
-        {isError && data.error && (
-          <p className="node-error" role="alert">{data.error}</p>
-        )}
-      </div>
-    );
+    // Pending tile — just the placeholder (with shimmer when processing).
+    return <div className="video-tile">{placeholder}</div>;
   }
 
   const givenUp = attempt >= MAX_VIDEO_RETRIES;
   const src = attempt > 0 ? `${mediaUrl(mediaId)}?retry=${attempt}` : mediaUrl(mediaId);
+  const cls =
+    `video-tile video-tile--filled` +
+    (onClick ? " video-tile--clickable" : "");
 
   return (
-    <div className="node-body node-body--video node-body--video-with-media">
+    <div
+      className={cls}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      aria-label={onClick ? `Open variant ${alt}` : undefined}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (!onClick) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+    >
       {!loaded && placeholder}
       {!givenUp && (
         <video
@@ -404,7 +419,7 @@ function VideoBody({ data }: { data: FlowboardNodeData }) {
           controls
           preload="metadata"
           muted
-          aria-label={data.title as string}
+          aria-label={alt}
           style={loaded ? undefined : { display: "none" }}
           onLoadedData={() => setLoaded(true)}
           onError={() => {
@@ -413,6 +428,42 @@ function VideoBody({ data }: { data: FlowboardNodeData }) {
             }, 2000);
           }}
         />
+      )}
+    </div>
+  );
+}
+
+function VideoBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
+  const tileCount = tileCountFor(data);
+  const ids = data.mediaIds ?? (data.mediaId ? [data.mediaId] : []);
+  const isProcessing = data.status === "queued" || data.status === "running";
+  const isError = data.status === "error";
+
+  const tiles: JSX.Element[] = [];
+  for (let i = 0; i < tileCount; i++) {
+    const mid = ids[i];
+    const onClick = mid
+      ? () => useGenerationStore.getState().openResultViewer(rfId, i)
+      : undefined;
+    tiles.push(
+      <VideoTile
+        key={i}
+        mediaId={mid}
+        isProcessing={isProcessing && !mid}
+        isError={isError && !mid}
+        alt={data.title}
+        onClick={onClick}
+      />,
+    );
+  }
+
+  return (
+    <div className="node-body node-body--video">
+      <div className={`video-grid video-grid--${tileCount}`}>
+        {tiles}
+      </div>
+      {isError && data.error && (
+        <p className="node-error" role="alert">{data.error}</p>
       )}
     </div>
   );
@@ -432,13 +483,14 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
   const fileInputRef = useRef<HTMLInputElement>(null);
   const refInputRef = useRef<HTMLInputElement>(null);
 
-  function persistMedia(newMediaId: string) {
+  function persistMedia(newMediaId: string, aspectRatio?: string) {
     useBoardStore.getState().updateNodeData(rfId, {
       mediaId: newMediaId,
       mediaIds: [newMediaId],
       variantCount: 1,
       status: "done",
       aiBrief: undefined,
+      aspectRatio,
     });
     const dbId = parseInt(rfId, 10);
     if (!isNaN(dbId)) {
@@ -451,6 +503,7 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
           mediaIds: [newMediaId],
           variantCount: 1,
           aiBrief: undefined,
+          aspectRatio,
         },
       }).catch(() => {});
     }
@@ -468,7 +521,7 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
       }
       const dbId = parseInt(rfId, 10);
       const resp = await uploadImage(file, projectId, isNaN(dbId) ? undefined : dbId);
-      persistMedia(resp.media_id);
+      persistMedia(resp.media_id, resp.aspect_ratio);
     } catch (err) {
       setError(err instanceof Error ? err.message : "upload failed");
     } finally {
@@ -493,7 +546,7 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
         projectId,
         isNaN(dbId) ? undefined : dbId,
       );
-      persistMedia(resp.media_id);
+      persistMedia(resp.media_id, resp.aspect_ratio);
       setLinkMode(false);
       setLinkValue("");
     } catch (err) {
@@ -718,7 +771,7 @@ function NodeBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
     case "image":
       return <ImageBody rfId={rfId} data={data} />;
     case "video":
-      return <VideoBody data={data} />;
+      return <VideoBody rfId={rfId} data={data} />;
     case "prompt":
       return <PromptBody data={data} />;
     case "note":

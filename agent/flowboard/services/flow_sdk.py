@@ -179,14 +179,20 @@ class FlowSDK:
         self,
         prompt: str,
         project_id: str,
-        start_media_id: str,
+        start_media_id: Optional[str] = None,
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
         paygate_tier: str = "PAYGATE_TIER_ONE",
         scene_id: Optional[str] = None,
+        start_media_ids: Optional[list[str]] = None,
     ) -> dict[str, Any]:
-        """Kick off an i2v operation. Returns ``{raw, operation_names}`` on
+        """Kick off i2v operation(s). Returns ``{raw, operation_names}`` on
         success or ``{raw, error}`` on failure. Operations are async — the
         caller polls ``check_async`` until they complete.
+
+        ``start_media_ids`` (optional list) — when provided, dispatch ONE
+        item per source image so a 4-variant upstream image produces 4
+        videos in a single batch (one operation per source). Falls back to
+        ``start_media_id`` (single) if the list is missing/empty.
         """
         model_key = (
             VIDEO_MODEL_KEYS.get(paygate_tier, {}).get(aspect_ratio)
@@ -197,20 +203,34 @@ class FlowSDK:
                 "error": f"no_video_model_for_tier_{paygate_tier}_aspect_{aspect_ratio}",
             }
 
+        # Normalise into a non-empty list of source media ids. Single
+        # `start_media_id` is the common case; `start_media_ids` is for
+        # batch-i2v from a multi-variant upstream image.
+        sources: list[str] = []
+        if start_media_ids:
+            sources = [m for m in start_media_ids if isinstance(m, str) and m]
+        if not sources and isinstance(start_media_id, str) and start_media_id:
+            sources = [start_media_id]
+        if not sources:
+            return {"raw": None, "error": "missing_start_media_id"}
+
         ts = int(time.time() * 1000)
         ctx = _client_context(project_id, paygate_tier)
-        request_item = {
-            "aspectRatio": aspect_ratio,
-            "seed": ts % 1_000_000,
-            "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
-            "videoModelKey": model_key,
-            "startImage": {"mediaId": start_media_id},
-            "metadata": {"sceneId": scene_id or str(uuid.uuid4())},
-        }
+        items: list[dict[str, Any]] = []
+        for i, mid in enumerate(sources):
+            items.append({
+                "aspectRatio": aspect_ratio,
+                # Distinct seed per item so Flow doesn't dedupe.
+                "seed": (ts + i * 9973) % 1_000_000,
+                "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
+                "videoModelKey": model_key,
+                "startImage": {"mediaId": mid},
+                "metadata": {"sceneId": scene_id or str(uuid.uuid4())},
+            })
         body = {
             "clientContext": ctx,
             "mediaGenerationContext": {"batchId": str(uuid.uuid4())},
-            "requests": [request_item],
+            "requests": items,
             "useV2ModelConfig": True,
         }
 
@@ -266,6 +286,7 @@ class FlowSDK:
         ref_media_ids: Optional[list[str]] = None,
         variant_count: int = 1,
         character_media_ids: Optional[list[str]] = None,  # legacy alias
+        prompts: Optional[list[str]] = None,
     ) -> dict[str, Any]:
         """Generate ``variant_count`` images (1-4). When ``ref_media_ids`` is
         provided, every request item is augmented with ``imageInputs`` so Flow
@@ -289,13 +310,24 @@ class FlowSDK:
                 for mid in merged_refs
             ]
 
+        # Per-variant prompts: when the caller provides `prompts`, each
+        # request_item gets its own text so the 4 variants render with
+        # different poses instead of 4 seeds of one stance. Missing /
+        # short list falls back to the single `prompt` for that slot.
+        per_item_prompts: list[str] = []
+        for i in range(n):
+            if prompts and i < len(prompts) and isinstance(prompts[i], str) and prompts[i]:
+                per_item_prompts.append(prompts[i])
+            else:
+                per_item_prompts.append(prompt)
+
         requests_arr: list[dict[str, Any]] = []
         for i in range(n):
             seed = (ts + i * 9973) % 1_000_000  # any deterministic spread is fine
             item: dict[str, Any] = {
                 "clientContext": {**ctx, "sessionId": f";{ts + i}"},
                 "seed": seed,
-                "structuredPrompt": {"parts": [{"text": prompt}]},
+                "structuredPrompt": {"parts": [{"text": per_item_prompts[i]}]},
                 "imageAspectRatio": aspect_ratio,
                 "imageModelName": IMAGE_MODEL_NAME,
             }

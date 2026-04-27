@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useGenerationStore } from "../store/generation";
 import { useBoardStore } from "../store/board";
-import { autoPrompt as autoPromptApi, mediaUrl } from "../api/client";
+import {
+  autoPrompt as autoPromptApi,
+  autoPromptBatch as autoPromptBatchApi,
+  mediaUrl,
+} from "../api/client";
 
 const REF_SOURCE_TYPES = new Set(["character", "image", "visual_asset"]);
 
@@ -93,6 +97,57 @@ type ImageAspectKey = (typeof IMAGE_ASPECT_RATIOS)[number]["key"];
 type VideoAspectKey = (typeof VIDEO_ASPECT_RATIOS)[number]["key"];
 type AspectKey = ImageAspectKey | VideoAspectKey;
 
+// Map an upstream image aspect onto the closest video aspect. Square has
+// no direct video equivalent — fall back to portrait per the
+// "default-to-9:16 on mismatch" rule.
+function imageAspectToVideo(img: string | undefined): VideoAspectKey | null {
+  if (img === "IMAGE_ASPECT_RATIO_LANDSCAPE") return "VIDEO_ASPECT_RATIO_LANDSCAPE";
+  if (img === "IMAGE_ASPECT_RATIO_PORTRAIT") return "VIDEO_ASPECT_RATIO_PORTRAIT";
+  if (img === "IMAGE_ASPECT_RATIO_SQUARE") return "VIDEO_ASPECT_RATIO_PORTRAIT";
+  return null;
+}
+
+// Walk upstream of the target node, collect each upstream's aspectRatio,
+// then apply the user's rule:
+//   • single distinct aspect → match it
+//   • multiple distinct aspects → fall back to 9:16
+//   • zero upstream / unknown → caller's default
+function pickDefaultAspect(
+  rfId: string,
+  targetType: string,
+  nodes: ReturnType<typeof useBoardStore.getState>["nodes"],
+  edges: ReturnType<typeof useBoardStore.getState>["edges"],
+): AspectKey | null {
+  const upstreamAspects: string[] = [];
+  for (const e of edges) {
+    if (e.target !== rfId) continue;
+    const src = nodes.find((n) => n.id === e.source);
+    if (!src) continue;
+    const ar = src.data.aspectRatio;
+    if (typeof ar === "string" && ar.length > 0) upstreamAspects.push(ar);
+  }
+  if (upstreamAspects.length === 0) return null;
+
+  if (targetType === "video") {
+    const mapped = upstreamAspects
+      .map(imageAspectToVideo)
+      .filter((x): x is VideoAspectKey => x !== null);
+    if (mapped.length === 0) return null;
+    const unique = new Set(mapped);
+    if (unique.size === 1) return mapped[0];
+    return "VIDEO_ASPECT_RATIO_PORTRAIT";
+  }
+  // Image (and character — though character has its own opinionated
+  // default; the caller short-circuits before reaching here).
+  const validImg = upstreamAspects.filter((a): a is ImageAspectKey =>
+    IMAGE_ASPECT_RATIOS.some((p) => p.key === a),
+  );
+  if (validImg.length === 0) return null;
+  const unique = new Set(validImg);
+  if (unique.size === 1) return validImg[0];
+  return "IMAGE_ASPECT_RATIO_PORTRAIT";
+}
+
 export function GenerationDialog() {
   const openDialog = useGenerationStore((s) => s.openDialog);
   const closeGenerationDialog = useGenerationStore((s) => s.closeGenerationDialog);
@@ -117,6 +172,11 @@ export function GenerationDialog() {
   const [autoBuilding, setAutoBuilding] = useState(false);
   const [autoPromptUsed, setAutoPromptUsed] = useState(false);
 
+  // Per-variant selection for multi-source i2v. Default: all selected.
+  // Stored as a Set of indices so the UI can toggle individual variants
+  // and "All / None" without juggling parallel arrays.
+  const [selectedSourceIdx, setSelectedSourceIdx] = useState<Set<number>>(new Set());
+
   const dialogRef = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLTextAreaElement>(null);
   const triggerRef = useRef<Element | null>(null);
@@ -131,10 +191,16 @@ export function GenerationDialog() {
   const isVideo = targetType === "video";
   const isCharacter = targetType === "character";
 
-  // Find upstream source image for video nodes
+  // Find upstream source image for video nodes. When the upstream has
+  // multiple variants, we batch-i2v one video per variant — `sourceMediaIds`
+  // captures the full set; `sourceMediaId` is the active variant for the
+  // legacy single-source path.
   const sourceEdge = isVideo ? edges.find((e) => e.target === rfId) : undefined;
   const sourceNode = sourceEdge ? nodes.find((n) => n.id === sourceEdge.source) : undefined;
   const sourceMediaId = sourceNode?.data.mediaId ?? null;
+  const sourceMediaIds: string[] = isVideo
+    ? sourceNode?.data.mediaIds ?? (sourceMediaId ? [sourceMediaId] : [])
+    : [];
 
   // Image nodes: list every upstream node feeding this one as a reference
   // image (character / image / visual_asset that has a mediaId).
@@ -157,15 +223,29 @@ export function GenerationDialog() {
       setPrompt(openDialog.prompt);
       const openNode = nodes.find((n) => n.id === rfId);
       const openNodeType = openNode?.data.type ?? "image";
-      // Character → 1:1 portrait headshot is the cleanest default for a
-      // consistent reference. Video → landscape. Image → landscape.
-      setAspectRatio(
-        openNodeType === "video"
-          ? "VIDEO_ASPECT_RATIO_LANDSCAPE"
-          : openNodeType === "character"
-          ? "IMAGE_ASPECT_RATIO_SQUARE"
-          : "IMAGE_ASPECT_RATIO_LANDSCAPE",
-      );
+      // Character → always 1:1 portrait headshot (its own opinionated
+      // default; ignores upstream aspect because character is the source).
+      // Image / video → match upstream aspect when available; fall back to
+      // landscape (image) / landscape (video) when the graph has no info.
+      let nextAspect: AspectKey;
+      if (openNodeType === "character") {
+        nextAspect = "IMAGE_ASPECT_RATIO_SQUARE";
+      } else {
+        const inherited = pickDefaultAspect(
+          rfId,
+          openNodeType,
+          nodes,
+          useBoardStore.getState().edges,
+        );
+        if (inherited !== null) {
+          nextAspect = inherited;
+        } else if (openNodeType === "video") {
+          nextAspect = "VIDEO_ASPECT_RATIO_LANDSCAPE";
+        } else {
+          nextAspect = "IMAGE_ASPECT_RATIO_LANDSCAPE";
+        }
+      }
+      setAspectRatio(nextAspect);
       setPaygateTier("PAYGATE_TIER_ONE");
       setVariants(1);
       setCamera("static");
@@ -174,6 +254,18 @@ export function GenerationDialog() {
       setCharExtras("");
       setAutoBuilding(false);
       setAutoPromptUsed(false);
+      // Default-select every upstream source variant for video targets so
+      // the user just hits Generate when they want all videos.
+      const upstreamEdge = useBoardStore
+        .getState()
+        .edges.find((e) => e.target === rfId);
+      const upstreamNode = upstreamEdge
+        ? useBoardStore.getState().nodes.find((n) => n.id === upstreamEdge.source)
+        : undefined;
+      const ups =
+        upstreamNode?.data.mediaIds ??
+        (upstreamNode?.data.mediaId ? [upstreamNode.data.mediaId] : []);
+      setSelectedSourceIdx(new Set(ups.map((_, i) => i)));
       triggerRef.current = document.activeElement;
       // Focus textarea on open
       setTimeout(() => firstFocusRef.current?.focus(), 50);
@@ -247,10 +339,12 @@ export function GenerationDialog() {
       closeGenerationDialog();
       return;
     }
-    // Image / video branch — if user left the prompt blank, synthesise one
-    // from upstream briefs (composition prompt for image, motion prompt for
-    // video) before dispatching.
+    // Image / video branch — if user left the prompt blank, synthesise
+    // from upstream briefs (composition prompt for image, motion prompt
+    // for video) before dispatching. For image with variants > 1 use the
+    // batch endpoint so each variant gets its own pose-distinct prompt.
     let finalPrompt = prompt;
+    let perVariantPrompts: string[] | undefined;
     if (!finalPrompt.trim()) {
       const dbId = parseInt(rfId, 10);
       if (isNaN(dbId)) {
@@ -258,9 +352,21 @@ export function GenerationDialog() {
       }
       setAutoBuilding(true);
       try {
-        const res = await autoPromptApi(dbId, isVideo ? { camera } : undefined);
-        finalPrompt = res.prompt;
-        setPrompt(finalPrompt);
+        if (!isVideo && variants > 1) {
+          const res = await autoPromptBatchApi(dbId, variants);
+          perVariantPrompts = res.prompts;
+          // Show all N prompts joined so the user can verify before
+          // dispatch — we don't dispatch until they re-click Generate
+          // (so they see what was synthesised first time around either)…
+          // actually simpler: dispatch immediately with the first as the
+          // "display" prompt; full per-variant list goes through opts.
+          finalPrompt = res.prompts[0] ?? "";
+          setPrompt(res.prompts.join("\n\n— variant —\n\n"));
+        } else {
+          const res = await autoPromptApi(dbId, isVideo ? { camera } : undefined);
+          finalPrompt = res.prompt;
+          setPrompt(finalPrompt);
+        }
         setAutoPromptUsed(true);
       } catch (err) {
         setAutoBuilding(false);
@@ -282,12 +388,21 @@ export function GenerationDialog() {
       const videoPrompt = camInstruction
         ? `${finalPrompt}. ${camInstruction}`
         : finalPrompt;
+      // Filter the upstream variants to the user's selection — the dialog
+      // shows one toggleable thumbnail per variant + an All/None action.
+      const picked = sourceMediaIds.filter((_, i) => selectedSourceIdx.has(i));
+      const useMulti = picked.length > 1;
       dispatchGeneration(rfId, {
         prompt: videoPrompt,
         aspectRatio,
         paygateTier,
         kind: "video",
-        sourceMediaId: sourceMediaId ?? undefined,
+        sourceMediaId: useMulti ? undefined : picked[0],
+        sourceMediaIds: useMulti ? picked : undefined,
+        // Tell the node UI how many video tiles to reserve while pending —
+        // otherwise it defaults to 1 placeholder even though we're
+        // dispatching N i2v ops.
+        variantCount: picked.length,
       });
     } else {
       dispatchGeneration(rfId, {
@@ -295,17 +410,18 @@ export function GenerationDialog() {
         aspectRatio,
         paygateTier,
         variantCount: variants,
+        prompts: perVariantPrompts,
       });
     }
     closeGenerationDialog();
   }
 
   // Both image and video allow empty prompt — we'll auto-synth on submit.
-  // Video still needs a connected source image.
+  // Video needs at least one selected source variant.
   const canGenerate = isCharacter
     ? charGender !== null || charCountry !== null || charExtras.trim().length > 0
     : isVideo
-    ? sourceMediaId !== null && !autoBuilding
+    ? selectedSourceIdx.size > 0 && !autoBuilding
     : !autoBuilding;
 
   return (
@@ -444,21 +560,88 @@ export function GenerationDialog() {
           </>
         )}
 
-        {/* Source image (video only — i2v, single image input) */}
+        {/* Source image (video only — i2v, multi-select variants → N videos) */}
         {isVideo && (
           <div className="gen-dialog__field">
-            <span className="gen-dialog__label">Source image</span>
-            {sourceMediaId && sourceNode ? (
-              <div className="source-image-row">
-                <img
-                  className="source-image-row__thumb"
-                  src={mediaUrl(sourceMediaId)}
-                  alt={sourceNode.data.title}
-                />
-                <span className="source-image-row__label">
-                  #{sourceNode.data.shortId}
-                </span>
-              </div>
+            <div className="gen-dialog__label-row">
+              <span className="gen-dialog__label">
+                Source image{sourceMediaIds.length > 1 ? `s (${sourceMediaIds.length})` : ""}
+              </span>
+              {sourceMediaIds.length > 1 && (
+                <div className="source-select-actions">
+                  <button
+                    type="button"
+                    className="source-select-mini"
+                    onClick={() =>
+                      setSelectedSourceIdx(
+                        new Set(sourceMediaIds.map((_, i) => i)),
+                      )
+                    }
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    className="source-select-mini"
+                    onClick={() => setSelectedSourceIdx(new Set())}
+                  >
+                    None
+                  </button>
+                </div>
+              )}
+            </div>
+            {sourceMediaIds.length > 0 && sourceNode ? (
+              <>
+                <div className="source-image-row">
+                  {sourceMediaIds.map((mid, i) => {
+                    const checked = selectedSourceIdx.has(i);
+                    return (
+                      <button
+                        key={mid}
+                        type="button"
+                        className={`source-thumb${checked ? " source-thumb--checked" : ""}`}
+                        onClick={() => {
+                          setSelectedSourceIdx((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(i)) next.delete(i);
+                            else next.add(i);
+                            return next;
+                          });
+                        }}
+                        aria-pressed={checked}
+                        aria-label={`Variant ${i + 1}${checked ? " selected" : ""}`}
+                      >
+                        <img
+                          className="source-image-row__thumb"
+                          src={mediaUrl(mid)}
+                          alt={sourceNode.data.title}
+                        />
+                        <span className="source-thumb__check" aria-hidden="true">
+                          {checked ? "✓" : ""}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  <span className="source-image-row__label">
+                    #{sourceNode.data.shortId}
+                  </span>
+                </div>
+                <p className="gen-dialog__hint">
+                  {selectedSourceIdx.size === 0 ? (
+                    <span style={{ color: "#ef4444" }}>
+                      Chọn ít nhất 1 variant để gen video.
+                    </span>
+                  ) : (
+                    <>
+                      Sẽ gen <strong>{selectedSourceIdx.size} video</strong>
+                      {selectedSourceIdx.size === sourceMediaIds.length
+                        ? " (tất cả variants)"
+                        : ` (${selectedSourceIdx.size}/${sourceMediaIds.length} variants)`}
+                      — cùng prompt + camera setting.
+                    </>
+                  )}
+                </p>
+              </>
             ) : (
               <div className="source-image-row source-image-row--empty">
                 Connect an upstream image node with rendered media first

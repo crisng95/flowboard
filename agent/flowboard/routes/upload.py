@@ -67,6 +67,92 @@ def _sniff_image_mime(raw: bytes) -> Optional[str]:
     return None
 
 
+def _classify_aspect(width: int, height: int) -> str:
+    """Classify a pixel size into Flow's IMAGE_ASPECT_RATIO_* enum so the
+    frontend can default a downstream gen-dialog to match the upstream
+    asset's aspect (matches what `dispatchGeneration` later persists for
+    AI-generated nodes)."""
+    if width <= 0 or height <= 0:
+        return "IMAGE_ASPECT_RATIO_LANDSCAPE"
+    ratio = width / height
+    # 10% tolerance band around 1:1 → square. flowkit / Veo's enums only
+    # have square / portrait / landscape — anything ratio-close maps to
+    # the nearest bucket.
+    if 0.91 <= ratio <= 1.1:
+        return "IMAGE_ASPECT_RATIO_SQUARE"
+    if ratio > 1.1:
+        return "IMAGE_ASPECT_RATIO_LANDSCAPE"
+    return "IMAGE_ASPECT_RATIO_PORTRAIT"
+
+
+def _sniff_image_dimensions(raw: bytes) -> Optional[tuple[int, int]]:
+    """Extract (width, height) from PNG / JPEG / WebP / GIF magic-block
+    headers without spinning up Pillow — same defence-in-depth philosophy
+    as ``_sniff_image_mime``. Returns None when format is unknown or the
+    header is truncated."""
+    if len(raw) < 24:
+        return None
+    # PNG: IHDR after the 8-byte sig holds width, height as big-endian u32
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        try:
+            w = int.from_bytes(raw[16:20], "big")
+            h = int.from_bytes(raw[20:24], "big")
+            return w, h
+        except Exception:  # noqa: BLE001
+            return None
+    # GIF: 6-byte sig + 2 bytes width LE + 2 bytes height LE
+    if raw[:6] in (b"GIF87a", b"GIF89a"):
+        try:
+            w = int.from_bytes(raw[6:8], "little")
+            h = int.from_bytes(raw[8:10], "little")
+            return w, h
+        except Exception:  # noqa: BLE001
+            return None
+    # WebP (VP8/VP8L/VP8X) — only handle the simple lossy VP8 case fully;
+    # we still extract via the VP8X chunk for the extended format.
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        chunk = raw[12:16]
+        if chunk == b"VP8 " and len(raw) >= 30:
+            w = int.from_bytes(raw[26:28], "little") & 0x3FFF
+            h = int.from_bytes(raw[28:30], "little") & 0x3FFF
+            return w, h
+        if chunk == b"VP8L" and len(raw) >= 25:
+            b = raw[21:25]
+            w = ((b[1] & 0x3F) << 8 | b[0]) + 1
+            h = ((b[3] & 0x0F) << 10 | b[2] << 2 | (b[1] & 0xC0) >> 6) + 1
+            return w, h
+        if chunk == b"VP8X" and len(raw) >= 30:
+            w = (int.from_bytes(raw[24:27], "little") & 0xFFFFFF) + 1
+            h = (int.from_bytes(raw[27:30], "little") & 0xFFFFFF) + 1
+            return w, h
+        return None
+    # JPEG: scan for SOF0/SOF1/SOF2 marker (FFC0..FFC3 etc.)
+    if raw.startswith(b"\xff\xd8\xff"):
+        i = 2
+        n = len(raw)
+        sof_markers = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+        try:
+            while i < n - 9:
+                if raw[i] != 0xFF:
+                    return None
+                marker = raw[i + 1]
+                # Standalone markers / restart markers — skip without length
+                if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7:
+                    i += 2
+                    continue
+                # Segment with length
+                seg_len = int.from_bytes(raw[i + 2 : i + 4], "big")
+                if marker in sof_markers:
+                    h = int.from_bytes(raw[i + 5 : i + 7], "big")
+                    w = int.from_bytes(raw[i + 7 : i + 9], "big")
+                    return w, h
+                i += 2 + seg_len
+            return None
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
 def _is_public_host(host: str) -> bool:
     """Reject SSRF targets — link uploads must point to a public host, never
     loopback / private / link-local. The agent runs on the user's box; without
@@ -140,7 +226,14 @@ async def _ingest_image_bytes(
                 row.node_id = node_id
         s.add(row)
         s.commit()
-    return {"media_id": media_id, "mime": mime, "size": len(raw)}
+    out: dict = {"media_id": media_id, "mime": mime, "size": len(raw)}
+    dims = _sniff_image_dimensions(raw)
+    if dims is not None:
+        w, h = dims
+        out["width"] = w
+        out["height"] = h
+        out["aspect_ratio"] = _classify_aspect(w, h)
+    return out
 
 
 @router.post("/upload")

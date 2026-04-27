@@ -59,7 +59,10 @@ export function ResultViewer() {
   // Reset active variant index and media state when viewer opens for a different node
   useEffect(() => {
     if (rfId !== null) {
-      setActiveIdx(0);
+      // Honor the idx the caller passed via openResultViewer(rfId, idx)
+      // so clicking a specific tile in the node card opens at that
+      // variant. Bound by current mediaIds length (best-effort).
+      setActiveIdx(openViewer.idx ?? 0);
       setMediaReady(false);
       setStatus(null);
       triggerRef.current = document.activeElement;

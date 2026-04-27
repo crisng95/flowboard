@@ -40,6 +40,25 @@ def _png_chunk(tag: bytes, data: bytes) -> bytes:
 # ── route tests ───────────────────────────────────────────────────────────
 
 
+def test_classify_aspect_buckets():
+    """Tolerance band of 10% around 1:1 → square; otherwise nearest."""
+    from flowboard.routes.upload import _classify_aspect
+    assert _classify_aspect(1024, 1024) == "IMAGE_ASPECT_RATIO_SQUARE"
+    # 1.05:1 is within the tolerance → still square
+    assert _classify_aspect(1050, 1000) == "IMAGE_ASPECT_RATIO_SQUARE"
+    assert _classify_aspect(1920, 1080) == "IMAGE_ASPECT_RATIO_LANDSCAPE"
+    assert _classify_aspect(1080, 1920) == "IMAGE_ASPECT_RATIO_PORTRAIT"
+    assert _classify_aspect(1600, 800) == "IMAGE_ASPECT_RATIO_LANDSCAPE"
+    assert _classify_aspect(0, 0) == "IMAGE_ASPECT_RATIO_LANDSCAPE"
+
+
+def test_sniff_png_dimensions():
+    from flowboard.routes.upload import _sniff_image_dimensions
+    # _png_bytes() returns a 1×1 PNG; dimensions in IHDR are ints
+    dims = _sniff_image_dimensions(_png_bytes())
+    assert dims == (1, 1)
+
+
 def test_upload_rejects_non_image_mime(client):
     r = client.post(
         "/api/upload",
@@ -106,6 +125,11 @@ def test_upload_happy_path(client, monkeypatch):
     assert body["media_id"] == media_uuid
     assert body["mime"] == "image/png"
     assert body["size"] == len(payload)
+    # Upload now classifies the image's aspect ratio so downstream nodes
+    # can default-match. _png_bytes() produces a 1×1 → square.
+    assert body["aspect_ratio"] == "IMAGE_ASPECT_RATIO_SQUARE"
+    assert body["width"] == 1
+    assert body["height"] == 1
 
     # Cache file should exist.
     cached = media_service.cached_path(media_uuid)

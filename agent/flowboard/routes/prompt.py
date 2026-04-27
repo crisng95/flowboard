@@ -39,3 +39,30 @@ async def auto_prompt(body: AutoPromptBody) -> AutoPromptResponse:
     except prompt_synth.PromptSynthError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return AutoPromptResponse(node_id=body.node_id, prompt=text)
+
+
+class AutoPromptBatchBody(BaseModel):
+    node_id: int
+    count: int
+    camera: Optional[str] = None
+
+
+class AutoPromptBatchResponse(BaseModel):
+    node_id: int
+    prompts: list[str]
+
+
+@router.post("/auto-batch", response_model=AutoPromptBatchResponse)
+async def auto_prompt_batch(body: AutoPromptBatchBody) -> AutoPromptBatchResponse:
+    """Return N pose-distinct prompts so that an N-variant image gen
+    actually produces N different shots instead of N seeds of the same
+    stance."""
+    if body.count < 1 or body.count > 8:
+        raise HTTPException(status_code=400, detail="count must be 1..8")
+    try:
+        prompts = await prompt_synth.auto_prompt_batch(
+            body.node_id, body.count, camera=body.camera
+        )
+    except prompt_synth.PromptSynthError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return AutoPromptBatchResponse(node_id=body.node_id, prompts=prompts)

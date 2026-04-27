@@ -3,20 +3,26 @@ import { ensureBoardProject, createRequest, getRequest, patchNode } from "../api
 import { requestAutoBrief } from "../api/autoBrief";
 import { useBoardStore } from "./board";
 
-const AUTO_BRIEF_TYPES = new Set(["character", "visual_asset"]);
+// Image nodes also need aiBrief now: when they feed into a downstream
+// video, the motion synth uses the source still's brief to detect SCENE
+// (studio / street / café / outdoor) and pick environment-appropriate
+// motion vocabulary. Without this the video synth has no idea the source
+// is a NYC street and outputs studio editorial poses instead of casual
+// lifestyle motion.
+const AUTO_BRIEF_TYPES = new Set(["character", "visual_asset", "image"]);
 
 type PollEntry = { requestId: number; timerId: ReturnType<typeof setTimeout> | null };
 
 interface GenerationState {
   active: Record<string, PollEntry>;
   openDialog: { rfId: string | null; prompt: string };
-  openViewer: { rfId: string | null };
+  openViewer: { rfId: string | null; idx: number };
   projectId: string | null;
   error: string | null;
 
   openGenerationDialog(rfId: string, prompt: string): void;
   closeGenerationDialog(): void;
-  openResultViewer(rfId: string): void;
+  openResultViewer(rfId: string, idx?: number): void;
   closeResultViewer(): void;
 
   ensureProjectId(): Promise<string | null>;
@@ -29,7 +35,15 @@ interface GenerationState {
       paygateTier?: string;
       kind?: "image" | "video";
       sourceMediaId?: string;
+      // Multi-source-image i2v: when the upstream image has N variants
+      // we generate one video per variant. Backend sends N items in the
+      // batchAsyncGenerate body so all are dispatched together.
+      sourceMediaIds?: string[];
       variantCount?: number;
+      // Per-variant prompts. When provided, each variant uses its own
+      // prompt — required for batch auto-prompt to keep poses distinct
+      // across the 4 generated images.
+      prompts?: string[];
     },
   ): Promise<void>;
 
@@ -37,8 +51,6 @@ interface GenerationState {
     rfId: string,
     opts: { prompt: string; refMediaIds?: string[]; aspectRatio?: string },
   ): Promise<void>;
-
-  applyVariant(rfId: string, idx: number): void;
 
   cancelGeneration(rfId: string): void;
   clearError(): void;
@@ -66,7 +78,7 @@ function collectUpstreamRefMediaIds(targetRfId: string): string[] {
 export const useGenerationStore = create<GenerationState>((set, get) => ({
   active: {},
   openDialog: { rfId: null, prompt: "" },
-  openViewer: { rfId: null },
+  openViewer: { rfId: null, idx: 0 },
   projectId: null,
   error: null,
 
@@ -78,12 +90,12 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     set({ openDialog: { rfId: null, prompt: "" } });
   },
 
-  openResultViewer(rfId) {
-    set({ openViewer: { rfId } });
+  openResultViewer(rfId, idx = 0) {
+    set({ openViewer: { rfId, idx } });
   },
 
   closeResultViewer() {
-    set({ openViewer: { rfId: null } });
+    set({ openViewer: { rfId: null, idx: 0 } });
   },
 
   async ensureProjectId() {
@@ -110,7 +122,9 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     paygateTier?: string;
     kind?: "image" | "video";
     sourceMediaId?: string;
+    sourceMediaIds?: string[];
     variantCount?: number;
+    prompts?: string[];
   }) {
     const projectId = await get().ensureProjectId();
     if (projectId === null) return;
@@ -139,21 +153,28 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     try {
       const nodeDbId = parseInt(rfId, 10);
       if (kind === "video") {
-        if (!opts.sourceMediaId) {
+        const hasMulti =
+          Array.isArray(opts.sourceMediaIds) && opts.sourceMediaIds.length > 0;
+        if (!hasMulti && !opts.sourceMediaId) {
           useBoardStore.getState().updateNodeData(rfId, { status: "error", error: "no source media" });
           set({ error: "Video generation requires a source image (connect an upstream image node)" });
           return;
         }
+        const videoParams: Record<string, unknown> = {
+          prompt: opts.prompt,
+          project_id: projectId,
+          aspect_ratio: opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_LANDSCAPE",
+          paygate_tier: opts.paygateTier ?? "PAYGATE_TIER_ONE",
+        };
+        if (hasMulti) {
+          videoParams.start_media_ids = opts.sourceMediaIds;
+        } else {
+          videoParams.start_media_id = opts.sourceMediaId;
+        }
         reqDto = await createRequest({
           type: "gen_video",
           node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
-          params: {
-            prompt: opts.prompt,
-            project_id: projectId,
-            start_media_id: opts.sourceMediaId,
-            aspect_ratio: opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_LANDSCAPE",
-            paygate_tier: opts.paygateTier ?? "PAYGATE_TIER_ONE",
-          },
+          params: videoParams,
         });
       } else {
         const refMediaIds = collectUpstreamRefMediaIds(rfId);
@@ -166,6 +187,12 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         };
         if (refMediaIds.length > 0) {
           params.ref_media_ids = refMediaIds;
+        }
+        // Per-variant prompts: when present, each variant uses its own
+        // text instead of all sharing `params.prompt`. Backend falls back
+        // to single prompt when missing/short.
+        if (opts.prompts && opts.prompts.length > 0) {
+          params.prompts = opts.prompts;
         }
         reqDto = await createRequest({
           type: "gen_image",
@@ -215,6 +242,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               mediaId,
               mediaIds,
               aiBrief: undefined,
+              aspectRatio: opts.aspectRatio,
             });
             // Persist to backend so the node survives page reload.
             const dbId = parseInt(rfId, 10);
@@ -231,6 +259,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                   mediaIds,
                   variantCount: d?.variantCount ?? mediaIds.length,
                   aiBrief: undefined,
+                  aspectRatio: opts.aspectRatio,
                 },
               }).catch(() => {
                 // Non-fatal: the in-memory state is still correct for this session.
@@ -369,6 +398,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             status: "done",
             mediaId,
             mediaIds,
+            aspectRatio: opts.aspectRatio,
           });
           const dbId = parseInt(rfId, 10);
           if (!isNaN(dbId) && mediaId) {
@@ -381,6 +411,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                 mediaId,
                 mediaIds,
                 variantCount: 1,
+                aspectRatio: opts.aspectRatio,
               },
             }).catch(() => {});
           }
@@ -411,27 +442,6 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       }
     };
     setTimeout(poll, 800);
-  },
-
-  applyVariant(rfId, idx) {
-    const node = useBoardStore.getState().nodes.find((n) => n.id === rfId);
-    if (!node) return;
-    const ids = node.data.mediaIds ?? [];
-    const target = ids[idx];
-    if (!target) return;
-    useBoardStore.getState().updateNodeData(rfId, { mediaId: target });
-    const dbId = parseInt(rfId, 10);
-    if (!isNaN(dbId)) {
-      patchNode(dbId, {
-        data: {
-          title: node.data.title,
-          prompt: node.data.prompt,
-          mediaId: target,
-          mediaIds: ids,
-          variantCount: node.data.variantCount,
-        },
-      }).catch(() => {});
-    }
   },
 
   cancelGeneration(rfId) {

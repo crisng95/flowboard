@@ -96,6 +96,14 @@ async def _handle_gen_image(params: dict) -> tuple[dict, Optional[str]]:
     variant_count = 1
     if isinstance(raw_count, int) and raw_count > 0:
         variant_count = raw_count
+    # Per-variant prompts (optional). When provided, each variant gets its
+    # own text — used by auto-prompt batch mode so variants don't collapse
+    # to the same stance.
+    raw_prompts = params.get("prompts")
+    per_variant_prompts: Optional[list[str]] = None
+    if isinstance(raw_prompts, list):
+        cleaned = [p for p in raw_prompts if isinstance(p, str) and p.strip()]
+        per_variant_prompts = cleaned or None
     resp = await get_flow_sdk().gen_image(
         prompt=prompt.strip(),
         project_id=project_id,
@@ -103,6 +111,7 @@ async def _handle_gen_image(params: dict) -> tuple[dict, Optional[str]]:
         paygate_tier=tier,
         ref_media_ids=ref_media_ids,
         variant_count=variant_count,
+        prompts=per_variant_prompts,
     )
     if resp.get("error"):
         return resp, str(resp["error"])[:200]
@@ -132,6 +141,12 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
     prompt = params.get("prompt")
     project_id = params.get("project_id")
     start_media_id = params.get("start_media_id") or params.get("startMediaId")
+    raw_starts = params.get("start_media_ids")
+    start_media_ids: Optional[list[str]] = None
+    if isinstance(raw_starts, list):
+        cleaned = [m for m in raw_starts if isinstance(m, str) and m.strip()]
+        start_media_ids = [m.strip() for m in cleaned] or None
+
     if not isinstance(prompt, str) or not prompt.strip():
         return {}, "missing_prompt"
     if not isinstance(project_id, str) or not project_id.strip():
@@ -139,7 +154,10 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
     project_id = project_id.strip()
     if not is_valid_project_id(project_id):
         return {}, "invalid_project_id"
-    if not isinstance(start_media_id, str) or not start_media_id.strip():
+    # Either a single start_media_id OR a non-empty start_media_ids list.
+    if start_media_ids is None and (
+        not isinstance(start_media_id, str) or not start_media_id.strip()
+    ):
         return {}, "missing_start_media_id"
     aspect = params.get("aspect_ratio") or "VIDEO_ASPECT_RATIO_LANDSCAPE"
     tier = params.get("paygate_tier") or "PAYGATE_TIER_ONE"
@@ -148,7 +166,10 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
     dispatch = await sdk.gen_video(
         prompt=prompt.strip(),
         project_id=project_id,
-        start_media_id=start_media_id.strip(),
+        start_media_id=start_media_id.strip()
+        if isinstance(start_media_id, str) and start_media_id.strip()
+        else None,
+        start_media_ids=start_media_ids,
         aspect_ratio=aspect,
         paygate_tier=tier,
     )
@@ -186,7 +207,12 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
             if isinstance(err, str) and err:
                 op_error = err
                 break
-            if op.get("done"):
+            # Only collect entries the FIRST time an op transitions to
+            # done — otherwise every subsequent poll re-appends them and
+            # we end up with duplicates in `media_ids` (saw 7 entries
+            # for a 4-variant gen because ops 1-3 finished early and
+            # got re-collected on each later poll).
+            if op.get("done") and not done_by_name.get(name, False):
                 done_by_name[name] = True
                 for e in op.get("media_entries") or []:
                     all_entries.append(e)
