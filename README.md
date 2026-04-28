@@ -325,6 +325,24 @@ matching vocab from the system prompt.
 
 > **Windows:** Use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install). All commands assume a Unix shell.
 
+### One-line setup (optional)
+
+If you have `make` installed, the repo ships shortcut targets that wrap
+Steps 2 + 3:
+
+```bash
+make install        # agent venv + frontend deps (uses uv if available, else pip)
+make install-dev    # same, but adds ruff + pytest extras
+make update         # upgrade agent + frontend deps in place
+make agent          # run FastAPI on :8100
+make frontend       # run Vite on :5175
+```
+
+`uv` is auto-detected (~10× faster installs). Install it once with
+`curl -LsSf https://astral.sh/uv/install.sh | sh`, or skip it and the
+Makefile falls back to stdlib `venv` + `pip`. Step 1 (loading the Chrome
+extension) still has to be done manually.
+
 ### Step 1 — load the Chrome extension
 
 ```bash

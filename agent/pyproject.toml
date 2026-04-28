@@ -1,6 +1,6 @@
 [project]
 name = "flowboard-agent"
-version = "0.0.1"
+version = "1.0.3"
 description = "Flowboard local agent: FastAPI + SQLite + extension bridge"
 requires-python = ">=3.10"
 dependencies = [
