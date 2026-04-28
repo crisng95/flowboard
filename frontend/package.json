@@ -1,7 +1,7 @@
 {
   "name": "flowboard-frontend",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
