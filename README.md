@@ -16,6 +16,7 @@
   <img src="https://img.shields.io/badge/Claude-CLI%20only-D97757?logo=anthropic&logoColor=white" alt="Claude CLI only"/>
   <img src="https://img.shields.io/badge/Tests-190%20passing-success?logo=pytest&logoColor=white" alt="190 passing"/>
   <img src="https://img.shields.io/badge/Status-personal%20local--only-orange" alt="Status"/>
+  <a href="https://www.facebook.com/groups/flowkit.flowboard.community"><img src="https://img.shields.io/badge/Community-Facebook%20Group-1877F2?logo=facebook&logoColor=white" alt="Community: Facebook Group"/></a>
 </p>
 
 <p align="center">
@@ -494,6 +495,10 @@ clean (frontend). Caveats:
   failed-request error so the user can diagnose / iterate.
 - ⚠ Auto-prompt + vision require the `claude` CLI on `PATH`. Without
   it, the `Generate` button still works if you type your own prompt.
+
+## Community
+
+Join the **[FlowKit & Flowboard Facebook Group](https://www.facebook.com/groups/flowkit.flowboard.community)** — the shared community for both projects. Post your generated shots, share node-graph patterns, ask for help with prompts, request features, or report bugs you've hit in the wild.
 
 ## Related
 
