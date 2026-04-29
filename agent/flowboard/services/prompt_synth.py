@@ -49,13 +49,22 @@ _SYNTH_SYSTEM_IMAGE = (
     "as long as the face stays toward camera.\n"
     "  • ATTITUDE: confident, charismatic, distinctive personality and "
     "presence (model 'aura'). Never stiff or generic.\n\n"
-    "When a product / wardrobe asset is in the inputs, the chosen pose "
-    "must make the GARMENT the visual hero — knees-up or full upper-body "
-    "framing.\n\n"
+    "When a product / wardrobe asset is in the inputs AND no location "
+    "reference is present, the chosen pose must make the GARMENT the "
+    "visual hero — knees-up or full upper-body framing. When a location "
+    "reference IS present, balance the framing: the garment stays "
+    "readable but the environment must be visible in frame (wider shot, "
+    "knees-up to full-body so the setting reads).\n\n"
     "Style: photoreal editorial fashion photography, sharp focus, soft "
-    "even key light, neutral indoor or studio background unless the "
-    "notes override it. No marketing language, no preamble — output the "
-    "prompt only."
+    "even key light. BACKGROUND PRIORITY — if any reference image's "
+    "brief describes an environment, location, or scene (e.g. 'park', "
+    "'street', 'café', 'jogging path', 'interior room', 'beach'), USE "
+    "that environment as the background of the shot: place the subject "
+    "INTO that scene with matching natural light, perspective, and depth "
+    "of field. Do NOT default to studio when a location reference exists "
+    "in the inputs. Only fall back to a neutral indoor/studio background "
+    "when zero location/scene references exist upstream. No marketing "
+    "language, no preamble — output the prompt only."
 )
 
 # Appended to the image system prompt when the upstream graph contains
@@ -293,6 +302,21 @@ def _format_user_message(records: list[dict], target: Node) -> str:
         )
     if by_type.get("image"):
         parts.append("Reference image(s):\n  - " + "\n  - ".join(by_type["image"]))
+        # Without this hint, the synthesiser defaults to "studio" even when
+        # one of the upstream images is clearly a location/scene reference
+        # (e.g. user attaches an outdoor jogging-path photo as the setting).
+        # Telling Claude to infer the role from the brief lets it place the
+        # subject INTO the scene instead of dropping the location entirely.
+        if len(by_type["image"]) >= 2:
+            parts.append(
+                "ROLE INFERENCE: For each reference image above, infer its "
+                "role from the brief. Briefs describing people / garments / "
+                "products → subject or wardrobe reference. Briefs describing "
+                "places / environments / outdoor or indoor scenes → SETTING "
+                "reference (use as the shot's background). Compose a single "
+                "scene that places the subject INTO any setting reference "
+                "present — never silently drop a location reference."
+            )
     if by_type.get("prompt"):
         # Prompt nodes carry reusable style/scene direction (e.g. brand
         # tone, mood reference). Treat as authoritative styling guidance —

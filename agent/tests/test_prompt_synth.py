@@ -266,6 +266,120 @@ async def test_auto_prompt_multi_subject_via_two_character_upstream(
 
 
 @pytest.mark.asyncio
+async def test_auto_prompt_image_with_location_reference_keeps_setting(
+    client, monkeypatch
+):
+    """Regression: when target has 2 image upstream — one a garment/subject
+    reference, the other a location/scene reference (no character grandparent
+    on either) — the synthesiser must surface the ROLE INFERENCE hint and
+    drop the hardcoded "studio default" so Claude places the subject INTO
+    the location instead of silently dropping it.
+
+    Scenario (the bug we're fixing): user attaches a pink-t-shirt photo +
+    a jogging-path photo to a target image. Output came back as a plain
+    studio shot of the t-shirt with the park completely missing — Claude
+    was honouring the system prompt's 'neutral indoor or studio background'
+    default rather than using the location upstream as the setting."""
+    with get_session() as s:
+        b = Board(name="loc-ref")
+        s.add(b); s.commit(); s.refresh(b)
+        garment = Node(
+            board_id=b.id, short_id="zy6g", type="image",
+            x=0, y=0, w=240, h=180,
+            data={
+                "title": "T-shirt",
+                "aiBrief": "pink crewneck cotton t-shirt worn by a model, "
+                           "plain white background, product reference",
+                "mediaId": "uuuuuuuu-zy6g-1111-1111-111111111111",
+            },
+            status="done",
+        )
+        location = Node(
+            board_id=b.id, short_id="vx3x", type="image",
+            x=0, y=0, w=240, h=180,
+            data={
+                "title": "Jogging path",
+                "aiBrief": "outdoor jogging path in a public park, trees, "
+                           "people running, bright daylight, urban park scene",
+                "mediaId": "uuuuuuuu-vx3x-1111-1111-111111111111",
+            },
+            status="done",
+        )
+        target = Node(
+            board_id=b.id, short_id="cgx0", type="image",
+            x=0, y=0, w=240, h=180,
+            data={"title": "Composed shot"},
+            status="idle",
+        )
+        s.add_all([garment, location, target]); s.commit()
+        for n in (garment, location, target):
+            s.refresh(n)
+        s.add(Edge(board_id=b.id, source_id=garment.id, target_id=target.id))
+        s.add(Edge(board_id=b.id, source_id=location.id, target_id=target.id))
+        s.commit()
+        tgt_id = target.id
+
+    captured: dict = {}
+
+    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+        captured["prompt"] = prompt
+        captured["system_prompt"] = system_prompt
+        return "Editorial photo of a model wearing a pink crewneck on a "\
+               "sunlit jogging path in a public park"
+
+    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    await prompt_synth.auto_prompt(tgt_id)
+
+    user = captured["prompt"] or ""
+    sp = captured["system_prompt"] or ""
+
+    # Both briefs surface in the user message — context is intact.
+    assert "pink crewneck" in user
+    assert "jogging path" in user
+    assert "#zy6g" in user and "#vx3x" in user
+
+    # ROLE INFERENCE hint must be present whenever 2+ image refs feed in,
+    # so Claude classifies which is subject vs setting from the briefs
+    # rather than guessing.
+    assert "ROLE INFERENCE" in user
+    assert "SETTING reference" in user
+    assert "places the subject INTO" in user
+
+    # System prompt must include the new BACKGROUND PRIORITY rule directing
+    # Claude to use any location reference as the shot's environment.
+    assert "BACKGROUND PRIORITY" in sp
+    assert "USE that environment" in sp
+    # The old hardcoded "studio default unless notes override" wording must
+    # be gone — that bias was the root cause of the location getting dropped.
+    assert "studio background unless the notes override" not in sp.lower()
+    # Studio is still the fallback when NO location ref exists.
+    assert "fall back to a neutral indoor/studio background" in sp.lower() or \
+           "fall back to studio" in sp.lower()
+
+
+@pytest.mark.asyncio
+async def test_auto_prompt_image_role_hint_skipped_when_single_image_ref(
+    client, monkeypatch
+):
+    """The ROLE INFERENCE hint only kicks in when 2+ image refs are
+    present. A single image upstream is unambiguous — no need to ask
+    Claude to classify roles."""
+    ids = _seed_board_with_chain()
+
+    captured: dict = {}
+
+    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+        captured["prompt"] = prompt
+        return "ok"
+
+    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    await prompt_synth.auto_prompt(ids["target_id"])
+    # _seed_board_with_chain has 1 character + 1 visual_asset, no image
+    # upstream → ROLE INFERENCE block must not appear.
+    assert "ROLE INFERENCE" not in (captured["prompt"] or "")
+
+
+@pytest.mark.asyncio
 async def test_auto_prompt_surfaces_prompt_nodes_as_direction(
     client, monkeypatch
 ):
