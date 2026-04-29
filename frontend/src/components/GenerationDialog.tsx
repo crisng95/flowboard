@@ -230,9 +230,6 @@ export function GenerationDialog() {
 
   const [prompt, setPrompt] = useState(openDialog.prompt);
   const [aspectRatio, setAspectRatio] = useState<AspectKey>("IMAGE_ASPECT_RATIO_LANDSCAPE");
-  const [paygateTier, setPaygateTier] = useState<"PAYGATE_TIER_ONE" | "PAYGATE_TIER_TWO">(
-    "PAYGATE_TIER_ONE",
-  );
   const [variants, setVariants] = useState(1);
   const [camera, setCamera] = useState<CameraKey>("static");
 
@@ -321,7 +318,6 @@ export function GenerationDialog() {
         }
       }
       setAspectRatio(nextAspect);
-      setPaygateTier("PAYGATE_TIER_ONE");
       setVariants(1);
       setCamera("static");
       setCharGender(null);
@@ -409,7 +405,6 @@ export function GenerationDialog() {
       dispatchGeneration(rfId, {
         prompt: built,
         aspectRatio,
-        paygateTier,
         variantCount: variants,
       });
       closeGenerationDialog();
@@ -471,7 +466,6 @@ export function GenerationDialog() {
       dispatchGeneration(rfId, {
         prompt: videoPrompt,
         aspectRatio,
-        paygateTier,
         kind: "video",
         sourceMediaId: useMulti ? undefined : picked[0],
         sourceMediaIds: useMulti ? picked : undefined,
@@ -484,7 +478,6 @@ export function GenerationDialog() {
       dispatchGeneration(rfId, {
         prompt: finalPrompt,
         aspectRatio,
-        paygateTier,
         variantCount: variants,
         prompts: perVariantPrompts,
       });
@@ -806,25 +799,6 @@ export function GenerationDialog() {
             </p>
           </div>
         )}
-
-        {/* Paygate tier */}
-        <div className="gen-dialog__field">
-          <span className="gen-dialog__label">Paygate tier</span>
-          <div className="tier-radio-row">
-            {(["PAYGATE_TIER_ONE", "PAYGATE_TIER_TWO"] as const).map((tier) => (
-              <label key={tier} className="tier-radio-label">
-                <input
-                  type="radio"
-                  name="paygate-tier"
-                  value={tier}
-                  checked={paygateTier === tier}
-                  onChange={() => setPaygateTier(tier)}
-                />
-                {tier === "PAYGATE_TIER_ONE" ? "TIER_ONE (free)" : "TIER_TWO (paid)"}
-              </label>
-            ))}
-          </div>
-        </div>
 
         {/* Variants stepper — image only */}
         {!isVideo && (

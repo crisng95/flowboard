@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useBoardStore } from "../store/board";
+import { AccountPanel } from "./AccountPanel";
 
 /**
  * Left sidebar listing every local "project" (Board). Click an item to
@@ -229,6 +230,11 @@ export function ProjectSidebar() {
           </ul>
         </>
       )}
+
+      {/* Pinned-bottom account chip — sits below the project list because
+          the list above has flex: 1 and pushes everything that follows
+          to the bottom of the column. */}
+      <AccountPanel collapsed={collapsed} />
 
       {deleteTarget && (
         <div

@@ -21,6 +21,8 @@ let metrics = {
   lastError:       null,
 };
 
+const flowUrls = ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'];
+
 // ─── URL → Log Type Classifier ─────────────────────────────
 
 function classifyUrl(url) {
@@ -61,6 +63,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 async function init() {
+  // Note: deliberately not restoring `userInfo` from storage. We used
+  // to persist it here, but Google profile fields (name + email) are
+  // PII and chrome.storage.local is plaintext + readable by other
+  // extensions on the profile that hold the `storage` permission.
+  // The agent replays user_info on every WS reconnect anyway via
+  // fetchAndPushUserInfo(token), so persistence buys nothing.
   const data = await chrome.storage.local.get(['flowKey', 'metrics', 'callbackSecret']);
   if (data.flowKey)        flowKey        = data.flowKey;
   if (data.metrics)        Object.assign(metrics, data.metrics);
@@ -84,6 +92,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     if (!token) return;
 
     // Always update — even if same token string, refresh the timestamp
+    const tokenChanged = flowKey !== token;
     flowKey = token;
     metrics.tokenCapturedAt = Date.now();
     chrome.storage.local.set({ flowKey, metrics });
@@ -92,10 +101,117 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
     }
+
+    // Resolve the user's identity (email/name/picture) once per token —
+    // saves the popup + AccountPanel from showing "Connected via
+    // extension" placeholders. The token already has the userinfo.email
+    // + userinfo.profile scopes Flow needs anyway, so this is a free
+    // call. Errors are non-fatal and silent.
+    if (tokenChanged) {
+      fetchAndPushUserInfo(token);
+    }
   },
   { urls: ['https://aisandbox-pa.googleapis.com/*', 'https://labs.google/*'] },
   ['requestHeaders', 'extraHeaders'],
 );
+
+// Sniff `clientContext.userPaygateTier` from Flow API request bodies
+// the user's Flow tab makes. Authoritative + realtime — beats guessing.
+//
+// Skip our own service-worker fetches (tabId === -1) because those go
+// through the agent's flow_sdk, which sets `userPaygateTier` from
+// whatever the agent currently thinks the tier is. Sniffing those is
+// circular — we'd just read back our own default.
+let cachedPaygateTier = null;
+
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    if (details.tabId === -1) return;
+    const raw = details?.requestBody?.raw?.[0]?.bytes;
+    if (!raw) return;
+    let text;
+    try {
+      text = new TextDecoder('utf-8').decode(raw);
+    } catch {
+      return;
+    }
+    if (!text || text.indexOf('userPaygateTier') === -1) return;
+    let body;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      return;
+    }
+    const tier =
+      body?.clientContext?.userPaygateTier ||
+      body?.json?.clientContext?.userPaygateTier;
+    if (tier !== 'PAYGATE_TIER_ONE' && tier !== 'PAYGATE_TIER_TWO') return;
+    if (cachedPaygateTier === tier) return; // unchanged, skip the WS send
+    cachedPaygateTier = tier;
+    console.log('[Flowboard] paygate tier sniffed:', tier);
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'paygate_tier', paygateTier: tier }));
+    }
+  },
+  {
+    urls: [
+      'https://aisandbox-pa.googleapis.com/*',
+      'https://labs.google/fx/api/trpc/*',
+    ],
+  },
+  ['requestBody'],
+);
+
+// Nudge the Flow tab to send a real API request so the sniffer above
+// gets a tier within seconds of the extension loading. Without this
+// the panel says "Detecting…" indefinitely if the user just sits in
+// Flowboard without touching their Flow tab. Calling
+// `project.list` on TRPC is cheap, idempotent, and Flow web does it
+// already during normal use — we're just front-running the timing.
+async function nudgeFlowTab() {
+  try {
+    const tabs = await chrome.tabs.query({ url: flowUrls });
+    if (!tabs.length) return;
+    await chrome.scripting.executeScript({
+      target: { tabId: tabs[0].id },
+      func: () => {
+        // Trigger Flow web's own bootstrap fetch — it'll re-issue API
+        // calls including tier in their request bodies.
+        try { window.dispatchEvent(new Event('focus')); } catch {}
+        try { fetch('/fx/api/trpc/project.list', { credentials: 'include' }); } catch {}
+      },
+    });
+  } catch (e) {
+    console.warn('[Flowboard] tier nudge failed:', e?.message || e);
+  }
+}
+
+let cachedUserInfo = null;
+
+async function fetchAndPushUserInfo(token) {
+  try {
+    const resp = await fetch(
+      'https://www.googleapis.com/oauth2/v2/userinfo',
+      { headers: { authorization: `Bearer ${token}` } },
+    );
+    if (!resp.ok) {
+      console.warn('[Flowboard] userinfo fetch returned', resp.status);
+      return;
+    }
+    const info = await resp.json();
+    // In-memory only — DO NOT persist to chrome.storage.local. PII
+    // there is plaintext on disk and readable by other extensions
+    // with the `storage` permission. Lifetime = service-worker
+    // lifetime; rebuilt on next token rotation if the SW recycles.
+    cachedUserInfo = info;
+    console.log('[Flowboard] userinfo captured for', info?.email || '<no email>');
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'user_info', userInfo: info }));
+    }
+  } catch (e) {
+    console.warn('[Flowboard] userinfo fetch failed:', e?.message || e);
+  }
+}
 
 // ─── WebSocket to Agent ─────────────────────────────────────
 
@@ -130,6 +246,23 @@ function connectToAgent() {
     // Resend token immediately so agent can start without waiting for a capture
     if (flowKey) {
       ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+    }
+    // Replay cached userinfo so the agent's AccountPanel populates on
+    // reconnect without waiting for the next token rotation. If we
+    // never resolved one yet but a token IS present, kick off a fetch.
+    if (cachedUserInfo) {
+      ws.send(JSON.stringify({ type: 'user_info', userInfo: cachedUserInfo }));
+    } else if (flowKey) {
+      fetchAndPushUserInfo(flowKey);
+    }
+    if (cachedPaygateTier) {
+      ws.send(JSON.stringify({ type: 'paygate_tier', paygateTier: cachedPaygateTier }));
+    } else if (flowKey) {
+      // No tier captured yet this session — nudge Flow web to send a
+      // request so the body sniffer above picks one up within a couple
+      // of seconds rather than waiting for the user to interact with
+      // their Flow tab.
+      nudgeFlowTab();
     }
   };
 
@@ -325,6 +458,31 @@ async function handleApiRequest(msg) {
 
 let _openingFlowTab = false;
 
+const FLOW_URL = 'https://labs.google/fx/tools/flow';
+
+/**
+ * Open a Flow tab even when Chrome has zero windows. `chrome.tabs.create`
+ * throws "No current window" in that state because it needs a window
+ * context to attach to; `chrome.windows.create` spawns a fresh window
+ * and tab in one call. Falls back through both paths so we recover from
+ * "all-windows-closed but service-worker-still-alive" silently.
+ */
+async function openFlowTabResilient(active = false) {
+  try {
+    return await chrome.tabs.create({ url: FLOW_URL, active });
+  } catch (e) {
+    const msg = e?.message || '';
+    if (!msg.includes('No current window')) throw e;
+    console.log('[Flowboard] No Chrome window — spawning a fresh one for Flow');
+    const win = await chrome.windows.create({
+      url: FLOW_URL,
+      focused: false,
+      state: 'minimized',
+    });
+    return win.tabs?.[0] ?? null;
+  }
+}
+
 async function captureTokenFromFlowTab() {
   const tabs = await chrome.tabs.query({
     url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
@@ -335,7 +493,7 @@ async function captureTokenFromFlowTab() {
     _openingFlowTab = true;
     try {
       console.log('[Flowboard] No Flow tab — opening in background');
-      await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: false });
+      await openFlowTabResilient(false);
     } catch (e) {
       console.error('[Flowboard] Failed to open Flow tab:', e);
     } finally {
@@ -376,7 +534,11 @@ async function requestCaptchaFromTab(tabId, requestId, pageAction) {
       msg.includes('Could not establish connection');
     if (!shouldInject) throw error;
 
-    // Inject content script and retry
+    // Inject content script and retry. Both the inject + re-send can
+    // throw "No current window" / "No tab with id" if the tab dies in
+    // between (Chrome aggressively discards background tabs). Surface
+    // those verbatim so solveCaptcha's loop can move to the next
+    // candidate instead of bubbling a confusing message to the user.
     await chrome.scripting.executeScript({
       target: { tabId },
       files: ['content.js'],
@@ -390,36 +552,83 @@ async function requestCaptchaFromTab(tabId, requestId, pageAction) {
   }
 }
 
-const flowUrls = ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'];
+/** Try to wake a discarded Flow tab so `sendMessage` can reach it.
+ *  Chrome auto-discards backgrounded tabs to save memory; the tab still
+ *  shows up in `chrome.tabs.query` but cross-context calls fail with
+ *  "No current window" / "No tab with id". A reload re-hydrates it. */
+async function reviveTabIfNeeded(tab) {
+  if (!tab?.discarded) return tab;
+  try {
+    await chrome.tabs.reload(tab.id);
+    await sleep(2500);
+    const fresh = await chrome.tabs.get(tab.id);
+    return fresh;
+  } catch {
+    return null;
+  }
+}
 
 async function solveCaptcha(requestId, captchaAction) {
   const tabs = await chrome.tabs.query({ url: flowUrls });
 
+  // No Flow tab at all — spawn one (handles "no Chrome window" via the
+  // resilient helper).
   if (!tabs.length) {
-    // Auto-open Flow tab and wait briefly
     try {
-      await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: false });
+      await openFlowTabResilient(false);
       await sleep(3000);
-      const retryTabs = await chrome.tabs.query({ url: flowUrls });
-      if (!retryTabs.length) return { error: 'NO_FLOW_TAB' };
-      const resp = await Promise.race([
-        requestCaptchaFromTab(retryTabs[0].id, requestId, captchaAction),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('CAPTCHA_TIMEOUT')), 30000)),
-      ]);
-      return resp;
     } catch (e) {
       return { error: e.message || 'NO_FLOW_TAB' };
     }
   }
 
+  // Try each Flow tab in turn — gracefully skip dead/discarded ones
+  // instead of bubbling "No current window" up to the user. Re-query
+  // because we might have just spawned a new one above.
+  const candidates = await chrome.tabs.query({ url: flowUrls });
+  const errors = [];
+  for (const tab of candidates) {
+    const live = await reviveTabIfNeeded(tab);
+    if (!live) continue;
+    try {
+      const resp = await Promise.race([
+        requestCaptchaFromTab(live.id, requestId, captchaAction),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('CAPTCHA_TIMEOUT')), 30000)),
+      ]);
+      return resp;
+    } catch (e) {
+      const msg = e?.message || '';
+      errors.push(msg);
+      // Tab evaporated mid-call (window closed, tab discarded again,
+      // or page navigated away). Move on to the next candidate.
+      if (
+        msg.includes('No current window') ||
+        msg.includes('No tab with id') ||
+        msg.includes('Receiving end does not exist')
+      ) {
+        continue;
+      }
+      return { error: msg };
+    }
+  }
+
+  // All candidates failed — last-ditch: spawn a fresh Flow tab and try
+  // it once. This handles the case where every existing Flow tab was
+  // in a closed window we couldn't recover from.
   try {
+    await openFlowTabResilient(false);
+    await sleep(3000);
+    const fresh = await chrome.tabs.query({ url: flowUrls });
+    const target = fresh.find((t) => !t.discarded) || fresh[0];
+    if (!target) return { error: 'NO_FLOW_TAB' };
     const resp = await Promise.race([
-      requestCaptchaFromTab(tabs[0].id, requestId, captchaAction),
+      requestCaptchaFromTab(target.id, requestId, captchaAction),
       new Promise((_, rej) => setTimeout(() => rej(new Error('CAPTCHA_TIMEOUT')), 30000)),
     ]);
     return resp;
   } catch (e) {
-    return { error: e.message };
+    const msg = e?.message || (errors[0] ?? 'NO_FLOW_TAB');
+    return { error: msg };
   }
 }
 
@@ -520,14 +729,18 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
   if (msg.type === 'OPEN_FLOW_TAB') {
     chrome.tabs.query({
       url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
-    }).then((tabs) => {
-      if (tabs.length) {
-        chrome.tabs.update(tabs[0].id, { active: true });
-        reply({ ok: true, tabId: tabs[0].id });
-      } else {
-        chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow' })
-          .then((tab) => reply({ ok: true, tabId: tab.id }))
-          .catch((e)  => reply({ error: e.message }));
+    }).then(async (tabs) => {
+      try {
+        if (tabs.length) {
+          await chrome.tabs.update(tabs[0].id, { active: true });
+          reply({ ok: true, tabId: tabs[0].id });
+        } else {
+          // User-initiated → focus the new window so they can see it.
+          const tab = await openFlowTabResilient(true);
+          reply({ ok: true, tabId: tab?.id });
+        }
+      } catch (e) {
+        reply({ error: e.message });
       }
     }).catch((e) => reply({ error: e.message }));
     return true;

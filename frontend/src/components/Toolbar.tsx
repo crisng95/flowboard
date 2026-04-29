@@ -1,5 +1,6 @@
 import { useState, useRef, type KeyboardEvent } from "react";
 import { useBoardStore } from "../store/board";
+import { SponsorButton } from "./SponsorDialog";
 
 export function Toolbar() {
   const boardName = useBoardStore((s) => s.boardName);
@@ -32,7 +33,7 @@ export function Toolbar() {
 
   return (
     <div className="toolbar">
-      <span className="toolbar-wordmark">flowboard</span>
+      <span className="toolbar-wordmark">Flowboard</span>
       <span className="toolbar-sep" aria-hidden="true">/</span>
       {editing ? (
         <input
@@ -65,6 +66,8 @@ export function Toolbar() {
         <button className="toolbar-icon-btn" aria-label="Settings" title="Settings" disabled>
           ⚙
         </button>
+        <span className="toolbar-actions__divider" aria-hidden="true" />
+        <SponsorButton />
       </div>
     </div>
   );

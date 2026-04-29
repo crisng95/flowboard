@@ -40,6 +40,15 @@ class FlowClient:
 
         self._token_captured_at: Optional[float] = None
         self._flow_key_present: bool = False
+        # Profile pushed by the extension after it resolves the Bearer
+        # token via Google's userinfo endpoint. Stays in-memory only —
+        # if the agent restarts the extension will replay it on the
+        # next WS reconnect.
+        self._user_info: Optional[dict] = None
+        # Paygate tier sniffed from outgoing Flow API request bodies on
+        # the user's labs.google tab. Pushed via WS as soon as the
+        # extension sees one; replayed on reconnect.
+        self._paygate_tier: Optional[str] = None
         self._request_count = 0
         self._success_count = 0
         self._failed_count = 0
@@ -60,10 +69,21 @@ class FlowClient:
     def clear_extension(self) -> None:
         self._ws = None
         self._flow_key_present = False
+        # Drop the cached identity + tier — next reconnect will replay.
+        self._user_info = None
+        self._paygate_tier = None
         for fut in self._pending.values():
             if not fut.done():
                 fut.set_exception(ConnectionError("extension_disconnected"))
         self._pending.clear()
+
+    @property
+    def user_info(self) -> Optional[dict]:
+        return self._user_info
+
+    @property
+    def paygate_tier(self) -> Optional[str]:
+        return self._paygate_tier
 
     # ── inbound handling ───────────────────────────────────────────────────
     async def handle_message(self, data: dict) -> None:
@@ -76,6 +96,28 @@ class FlowClient:
             self._flow_key_present = True
             self._token_captured_at = time.time()
             logger.info("token_captured (len=%d)", len(data.get("flowKey", "")))
+            return
+        if t == "user_info":
+            info = data.get("userInfo")
+            if isinstance(info, dict):
+                # Whitelist on intake — Google's userinfo response can
+                # carry id / locale / hd / given_name / family_name etc.
+                # The /api/auth/me route filters on output, but caching
+                # the full dict here means any future surface that
+                # returns flow_client.user_info directly leaks PII.
+                # Clamp at the door instead.
+                allowed = ("email", "name", "picture", "verified_email")
+                self._user_info = {k: info[k] for k in allowed if k in info}
+                logger.info(
+                    "user_info captured for %s",
+                    self._user_info.get("email") or "<no email>",
+                )
+            return
+        if t == "paygate_tier":
+            tier = data.get("paygateTier")
+            if tier in ("PAYGATE_TIER_ONE", "PAYGATE_TIER_TWO"):
+                self._paygate_tier = tier
+                logger.info("paygate_tier sniffed: %s", tier)
             return
         if t == "pong":
             return

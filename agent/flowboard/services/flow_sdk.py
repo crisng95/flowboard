@@ -11,12 +11,15 @@ when the user's paygate tier or model name drifts.
 """
 from __future__ import annotations
 
+import logging
 import re
 import time
 import uuid
 from typing import Any, Optional
 
 from flowboard.services.flow_client import FlowClient, flow_client
+
+logger = logging.getLogger(__name__)
 
 # Endpoints -----------------------------------------------------------------
 
@@ -26,23 +29,84 @@ VIDEO_I2V_URL = f"{FLOW_API_BASE}/v1/video:batchAsyncGenerateVideoStartImage"
 VIDEO_POLL_URL = f"{FLOW_API_BASE}/v1/video:batchCheckAsyncVideoGenerationStatus"
 UPLOAD_IMAGE_URL = f"{FLOW_API_BASE}/v1/flow/uploadImage"
 
-# Actual Google Flow model identifier. flowkit uses a nickname "NANO_BANANA_PRO"
-# that resolves to this value via its models.json; we inline the resolved value
-# to avoid the indirection. Update when Google rotates model names.
-IMAGE_MODEL_NAME = "GEM_PIX_2"
+# Image model keys, indexed by the user-facing nickname used in
+# flowkit's models.json. Pro is Flow's premium / higher-quality image
+# model; "Banana 2" (NARWHAL) is the lighter / faster option. The
+# frontend Settings panel lets the user pick which one drives gen_image
+# + edit_image at request time. Update when Google rotates model names.
+IMAGE_MODELS: dict[str, str] = {
+    "NANO_BANANA_PRO": "GEM_PIX_2",
+    "NANO_BANANA_2": "NARWHAL",
+}
+DEFAULT_IMAGE_MODEL_KEY = "NANO_BANANA_PRO"
 
-# Video model keys per paygate tier + aspect (flowkit models.json snapshot).
-# Update when Google rotates these; flowkit keeps the map in a separate file.
-VIDEO_MODEL_KEYS: dict[str, dict[str, str]] = {
+
+def resolve_image_model(key: Optional[str]) -> str:
+    """Map a nickname (`NANO_BANANA_PRO` / `NANO_BANANA_2`) to the actual
+    Flow model identifier. Falls back to the Pro default for unknown /
+    missing keys so a stale frontend can't break dispatch."""
+    if isinstance(key, str) and key in IMAGE_MODELS:
+        return IMAGE_MODELS[key]
+    return IMAGE_MODELS[DEFAULT_IMAGE_MODEL_KEY]
+
+# Video model keys nested by [tier][quality][aspect].
+#
+# `quality` is "fast" (default — the `_i2v_s_fast*` family) or "lite"
+# (`veo_3_1_t2v_lite` — despite the t2v prefix in the name, this
+# checkpoint accepts startImage just fine when sent through the
+# `:batchAsyncGenerateVideoStartImage` endpoint, verified against a
+# real Flow web request). Lite is multi-aspect — same key for both
+# 16:9 and 9:16; the model adapts via the aspectRatio field.
+#
+# KNOWN ISSUE — Tier 2 Portrait fast: the landscape model
+# `_ultra_relaxed` ignores aspectRatio and always emits 1280×720. A
+# speculative `..._portrait_ultra_relaxed` was rejected with
+# MODEL_ACCESS_DENIED, so Tier 2 Portrait fast stays mapped to the
+# landscape key (output is wrong-aspect but at least generates).
+# Switch to "lite" if you need correct portrait framing on Tier 2.
+VIDEO_MODEL_KEYS: dict[str, dict[str, dict[str, str]]] = {
     "PAYGATE_TIER_ONE": {
-        "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_i2v_s_fast",
-        "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_i2v_s_fast_portrait",
+        "fast": {
+            "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_i2v_s_fast",
+            "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_i2v_s_fast_portrait",
+        },
+        "lite": {
+            "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_t2v_lite",
+            "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_t2v_lite",
+        },
     },
     "PAYGATE_TIER_TWO": {
-        "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_i2v_s_fast_ultra_relaxed",
-        "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_i2v_s_fast_ultra_relaxed",
+        "fast": {
+            "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_i2v_s_fast_ultra_relaxed",
+            # FIXME — see comment above; renders landscape regardless.
+            "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_i2v_s_fast_ultra_relaxed",
+        },
+        "lite": {
+            "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_t2v_lite",
+            "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_t2v_lite",
+        },
     },
 }
+
+DEFAULT_VIDEO_QUALITY = "fast"
+
+
+def resolve_video_model(
+    paygate_tier: str, aspect_ratio: str, quality: Optional[str] = None
+) -> Optional[str]:
+    """Resolve a Flow video model key from tier + aspect + quality.
+
+    Falls back through (quality → fast) → (tier → TIER_ONE) → None so
+    a stale frontend or unknown tier can't break dispatch silently.
+    """
+    q = (quality or DEFAULT_VIDEO_QUALITY).lower()
+    tier_map = (
+        VIDEO_MODEL_KEYS.get(paygate_tier)
+        or VIDEO_MODEL_KEYS.get("PAYGATE_TIER_ONE")
+        or {}
+    )
+    quality_map = tier_map.get(q) or tier_map.get(DEFAULT_VIDEO_QUALITY) or {}
+    return quality_map.get(aspect_ratio)
 
 # project_id must match the shape Google Flow returns (UUID-ish). Validated at
 # handler boundaries to prevent path traversal into arbitrary API URLs.
@@ -129,7 +193,20 @@ _API_HEADERS = {
 
 
 def _client_context(project_id: str, paygate_tier: str = "PAYGATE_TIER_ONE") -> dict:
-    """Skeleton clientContext — extension fills in recaptchaContext.token."""
+    """Skeleton clientContext — extension fills in recaptchaContext.token.
+
+    `paygate_tier` is normalised against `_VALID_TIERS` here (the
+    chokepoint every gen entrypoint flows through), so a stale frontend
+    or buggy caller can't pass arbitrary strings into Flow's API body.
+    Unknown values fall back to TIER_ONE with a warning log instead of
+    being silently echoed.
+    """
+    safe_tier = paygate_tier if paygate_tier in _VALID_TIERS else "PAYGATE_TIER_ONE"
+    if safe_tier != paygate_tier:
+        logger.warning(
+            "unknown paygate_tier %r; falling back to PAYGATE_TIER_ONE",
+            paygate_tier,
+        )
     return {
         "projectId": str(project_id),
         "recaptchaContext": {
@@ -138,7 +215,7 @@ def _client_context(project_id: str, paygate_tier: str = "PAYGATE_TIER_ONE") -> 
         },
         "sessionId": f";{int(time.time() * 1000)}",
         "tool": "PINHOLE",
-        "userPaygateTier": paygate_tier,
+        "userPaygateTier": safe_tier,
     }
 
 
@@ -184,6 +261,7 @@ class FlowSDK:
         paygate_tier: str = "PAYGATE_TIER_ONE",
         scene_id: Optional[str] = None,
         start_media_ids: Optional[list[str]] = None,
+        video_quality: Optional[str] = None,
     ) -> dict[str, Any]:
         """Kick off i2v operation(s). Returns ``{raw, operation_names}`` on
         success or ``{raw, error}`` on failure. Operations are async — the
@@ -193,14 +271,19 @@ class FlowSDK:
         item per source image so a 4-variant upstream image produces 4
         videos in a single batch (one operation per source). Falls back to
         ``start_media_id`` (single) if the list is missing/empty.
+
+        ``video_quality`` ("fast" / "lite") routes to a different Veo
+        checkpoint. Defaults to "fast" — the existing `_s_fast` family.
         """
-        model_key = (
-            VIDEO_MODEL_KEYS.get(paygate_tier, {}).get(aspect_ratio)
-        )
+        model_key = resolve_video_model(paygate_tier, aspect_ratio, video_quality)
         if not model_key:
             return {
                 "raw": None,
-                "error": f"no_video_model_for_tier_{paygate_tier}_aspect_{aspect_ratio}",
+                "error": (
+                    f"no_video_model_for_tier_{paygate_tier}"
+                    f"_quality_{video_quality or DEFAULT_VIDEO_QUALITY}"
+                    f"_aspect_{aspect_ratio}"
+                ),
             }
 
         # Normalise into a non-empty list of source media ids. Single
@@ -287,6 +370,7 @@ class FlowSDK:
         variant_count: int = 1,
         character_media_ids: Optional[list[str]] = None,  # legacy alias
         prompts: Optional[list[str]] = None,
+        image_model: Optional[str] = None,
     ) -> dict[str, Any]:
         """Generate ``variant_count`` images (1-4). When ``ref_media_ids`` is
         provided, every request item is augmented with ``imageInputs`` so Flow
@@ -301,6 +385,7 @@ class FlowSDK:
         n = max(1, min(int(variant_count), MAX_VARIANT_COUNT))
         ts = int(time.time() * 1000)
         ctx = _client_context(project_id, paygate_tier)
+        model_name = resolve_image_model(image_model)
         # Accept the legacy `character_media_ids` kwarg as a fallback.
         merged_refs = ref_media_ids if ref_media_ids is not None else character_media_ids
         image_inputs = None
@@ -329,7 +414,7 @@ class FlowSDK:
                 "seed": seed,
                 "structuredPrompt": {"parts": [{"text": per_item_prompts[i]}]},
                 "imageAspectRatio": aspect_ratio,
-                "imageModelName": IMAGE_MODEL_NAME,
+                "imageModelName": model_name,
             }
             if image_inputs is not None:
                 item["imageInputs"] = list(image_inputs)
@@ -368,6 +453,7 @@ class FlowSDK:
         ref_media_ids: Optional[list[str]] = None,
         aspect_ratio: str = "IMAGE_ASPECT_RATIO_LANDSCAPE",
         paygate_tier: str = "PAYGATE_TIER_ONE",
+        image_model: Optional[str] = None,
     ) -> dict[str, Any]:
         """Refine an existing image with an optional list of reference media.
 
@@ -376,6 +462,7 @@ class FlowSDK:
         """
         ts = int(time.time() * 1000)
         ctx = _client_context(project_id, paygate_tier)
+        model_name = resolve_image_model(image_model)
 
         image_inputs: list[dict[str, Any]] = [
             {"name": source_media_id, "imageInputType": "IMAGE_INPUT_TYPE_BASE_IMAGE"}
@@ -391,7 +478,7 @@ class FlowSDK:
             "seed": ts % 1_000_000,
             "structuredPrompt": {"parts": [{"text": prompt}]},
             "imageAspectRatio": aspect_ratio,
-            "imageModelName": IMAGE_MODEL_NAME,
+            "imageModelName": model_name,
             "imageInputs": image_inputs,
         }
         body = {
@@ -454,6 +541,15 @@ class FlowSDK:
 
         media_id = _extract_uploaded_media_id(resp)
         if media_id is None:
+            # Flow returned 200 but no usable media handle. Most common cause
+            # is a silent content-filter rejection (logos/watermarks/branded
+            # imagery from product CDNs); next most common is a Flow schema
+            # change. Log the full payload so the operator can tell which.
+            logger.error(
+                "upload_image: no media_id in response (project_id=%s, "
+                "file=%s, mime=%s) — raw=%r",
+                project_id, file_name, mime_type, resp,
+            )
             return {"raw": resp, "error": "no_media_id_in_upload_response"}
         return {"raw": resp, "media_id": media_id}
 
@@ -465,6 +561,9 @@ def _extract_project_id(resp: Any) -> Optional[str]:
         return data["result"]["data"]["json"]["result"]["projectId"]  # type: ignore[index]
     except (KeyError, TypeError):
         return None
+
+
+_VALID_TIERS = {"PAYGATE_TIER_ONE", "PAYGATE_TIER_TWO"}
 
 
 def _extract_uploaded_media_id(resp: Any) -> Optional[str]:

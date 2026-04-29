@@ -367,12 +367,436 @@ button:disabled {
   top: 60px;
   left: 12px;
   z-index: 10;
+  display: flex;
+  align-items: center;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 6px 10px;
   font-size: 12px;
   color: var(--muted);
+}
+
+/* ── Account panel (pinned bottom of project sidebar) ───────────────────── */
+
+.account-panel {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  column-gap: 10px;
+  padding: 10px 12px;
+  margin: 0;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.account-panel--collapsed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 6px;
+  align-items: center;
+}
+
+.account-panel__avatar {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(124, 92, 255, 0.85), rgba(64, 175, 255, 0.85));
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+}
+
+.account-panel__avatar--photo {
+  background: var(--panel-high);
+}
+
+.account-panel__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.account-panel__meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Squeeze the badge inline with name+email so the chip reads as one
+     cohesive unit instead of three stacked rows. */
+}
+
+.account-panel__name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.account-panel__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.account-panel__email {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+  max-width: 100%;
+  line-height: 1.2;
+}
+
+.account-panel__email--muted {
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.account-panel__tier {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--panel-high);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  flex-shrink: 0;
+}
+
+/* Pro = solid purple tint (paid baseline). */
+.account-panel__tier--pro {
+  background: rgba(124, 92, 255, 0.18);
+  color: #c5b3ff;
+}
+
+/* Ultra = brighter premium gradient pill so the higher tier reads
+   visually distinct from Pro at a glance. */
+.account-panel__tier--ultra {
+  background: linear-gradient(
+    135deg,
+    rgba(124, 92, 255, 0.28),
+    rgba(255, 105, 180, 0.28)
+  );
+  color: #ffd4f2;
+  box-shadow: 0 0 0 1px rgba(255, 105, 180, 0.25) inset;
+}
+
+.account-panel__cog {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-high);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.account-panel__cog:hover {
+  background: rgba(124, 92, 255, 0.16);
+  border-color: var(--accent);
+  color: #c5b3ff;
+}
+
+/* Version row sits under the account chip — full sidebar width, thin
+   top border so it visually anchors to the panel above without
+   competing with the avatar/name row. */
+.account-panel__version-row {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 11px;
+}
+
+.account-panel__version-label {
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+.account-panel__version-label code {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--text);
+  margin-left: 2px;
+}
+
+/* "↑ v1.0.3" pill — gradient + soft pulse so the upgrade hint reads
+   without the user having to open Settings. */
+.account-panel__update-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ff6ea8, #c576ff);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  box-shadow: 0 2px 10px rgba(197, 118, 255, 0.32);
+  animation: account-update-pulse 2.4s ease-in-out infinite;
+  transition: transform 0.12s ease;
+}
+
+.account-panel__update-pill:hover {
+  transform: translateY(-1px);
+  animation-play-state: paused;
+}
+
+@keyframes account-update-pulse {
+  0%, 100% {
+    box-shadow: 0 2px 10px rgba(197, 118, 255, 0.32);
+  }
+  50% {
+    box-shadow: 0 2px 16px rgba(197, 118, 255, 0.55);
+  }
+}
+
+/* ── Settings modal dialog ──────────────────────────────────────────────── */
+
+.settings-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-panel {
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  background: var(--panel-higher);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+  padding: 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.settings-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-panel__title {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-panel__close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.settings-panel__close:hover {
+  color: var(--text);
+}
+
+.settings-panel__section {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-panel__section:last-child {
+  border-bottom: none;
+}
+
+.settings-panel__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.settings-panel__value {
+  font-size: 13px;
+}
+
+.settings-panel__value--readonly {
+  font-weight: 500;
+  color: #c5b3ff;
+}
+
+.settings-panel__hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.settings-panel__kv {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 3px 0;
+}
+
+.settings-panel__kv span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-panel__kv code {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.settings-panel__radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-panel__radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  background: var(--panel);
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.settings-panel__radio:hover {
+  background: var(--panel-high);
+}
+
+.settings-panel__radio--active {
+  border-color: var(--accent);
+  background: rgba(124, 92, 255, 0.08);
+}
+
+.settings-panel__radio input[type="radio"] {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.settings-panel__radio-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.settings-panel__radio-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.settings-panel__about-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 0;
+}
+
+.settings-panel__about-key {
+  flex-shrink: 0;
+  width: 78px;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.settings-panel__about-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-panel__about-value code {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  padding: 2px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.settings-panel__update-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ff6ea8, #c576ff);
+  color: #fff;
+  text-decoration: none;
+  box-shadow: 0 4px 14px rgba(197, 118, 255, 0.32);
+  transition: transform 0.12s ease;
+}
+
+.settings-panel__update-badge:hover {
+  transform: translateY(-1px);
+}
+
+.settings-panel__about-link {
+  font-size: 12px;
+  color: #c5b3ff;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.settings-panel__about-link:hover {
+  color: #d8c8ff;
+  text-decoration: underline;
 }
 
 /* ── Sidebar ────────────────────────────────────────────────────────────── */
@@ -925,15 +1349,15 @@ button:disabled {
 
 .thumbnail-tile {
   position: relative;
-  height: 48px;
+  /* Match video-tile sizing so a 4-variant image grid and a 4-variant
+     video grid render the same dimensions side-by-side. Was a fixed
+     48px before, which made image tiles ~half the height of video
+     tiles in a 2x2 grid at the same card width. */
+  aspect-ratio: 16 / 9;
   border-radius: 6px;
   background: linear-gradient(135deg, var(--panel-high), var(--panel-higher));
   border: 1px solid var(--border);
   overflow: hidden;
-}
-
-.thumbnail-grid--1 .thumbnail-tile {
-  height: 96px;
 }
 
 .thumbnail-tile--filled {
@@ -1287,16 +1711,50 @@ button:disabled {
   width: auto;
   height: auto;
 }
-/* When loaded, the <video> takes the slot — same fitted display as the
-   single-video-with-media path. */
+/* Static poster (upstream i2v source image) rendered as <img> instead
+   of <video> — Chrome decodes frame 0 of any mounted <video>, which
+   overrides the poster attribute and shows whatever empty/setup
+   beat the video starts on. Using a real <img> sidesteps that. */
+.video-tile__poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: var(--panel-high);
+  border-radius: 6px;
+  display: block;
+}
+
+/* Fallback <video> path (no upstream poster). Same fitted display. */
 .video-tile video {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
   background: #000;
   border-radius: 6px;
+}
+
+/* Tiny play hint overlaid on the poster — signals that clicking
+   the tile opens the actual video. Subtle so the composition still
+   reads cleanly at thumbnail size. */
+.video-tile__play-badge {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border-radius: 50%;
+  font-size: 9px;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
 }
 
 .video-play {
@@ -1378,6 +1836,433 @@ button:disabled {
 .note-editor {
   font-size: 12px;
   line-height: 1.6;
+}
+
+/* ── Sponsor button + dialog ───────────────────────────────────────────── */
+
+/* Divider between the disabled toolbar icons and the sponsor pill so
+   the eye treats the gradient button as a separate, intentional CTA
+   rather than a fourth icon. */
+.toolbar-actions__divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+  display: inline-block;
+}
+
+.sponsor-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  /* Multi-stop gradient + soft glow — reads premium without
+     drowning the canvas. */
+  background: linear-gradient(
+    135deg,
+    #ff6ea8 0%,
+    #c576ff 50%,
+    #6ec5ff 100%
+  );
+  background-size: 200% 200%;
+  background-position: 0% 0%;
+  color: #fff;
+  border: none;
+  box-shadow:
+    0 6px 18px rgba(197, 118, 255, 0.32),
+    0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+  transition: background-position 0.4s ease, transform 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.sponsor-trigger:hover {
+  background-position: 100% 100%;
+  transform: translateY(-1px);
+  box-shadow:
+    0 10px 24px rgba(197, 118, 255, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.12) inset;
+}
+
+.sponsor-trigger:active {
+  transform: translateY(0);
+}
+
+.sponsor-trigger__heart {
+  font-size: 13px;
+  line-height: 1;
+  filter: drop-shadow(0 0 6px rgba(255, 200, 230, 0.65));
+}
+
+.sponsor-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.sponsor-dialog {
+  position: relative;
+  width: 920px;
+  max-width: 100%;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  background:
+    radial-gradient(
+      circle at 0% 0%,
+      rgba(255, 110, 168, 0.08),
+      transparent 40%
+    ),
+    radial-gradient(
+      circle at 100% 100%,
+      rgba(110, 197, 255, 0.08),
+      transparent 40%
+    ),
+    var(--panel-higher);
+  border: 1px solid rgba(197, 118, 255, 0.22);
+  border-radius: 16px;
+  box-shadow:
+    0 32px 80px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  padding: 28px 28px 22px;
+  color: var(--text);
+}
+
+.sponsor-dialog__close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.sponsor-dialog__close:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.sponsor-dialog__header {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.sponsor-dialog__eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: #c5b3ff;
+  margin-bottom: 8px;
+}
+
+.sponsor-dialog__title {
+  margin: 0 0 8px;
+  font-size: 26px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #ff6ea8, #c576ff 50%, #6ec5ff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.sponsor-dialog__subtitle {
+  margin: 0 auto;
+  max-width: 540px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.sponsor-tier-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 760px) {
+  .sponsor-tier-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.sponsor-tier {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 18px 16px 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  text-decoration: none;
+  color: var(--text);
+  cursor: pointer;
+  transition: transform 0.16s ease, border-color 0.16s ease,
+    box-shadow 0.16s ease;
+  overflow: hidden;
+}
+
+.sponsor-tier::before {
+  /* Soft tier-tinted aura at the top so each card feels like a
+     unique collectible rather than a generic pricing tile. */
+  content: "";
+  position: absolute;
+  inset: -1px -1px auto -1px;
+  height: 60%;
+  pointer-events: none;
+  opacity: 0.18;
+  z-index: 0;
+}
+
+.sponsor-tier > * {
+  position: relative;
+  z-index: 1;
+}
+
+.sponsor-tier:hover {
+  transform: translateY(-3px);
+  border-color: rgba(197, 118, 255, 0.55);
+  box-shadow:
+    0 18px 40px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(197, 118, 255, 0.25) inset;
+}
+
+.sponsor-tier__icon {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  font-size: 22px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+}
+
+.sponsor-tier__name {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.sponsor-tier__amount {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.sponsor-tier__currency {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-right: 1px;
+}
+
+.sponsor-tier__tagline {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.sponsor-tier__perks {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+}
+
+.sponsor-tier__perks li {
+  position: relative;
+  padding-left: 14px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text);
+  opacity: 0.85;
+}
+
+.sponsor-tier__perks li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: #6ee7b7;
+  font-weight: 700;
+}
+
+.sponsor-tier__cta {
+  margin-top: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: #c5b3ff;
+  letter-spacing: 0.02em;
+}
+
+/* Tier-specific accents — tinted icon + aura. */
+
+.sponsor-tier--coffee::before {
+  background: radial-gradient(circle at 50% 0%, #c97842, transparent 60%);
+}
+.sponsor-tier--coffee .sponsor-tier__icon {
+  background: linear-gradient(135deg, rgba(201, 120, 66, 0.45), rgba(120, 70, 30, 0.25));
+  color: #f4cca0;
+  border-color: rgba(201, 120, 66, 0.45);
+}
+
+.sponsor-tier--gold::before {
+  background: radial-gradient(circle at 50% 0%, #f4c542, transparent 60%);
+}
+.sponsor-tier--gold .sponsor-tier__icon {
+  background: linear-gradient(135deg, rgba(244, 197, 66, 0.5), rgba(180, 130, 30, 0.3));
+  color: #ffe18a;
+  border-color: rgba(244, 197, 66, 0.5);
+}
+
+.sponsor-tier--platinum::before {
+  background: radial-gradient(circle at 50% 0%, #b8c6d9, transparent 60%);
+}
+.sponsor-tier--platinum .sponsor-tier__icon {
+  background: linear-gradient(135deg, rgba(184, 198, 217, 0.55), rgba(120, 138, 162, 0.3));
+  color: #e8eef7;
+  border-color: rgba(184, 198, 217, 0.5);
+}
+
+.sponsor-tier--diamond::before {
+  background: radial-gradient(circle at 50% 0%, #6ec5ff, transparent 55%);
+}
+.sponsor-tier--diamond {
+  /* Top-tier card gets an animated rainbow border — subtle but
+     unmistakable; it's the "look at me" tile. */
+  border-color: transparent;
+  background:
+    linear-gradient(var(--panel), var(--panel)) padding-box,
+    linear-gradient(135deg, #ff6ea8, #c576ff 35%, #6ec5ff 70%, #6ee7b7) border-box;
+  border: 1px solid transparent;
+}
+.sponsor-tier--diamond .sponsor-tier__icon {
+  background: linear-gradient(135deg, rgba(110, 197, 255, 0.5), rgba(197, 118, 255, 0.4));
+  color: #c5e9ff;
+  border-color: rgba(110, 197, 255, 0.5);
+}
+
+.sponsor-dialog__footer {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.sponsor-dialog__paypal {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.sponsor-dialog__paypal-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.sponsor-dialog__paypal-email {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  padding: 4px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.sponsor-dialog__copy {
+  padding: 4px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.sponsor-dialog__copy:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.sponsor-dialog__or {
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0 4px;
+}
+
+.sponsor-dialog__kofi {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: linear-gradient(135deg, #ff5f5f, #ff8a3d);
+  color: #fff;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: 0 4px 12px rgba(255, 95, 95, 0.32);
+  transition: transform 0.12s ease;
+}
+
+.sponsor-dialog__kofi:hover {
+  transform: translateY(-1px);
+}
+
+.sponsor-dialog__fineprint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.sponsor-dialog__fineprint code {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  padding: 1px 5px;
+  background: var(--panel);
+  border-radius: 4px;
+  color: #c5b3ff;
 }
 
 /* ── Toaster ─────────────────────────────────────────────────────────────────── */

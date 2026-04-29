@@ -40,6 +40,11 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   // Spliced into auto-prompts on downstream nodes for richer context.
   aiBrief?: string;
   aiBriefStatus?: "pending" | "done" | "failed";
+  // ISO timestamp persisted when a generation completes successfully.
+  // Powers the "5 phút trước" relative-time display in ResultViewer.
+  // Uploads also stamp this so the timestamp reflects "when the asset
+  // landed on the node" regardless of source.
+  renderedAt?: string;
   error?: string;
 }
 
@@ -66,6 +71,31 @@ const TYPE_TITLE: Record<NodeType, string> = {
   note: "Note",
   visual_asset: "Visual asset",
 };
+
+// ── Persisted active-board id ─────────────────────────────────────────────
+// Survives page reloads so refreshing on project #4 doesn't kick the user
+// back to project #1. localStorage is fine here — single-user, single-host.
+const ACTIVE_BOARD_KEY = "flowboard.activeBoardId";
+
+function loadPersistedBoardId(): number | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_BOARD_KEY);
+    if (raw === null) return null;
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistBoardId(id: number | null): void {
+  try {
+    if (id === null) localStorage.removeItem(ACTIVE_BOARD_KEY);
+    else localStorage.setItem(ACTIVE_BOARD_KEY, String(id));
+  } catch {
+    // Storage disabled / quota exceeded — non-fatal, just lose persistence.
+  }
+}
 
 // ── Store ──────────────────────────────────────────────────────────────────
 interface BoardState {
@@ -126,7 +156,13 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       let boards = await listBoards();
-      let board = boards[0];
+      // Prefer the user's last-active board if it still exists; fall back
+      // to the first board in the list. Without this, refresh always
+      // snapped back to boards[0] regardless of what was selected before.
+      const persistedId = loadPersistedBoardId();
+      let board =
+        (persistedId !== null && boards.find((b) => b.id === persistedId)) ||
+        boards[0];
       if (!board) {
         board = await createBoard("Untitled");
         boards = [board];
@@ -166,6 +202,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         edges,
         loading: false,
       });
+      persistBoardId(detail.board.id);
     } catch (err) {
       set({ loading: false, error: err instanceof Error ? err.message : String(err) });
     }
@@ -215,6 +252,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         edges,
         loading: false,
       });
+      persistBoardId(detail.board.id);
     } catch (err) {
       set({ loading: false, error: err instanceof Error ? err.message : String(err) });
     }

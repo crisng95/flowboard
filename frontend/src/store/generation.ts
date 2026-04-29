@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { ensureBoardProject, createRequest, getRequest, patchNode } from "../api/client";
 import { requestAutoBrief } from "../api/autoBrief";
 import { useBoardStore } from "./board";
+import { useSettingsStore } from "./settings";
 
 // Image nodes also need aiBrief now: when they feed into a downstream
 // video, the motion synth uses the source still's brief to detect SCENE
@@ -18,6 +19,10 @@ interface GenerationState {
   openDialog: { rfId: string | null; prompt: string };
   openViewer: { rfId: string | null; idx: number };
   projectId: string | null;
+  // Auto-detected from Flow's createProject response — used as the
+  // default tier for every dispatch so the UI no longer needs to ask.
+  // Null until the first successful project bootstrap.
+  paygateTier: "PAYGATE_TIER_ONE" | "PAYGATE_TIER_TWO" | null;
   error: string | null;
 
   openGenerationDialog(rfId: string, prompt: string): void;
@@ -80,6 +85,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
   openDialog: { rfId: null, prompt: "" },
   openViewer: { rfId: null, idx: 0 },
   projectId: null,
+  paygateTier: null,
   error: null,
 
   openGenerationDialog(rfId, prompt) {
@@ -164,7 +170,12 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           prompt: opts.prompt,
           project_id: projectId,
           aspect_ratio: opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_LANDSCAPE",
-          paygate_tier: opts.paygateTier ?? "PAYGATE_TIER_ONE",
+          // Tier precedence: explicit caller arg > auto-detected from
+          // Flow > TIER_ONE fallback. The dialog no longer asks the user.
+          paygate_tier:
+            opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
+          // Backend resolves [tier][quality][aspect] → Flow model key.
+          video_quality: useSettingsStore.getState().videoQuality,
         };
         if (hasMulti) {
           videoParams.start_media_ids = opts.sourceMediaIds;
@@ -182,8 +193,12 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           prompt: opts.prompt,
           project_id: projectId,
           aspect_ratio: opts.aspectRatio ?? "IMAGE_ASPECT_RATIO_LANDSCAPE",
-          paygate_tier: opts.paygateTier ?? "PAYGATE_TIER_ONE",
+          paygate_tier:
+            opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
           variant_count: variantCount,
+          // User's image model preference from the Settings panel.
+          // Backend resolves the nickname → real Flow model identifier.
+          image_model: useSettingsStore.getState().imageModel,
         };
         if (refMediaIds.length > 0) {
           params.ref_media_ids = refMediaIds;
@@ -243,23 +258,26 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               mediaIds,
               aiBrief: undefined,
               aspectRatio: opts.aspectRatio,
+              renderedAt: new Date().toISOString(),
             });
             // Persist to backend so the node survives page reload.
             const dbId = parseInt(rfId, 10);
             if (!isNaN(dbId) && mediaId) {
               const n = useBoardStore.getState().nodes.find((x) => x.id === rfId);
               const d = n?.data;
+              // Backend merges `data`, so only deltas need to ship.
+              // `aiBrief: null` is the explicit "clear" sentinel —
+              // undefined would be dropped by JSON.stringify and leave
+              // the stale brief sitting on the node.
               patchNode(dbId, {
                 status: "done",
                 data: {
-                  title: d?.title,
-                  prompt: d?.prompt,
-                  thumbnailUrl: d?.thumbnailUrl,
                   mediaId,
                   mediaIds,
                   variantCount: d?.variantCount ?? mediaIds.length,
-                  aiBrief: undefined,
+                  aiBrief: null,
                   aspectRatio: opts.aspectRatio,
+                  renderedAt: new Date().toISOString(),
                 },
               }).catch(() => {
                 // Non-fatal: the in-memory state is still correct for this session.
@@ -362,6 +380,8 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           source_media_id: sourceMediaId,
           ref_media_ids: opts.refMediaIds ?? [],
           aspect_ratio: opts.aspectRatio ?? "IMAGE_ASPECT_RATIO_LANDSCAPE",
+          paygate_tier: get().paygateTier ?? "PAYGATE_TIER_ONE",
+          image_model: useSettingsStore.getState().imageModel,
         },
       });
     } catch (err) {
@@ -399,19 +419,18 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             mediaId,
             mediaIds,
             aspectRatio: opts.aspectRatio,
+            renderedAt: new Date().toISOString(),
           });
           const dbId = parseInt(rfId, 10);
           if (!isNaN(dbId) && mediaId) {
-            const n = useBoardStore.getState().nodes.find((x) => x.id === rfId);
-            const d = n?.data;
+            // Backend merges `data` — only ship the deltas.
             patchNode(dbId, {
               data: {
-                title: d?.title,
-                prompt: d?.prompt,
                 mediaId,
                 mediaIds,
                 variantCount: 1,
                 aspectRatio: opts.aspectRatio,
+                renderedAt: new Date().toISOString(),
               },
             }).catch(() => {});
           }

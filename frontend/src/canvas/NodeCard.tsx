@@ -63,14 +63,17 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
     });
     const dbId = parseInt(rfId, 10);
     if (!isNaN(dbId)) {
+      // Backend merges `data`, so we only need to send the deltas.
+      // `null` is the explicit "clear this key" sentinel — undefined
+      // gets dropped by JSON.stringify and would leave the stale brief
+      // in place after the merge.
       patchNode(dbId, {
         status: "done",
         data: {
-          title: data.title,
-          prompt: data.prompt,
           mediaId: newMediaId,
-          aiBrief: undefined,
+          aiBrief: null,
           aspectRatio,
+          renderedAt: new Date().toISOString(),
         },
       }).catch(() => {});
     }
@@ -347,12 +350,19 @@ const MAX_VIDEO_RETRIES = 5;
 
 function VideoTile({
   mediaId,
+  posterMediaId,
   isProcessing,
   isError,
   alt,
   onClick,
 }: {
   mediaId: string | undefined;
+  // Upstream image's mediaId — used as the static poster so the tile
+  // shows the source-image framing (subject centered, just like the
+  // image-tile preview) instead of the video's frame-0 which often
+  // catches a setup beat (ceiling, empty room) before the subject is
+  // composed in.
+  posterMediaId?: string | undefined;
   isProcessing: boolean;
   isError: boolean;
   alt: string;
@@ -410,14 +420,36 @@ function VideoTile({
       }}
     >
       {!loaded && placeholder}
-      {!givenUp && (
+      {!givenUp && posterMediaId ? (
+        // Thumbnail = static poster image (the upstream i2v source).
+        // Mounting a <video> here decodes frame 0 in Chrome and
+        // overrides the poster attribute, which is what made every
+        // tile display the video's setup beat (often empty ceiling)
+        // instead of the subject-centered framing. The full video
+        // with controls plays in the ResultViewer modal — clicking
+        // a tile already routes there.
+        <img
+          key={`poster-${attempt}`}
+          className="video-tile__poster"
+          src={mediaUrl(posterMediaId)}
+          alt={alt}
+          onLoad={() => setLoaded(true)}
+          onError={() => {
+            retryTimerRef.current = setTimeout(() => {
+              setAttempt((a) => a + 1);
+            }, 2000);
+          }}
+        />
+      ) : !givenUp ? (
+        // Fallback: no upstream poster available (orphan video node).
+        // Mount the <video> directly with `preload="none"` so the
+        // browser shows the bare frame instead of decoding frame 0.
         <video
           key={attempt}
           className="node-card__thumbnail"
           data-kind="video"
           src={src}
-          controls
-          preload="metadata"
+          preload="none"
           muted
           aria-label={alt}
           style={loaded ? undefined : { display: "none" }}
@@ -428,6 +460,9 @@ function VideoTile({
             }, 2000);
           }}
         />
+      ) : null}
+      {posterMediaId && (
+        <span className="video-tile__play-badge" aria-hidden="true">▶</span>
       )}
     </div>
   );
@@ -439,16 +474,34 @@ function VideoBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
   const isProcessing = data.status === "queued" || data.status === "running";
   const isError = data.status === "error";
 
+  // Resolve the upstream image used as the i2v source — its variants
+  // become the per-tile poster so the static preview shows the same
+  // subject-centered framing as the upstream image card. Multi-source
+  // i2v: variant i of the video came from variant i of the upstream
+  // image; single-source: every tile shares the same poster.
+  const { nodes, edges } = useBoardStore.getState();
+  const upstreamEdge = edges.find((e) => e.target === rfId);
+  const upstreamNode = upstreamEdge
+    ? nodes.find((n) => n.id === upstreamEdge.source)
+    : undefined;
+  const posterIds: string[] =
+    upstreamNode?.data.mediaIds ??
+    (upstreamNode?.data.mediaId ? [upstreamNode.data.mediaId] : []);
+
   const tiles: JSX.Element[] = [];
   for (let i = 0; i < tileCount; i++) {
     const mid = ids[i];
     const onClick = mid
       ? () => useGenerationStore.getState().openResultViewer(rfId, i)
       : undefined;
+    // Pick the i-th source variant if available; fall back to the
+    // first source for single-source i2v where every video shares it.
+    const poster = posterIds[i] ?? posterIds[0];
     tiles.push(
       <VideoTile
         key={i}
         mediaId={mid}
+        posterMediaId={poster}
         isProcessing={isProcessing && !mid}
         isError={isError && !mid}
         alt={data.title}
@@ -494,16 +547,18 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
     });
     const dbId = parseInt(rfId, 10);
     if (!isNaN(dbId)) {
+      // Backend merges `data`, so we only need to send the deltas.
+      // `null` clears aiBrief explicitly (undefined would be dropped
+      // by JSON.stringify and leave the stale brief in place).
       patchNode(dbId, {
         status: "done",
         data: {
-          title: data.title,
-          prompt: data.prompt,
           mediaId: newMediaId,
           mediaIds: [newMediaId],
           variantCount: 1,
-          aiBrief: undefined,
+          aiBrief: null,
           aspectRatio,
+          renderedAt: new Date().toISOString(),
         },
       }).catch(() => {});
     }
@@ -783,9 +838,8 @@ function EditableTextBody({
       useBoardStore.getState().updateNodeData(rfId, { prompt: next });
       const dbId = parseInt(rfId, 10);
       if (!isNaN(dbId)) {
-        // PATCH replaces `data` wholesale on the backend, so merge with the
-        // current node-data to avoid clobbering siblings (title, mediaId…).
-        patchNode(dbId, { data: { ...data, prompt: next } }).catch(() => {});
+        // Backend merges `data`, so only the prompt delta needs shipping.
+        patchNode(dbId, { data: { prompt: next } }).catch(() => {});
       }
     }
     setEditing(false);
@@ -876,17 +930,30 @@ export function NodeCard(props: NodeProps<FlowNode>) {
 
   function handleDownload(e: React.MouseEvent) {
     e.stopPropagation();
-    if (!data.mediaId) return;
-    // `<a download>` only honours the suggested filename when the resource is
-    // same-origin — `/media/<id>` *is* same-origin (proxied by FastAPI), so
-    // the title-based filename will stick. Falls back to `image.png` etc.
-    const a = document.createElement("a");
-    a.href = mediaUrl(data.mediaId);
+    // Download every variant, not just the first. `mediaIds` is the full
+    // list — `mediaId` is just the active variant — so a 4-variant image
+    // node was previously losing 3 of its 4 outputs.
+    const ids =
+      data.mediaIds && data.mediaIds.length > 0
+        ? data.mediaIds
+        : data.mediaId
+          ? [data.mediaId]
+          : [];
+    if (ids.length === 0) return;
     const safeTitle = (data.title || data.type).replace(/[^A-Za-z0-9_-]+/g, "_");
-    a.download = `${safeTitle}-${data.shortId}.${downloadExt(data.type)}`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    const ext = downloadExt(data.type);
+    // `<a download>` only honours the suggested filename when the resource
+    // is same-origin — `/media/<id>` *is* same-origin (proxied by FastAPI),
+    // so the title-based filename sticks.
+    ids.forEach((mid, i) => {
+      const a = document.createElement("a");
+      a.href = mediaUrl(mid);
+      const suffix = ids.length > 1 ? `-${i + 1}` : "";
+      a.download = `${safeTitle}-${data.shortId}${suffix}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
   }
 
   return (

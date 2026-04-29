@@ -12,6 +12,40 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Map cryptic Flow / pipeline error tokens to a sentence the user can act on.
+// Returns null when the token is unrecognised, so the caller falls through to
+// the raw message.
+function humanizeBackendError(token: string): string | null {
+  const t = token.toLowerCase();
+  if (t === "no_media_id_in_upload_response") {
+    return (
+      "Google Flow accepted the upload but didn't return a media handle — "
+      + "this usually means the image was silently rejected by Flow's "
+      + "content filter (logos, watermarks, copyrighted brand imagery). "
+      + "Try a different image or download it locally and upload as a file. "
+      + "Check the agent terminal for the full Flow response."
+    );
+  }
+  if (t.includes("captcha_failed: no current window")) {
+    return (
+      "Chrome has no open windows for the extension to attach a Flow tab to. "
+      + "Open any Chrome window (or click the extension's '⋯ → Open Flow') "
+      + "and retry — Flowboard will reuse the existing window automatically."
+    );
+  }
+  if (t.startsWith("captcha_failed:")) {
+    // CAPTCHA failures are rarely the user's fault — surface the underlying
+    // reason verbatim but keep the prefix so power-users can grep for it.
+    return token;
+  }
+  if (t.startsWith("public_error_")) {
+    // Veo / Imagen content filters are returned verbatim by Flow — these
+    // are already self-describing, just prettify the prefix.
+    return token.replace(/^PUBLIC_ERROR_/i, "Flow rejected: ").replace(/_/g, " ");
+  }
+  return null;
+}
+
 async function extractErrorMessage(res: Response): Promise<string> {
   let detail: unknown;
   try {
@@ -27,10 +61,14 @@ async function extractErrorMessage(res: Response): Promise<string> {
     typeof detail === "object" && detail !== null && "detail" in detail
       ? (detail as { detail: unknown }).detail
       : detail;
-  if (typeof inner === "string" && inner) return inner;
+  if (typeof inner === "string" && inner) {
+    return humanizeBackendError(inner) ?? inner;
+  }
   if (inner && typeof inner === "object") {
     const obj = inner as Record<string, unknown>;
-    if (typeof obj.message === "string" && obj.message) return obj.message;
+    if (typeof obj.message === "string" && obj.message) {
+      return humanizeBackendError(obj.message) ?? obj.message;
+    }
     try {
       return JSON.stringify(inner);
     } catch {
@@ -141,9 +179,37 @@ export function createNode(input: {
   });
 }
 
+/**
+ * Shallow-merge patch for `node.data` — the backend (see
+ * agent/flowboard/routes/nodes.py::update_node) merges this dict into
+ * the existing JSON column instead of replacing it.
+ *
+ * Conventions:
+ *   - Keys present in the patch override existing values.
+ *   - Keys absent from the patch are PRESERVED (this is what the type
+ *     guarantees over a wholesale replace).
+ *   - A value of `null` is the explicit "delete this key" sentinel.
+ *     Use it instead of `undefined` to clear fields like `aiBrief`
+ *     after a regen — `undefined` gets dropped by JSON.stringify and
+ *     would leave the stale value in place after the merge.
+ *   - Merge depth is ONE LEVEL. Nested dict values are wholesale-
+ *     replaced, not deep-merged. None of FlowboardNodeData's current
+ *     fields nest, so this is a non-issue today; revisit if a future
+ *     field stores objects.
+ *
+ * Pre-merge call sites that built the full `data` from scratch and
+ * forgot a sibling field caused a real data-loss regression
+ * (`aspectRatio` was wiped on every image gen by the auto-brief
+ * patch). Sticking to deltas-only with this type as the contract
+ * prevents that whole class of bug.
+ */
+export type DataPatch = Record<string, unknown>;
+
 export function patchNode(
   id: number,
-  patch: Partial<Pick<NodeDTO, "x" | "y" | "w" | "h" | "data" | "status">>,
+  patch: Partial<
+    Pick<Omit<NodeDTO, "data">, "x" | "y" | "w" | "h" | "status">
+  > & { data?: DataPatch },
 ): Promise<NodeDTO> {
   return api<NodeDTO>(`/api/nodes/${id}`, {
     method: "PATCH",
@@ -246,6 +312,25 @@ export function ensureBoardProject(boardId: number) {
 
 export function getBoardProject(boardId: number) {
   return api<BoardProject>(`/api/boards/${boardId}/project`).catch(() => null);
+}
+
+// ── Auth / profile ───────────────────────────────────────────────────────
+
+export interface AuthMe {
+  // Each field is null until the extension resolves the Bearer token
+  // against Google's userinfo endpoint and pushes the profile to agent.
+  email: string | null;
+  name: string | null;
+  picture: string | null;
+  verified_email: boolean | null;
+  // Paygate tier sniffed from outgoing Flow API request bodies by the
+  // extension and pushed to the agent in real time. Null until the
+  // extension sees a request that carries `clientContext.userPaygateTier`.
+  paygate_tier: "PAYGATE_TIER_ONE" | "PAYGATE_TIER_TWO" | null;
+}
+
+export function getAuthMe() {
+  return api<AuthMe>("/api/auth/me").catch(() => null);
 }
 
 export function createRequest(body: {

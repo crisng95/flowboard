@@ -103,6 +103,8 @@ class BoardFlowProject(SQLModel, table=True):
     """1:1 link between a local board and a Google Flow project_id.
 
     Kept as a separate table so we don't have to migrate the Board schema.
+    Paygate tier is loaded realtime from the extension via /api/auth/me,
+    not persisted here — the binding is purely about project identity.
     """
     board_id: int = Field(primary_key=True, foreign_key="board.id")
     flow_project_id: str

@@ -129,6 +129,121 @@ async def test_gen_image_body_shape_includes_captcha_and_context():
 
 
 @pytest.mark.asyncio
+async def test_gen_image_resolves_image_model_nickname_to_flow_id():
+    """The user-facing nickname (NANO_BANANA_PRO / NANO_BANANA_2) must
+    map to the correct Flow model identifier in the request body. Tests
+    both branches plus the unknown-key fallback to Pro."""
+    c = RecordingClient()
+    c.api_response = _make_gen_image_response(["m-1"])
+    sdk = FlowSDK(client=c)  # type: ignore[arg-type]
+
+    # Banana 2 → NARWHAL
+    await sdk.gen_image(
+        prompt="x", project_id="p", image_model="NANO_BANANA_2",
+    )
+    assert c.api_calls[-1]["body"]["requests"][0]["imageModelName"] == "NARWHAL"
+
+    # Pro explicit → GEM_PIX_2
+    await sdk.gen_image(
+        prompt="x", project_id="p", image_model="NANO_BANANA_PRO",
+    )
+    assert c.api_calls[-1]["body"]["requests"][0]["imageModelName"] == "GEM_PIX_2"
+
+    # Unknown key → fallback to Pro (defends against stale frontend).
+    await sdk.gen_image(
+        prompt="x", project_id="p", image_model="BOGUS_MODEL",
+    )
+    assert c.api_calls[-1]["body"]["requests"][0]["imageModelName"] == "GEM_PIX_2"
+
+    # Default (no kwarg) → Pro.
+    await sdk.gen_image(prompt="x", project_id="p")
+    assert c.api_calls[-1]["body"]["requests"][0]["imageModelName"] == "GEM_PIX_2"
+
+
+def test_resolve_image_model_helper_accepts_known_keys_only():
+    from flowboard.services.flow_sdk import resolve_image_model
+
+    assert resolve_image_model("NANO_BANANA_PRO") == "GEM_PIX_2"
+    assert resolve_image_model("NANO_BANANA_2") == "NARWHAL"
+    # Anything else falls back to Pro — defense-in-depth.
+    assert resolve_image_model("UNKNOWN") == "GEM_PIX_2"
+    assert resolve_image_model("") == "GEM_PIX_2"
+    assert resolve_image_model(None) == "GEM_PIX_2"
+
+
+def test_client_context_normalises_unknown_paygate_tier():
+    """Defense-in-depth — a stale frontend passing a garbage tier
+    must not get that string echoed into Flow's API body. The
+    chokepoint normalises to TIER_ONE with a warning, so Flow only
+    ever sees one of the two known enum values."""
+    from flowboard.services.flow_sdk import _client_context
+
+    # Known good values pass through unchanged.
+    one = _client_context("p", "PAYGATE_TIER_ONE")
+    assert one["userPaygateTier"] == "PAYGATE_TIER_ONE"
+    two = _client_context("p", "PAYGATE_TIER_TWO")
+    assert two["userPaygateTier"] == "PAYGATE_TIER_TWO"
+
+    # Unknown / malformed values clamp to TIER_ONE.
+    assert _client_context("p", "PAYGATE_TIER_THREE")["userPaygateTier"] == "PAYGATE_TIER_ONE"
+    assert _client_context("p", "")["userPaygateTier"] == "PAYGATE_TIER_ONE"
+    assert _client_context("p", "<script>")["userPaygateTier"] == "PAYGATE_TIER_ONE"
+
+
+def test_resolve_video_model_routes_by_tier_quality_aspect():
+    """Video model resolver layers fallback: unknown quality → fast,
+    unknown tier → TIER_ONE, unknown aspect → None. So a stale
+    frontend can still dispatch *something* instead of silently
+    swallowing the request."""
+    from flowboard.services.flow_sdk import resolve_video_model
+
+    # Tier 1 fast + landscape
+    assert resolve_video_model(
+        "PAYGATE_TIER_ONE", "VIDEO_ASPECT_RATIO_LANDSCAPE", "fast"
+    ) == "veo_3_1_i2v_s_fast"
+    # Tier 1 fast + portrait → separate model
+    assert resolve_video_model(
+        "PAYGATE_TIER_ONE", "VIDEO_ASPECT_RATIO_PORTRAIT", "fast"
+    ) == "veo_3_1_i2v_s_fast_portrait"
+    # Tier 2 fast — portrait stays mapped to landscape key (known issue,
+    # see flow_sdk.py comment).
+    assert resolve_video_model(
+        "PAYGATE_TIER_TWO", "VIDEO_ASPECT_RATIO_PORTRAIT", "fast"
+    ) == "veo_3_1_i2v_s_fast_ultra_relaxed"
+
+    # Lite multi-aspect — same key for landscape and portrait.
+    assert resolve_video_model(
+        "PAYGATE_TIER_TWO", "VIDEO_ASPECT_RATIO_LANDSCAPE", "lite"
+    ) == "veo_3_1_t2v_lite"
+    assert resolve_video_model(
+        "PAYGATE_TIER_TWO", "VIDEO_ASPECT_RATIO_PORTRAIT", "lite"
+    ) == "veo_3_1_t2v_lite"
+
+    # Default quality (None / empty) → fast.
+    assert resolve_video_model(
+        "PAYGATE_TIER_ONE", "VIDEO_ASPECT_RATIO_LANDSCAPE", None
+    ) == "veo_3_1_i2v_s_fast"
+    assert resolve_video_model(
+        "PAYGATE_TIER_ONE", "VIDEO_ASPECT_RATIO_LANDSCAPE", ""
+    ) == "veo_3_1_i2v_s_fast"
+
+    # Unknown quality → falls back to fast within the tier.
+    assert resolve_video_model(
+        "PAYGATE_TIER_ONE", "VIDEO_ASPECT_RATIO_LANDSCAPE", "ultra"
+    ) == "veo_3_1_i2v_s_fast"
+
+    # Unknown tier → falls back to TIER_ONE.
+    assert resolve_video_model(
+        "PAYGATE_TIER_BOGUS", "VIDEO_ASPECT_RATIO_LANDSCAPE", "fast"
+    ) == "veo_3_1_i2v_s_fast"
+
+    # Unknown aspect → None (caller surfaces a clear error).
+    assert resolve_video_model(
+        "PAYGATE_TIER_ONE", "BOGUS_ASPECT", "fast"
+    ) is None
+
+
+@pytest.mark.asyncio
 async def test_gen_image_empty_media_when_flow_returns_no_media():
     c = RecordingClient()
     c.api_response = {"status": 200, "data": {"other": "shape"}}

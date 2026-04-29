@@ -81,7 +81,15 @@ async def _handle_gen_image(params: dict) -> tuple[dict, Optional[str]]:
     if not is_valid_project_id(project_id):
         return {}, "invalid_project_id"
     aspect = params.get("aspect_ratio") or "IMAGE_ASPECT_RATIO_LANDSCAPE"
-    tier = params.get("paygate_tier") or "PAYGATE_TIER_ONE"
+    # Tier resolution chain — caller-stamped value first (set at
+    # dispatch time), then live signal from extension WS sniff (covers
+    # legacy nodes where the frontend fell back to TIER_ONE before
+    # the extension pushed the real tier), then TIER_ONE last-resort.
+    tier = (
+        params.get("paygate_tier")
+        or flow_client.paygate_tier
+        or "PAYGATE_TIER_ONE"
+    )
     # `ref_media_ids` is the broader name (any upstream image / character /
     # visual_asset feeds in as IMAGE_INPUT_TYPE_REFERENCE). Older callers used
     # `character_media_ids` — accept both.
@@ -104,6 +112,9 @@ async def _handle_gen_image(params: dict) -> tuple[dict, Optional[str]]:
     if isinstance(raw_prompts, list):
         cleaned = [p for p in raw_prompts if isinstance(p, str) and p.strip()]
         per_variant_prompts = cleaned or None
+    image_model = params.get("image_model")
+    if not isinstance(image_model, str) or not image_model.strip():
+        image_model = None
     resp = await get_flow_sdk().gen_image(
         prompt=prompt.strip(),
         project_id=project_id,
@@ -112,6 +123,7 @@ async def _handle_gen_image(params: dict) -> tuple[dict, Optional[str]]:
         ref_media_ids=ref_media_ids,
         variant_count=variant_count,
         prompts=per_variant_prompts,
+        image_model=image_model,
     )
     if resp.get("error"):
         return resp, str(resp["error"])[:200]
@@ -160,7 +172,18 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
     ):
         return {}, "missing_start_media_id"
     aspect = params.get("aspect_ratio") or "VIDEO_ASPECT_RATIO_LANDSCAPE"
-    tier = params.get("paygate_tier") or "PAYGATE_TIER_ONE"
+    # Tier resolution chain — caller-stamped value first (set at
+    # dispatch time), then live signal from extension WS sniff (covers
+    # legacy nodes where the frontend fell back to TIER_ONE before
+    # the extension pushed the real tier), then TIER_ONE last-resort.
+    tier = (
+        params.get("paygate_tier")
+        or flow_client.paygate_tier
+        or "PAYGATE_TIER_ONE"
+    )
+    video_quality = params.get("video_quality")
+    if not isinstance(video_quality, str) or not video_quality.strip():
+        video_quality = None
 
     sdk = get_flow_sdk()
     dispatch = await sdk.gen_video(
@@ -172,6 +195,7 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
         start_media_ids=start_media_ids,
         aspect_ratio=aspect,
         paygate_tier=tier,
+        video_quality=video_quality,
     )
     if dispatch.get("error"):
         return dispatch, str(dispatch["error"])[:200]
@@ -275,12 +299,23 @@ async def _handle_edit_image(params: dict) -> tuple[dict, Optional[str]]:
     if not isinstance(source_media_id, str) or not source_media_id.strip():
         return {}, "missing_source_media_id"
     aspect = params.get("aspect_ratio") or "IMAGE_ASPECT_RATIO_LANDSCAPE"
-    tier = params.get("paygate_tier") or "PAYGATE_TIER_ONE"
+    # Tier resolution chain — caller-stamped value first (set at
+    # dispatch time), then live signal from extension WS sniff (covers
+    # legacy nodes where the frontend fell back to TIER_ONE before
+    # the extension pushed the real tier), then TIER_ONE last-resort.
+    tier = (
+        params.get("paygate_tier")
+        or flow_client.paygate_tier
+        or "PAYGATE_TIER_ONE"
+    )
     raw_refs = params.get("ref_media_ids")
     ref_ids: Optional[list[str]] = None
     if isinstance(raw_refs, list):
         cleaned = [m for m in raw_refs if isinstance(m, str) and m]
         ref_ids = cleaned or None
+    image_model = params.get("image_model")
+    if not isinstance(image_model, str) or not image_model.strip():
+        image_model = None
 
     resp = await get_flow_sdk().edit_image(
         prompt=prompt.strip(),
@@ -289,6 +324,7 @@ async def _handle_edit_image(params: dict) -> tuple[dict, Optional[str]]:
         ref_media_ids=ref_ids,
         aspect_ratio=aspect,
         paygate_tier=tier,
+        image_model=image_model,
     )
     if resp.get("error"):
         return resp, str(resp["error"])[:200]

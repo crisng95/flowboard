@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useGenerationStore } from "../store/generation";
 import { useBoardStore } from "../store/board";
+import { useSettingsStore } from "../store/settings";
 import { getMediaStatus, mediaUrl, type MediaStatus } from "../api/client";
 
 const ICON: Record<string, string> = {
@@ -11,10 +12,40 @@ const ICON: Record<string, string> = {
   note: "✎",
 };
 
-function elapsedSeconds(created: string | undefined, finished: string | undefined): string {
-  if (!created || !finished) return "—";
-  const diff = (new Date(finished).getTime() - new Date(created).getTime()) / 1000;
-  return isNaN(diff) ? "—" : `${diff.toFixed(1)} s`;
+/** Format Flow's aspect-ratio enum to the human label shown on the node
+ *  card. Returns "—" when the value is missing or unrecognised so the
+ *  metadata grid never displays a stale hardcoded fallback. */
+function formatAspectRatio(value: string | undefined): string {
+  switch (value) {
+    case "IMAGE_ASPECT_RATIO_LANDSCAPE":
+    case "VIDEO_ASPECT_RATIO_LANDSCAPE":
+      return "16:9";
+    case "IMAGE_ASPECT_RATIO_PORTRAIT":
+    case "VIDEO_ASPECT_RATIO_PORTRAIT":
+      return "9:16";
+    case "IMAGE_ASPECT_RATIO_SQUARE":
+      return "1:1";
+    default:
+      return "—";
+  }
+}
+
+/** Format an ISO timestamp as a Vietnamese relative time string —
+ *  "vừa xong", "5 phút trước", "2 giờ trước", "3 ngày trước". Falls
+ *  back to "—" when the timestamp is missing or unparseable. */
+function formatRelativeTime(iso: string | undefined): string {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return "—";
+  const diffSec = Math.max(0, (Date.now() - t) / 1000);
+  if (diffSec < 60) return "vừa xong";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin} phút trước`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr} giờ trước`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 7) return `${diffDay} ngày trước`;
+  return new Date(t).toLocaleDateString("vi-VN");
 }
 
 export function ResultViewer() {
@@ -25,6 +56,8 @@ export function ResultViewer() {
   const projectId = useGenerationStore((s) => s.projectId);
   const nodes = useBoardStore((s) => s.nodes);
   const edges = useBoardStore((s) => s.edges);
+  const settingsImageModel = useSettingsStore((s) => s.imageModel);
+  const settingsVideoQuality = useSettingsStore((s) => s.videoQuality);
 
   const [activeIdx, setActiveIdx] = useState(0);
   const [mediaReady, setMediaReady] = useState(false);
@@ -38,6 +71,19 @@ export function ResultViewer() {
   const node = nodes.find((n) => n.id === rfId);
   const data = node?.data;
   const mediaIds = data?.mediaIds ?? (data?.mediaId ? [data.mediaId] : []);
+
+  // METADATA model label — image / character / visual_asset render
+  // through the user's chosen image checkpoint, video routes through
+  // the Veo quality preset. Falls back to "—" for non-renderable
+  // node types (prompt, note) so the row stays present but neutral.
+  const metadataModel =
+    data?.type === "video"
+      ? settingsVideoQuality === "lite"
+        ? "Veo 3.1 Lite"
+        : "Veo 3.1 Fast"
+      : data && ["image", "character", "visual_asset"].includes(data.type)
+        ? settingsImageModel
+        : "—";
 
   // Upstream nodes feeding this one as reference images (image/video target).
   const REF_TYPES = new Set(["character", "image", "visual_asset"]);
@@ -397,16 +443,11 @@ export function ResultViewer() {
           <span className="result-viewer__section-label">METADATA</span>
           <dl className="result-viewer__metadata-grid">
             <dt>model</dt>
-            <dd>NANO_BANANA_PRO</dd>
+            <dd>{metadataModel}</dd>
             <dt>aspect</dt>
-            <dd>16:9</dd>
+            <dd>{formatAspectRatio(data?.aspectRatio)}</dd>
             <dt>time</dt>
-            <dd>
-              {elapsedSeconds(
-                undefined,
-                undefined,
-              )}
-            </dd>
+            <dd>{formatRelativeTime(data?.renderedAt)}</dd>
           </dl>
 
           <div className="result-viewer__actions">

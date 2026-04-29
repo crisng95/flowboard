@@ -1,0 +1,173 @@
+import { useEffect, useState } from "react";
+import { getAuthMe, type AuthMe } from "../api/client";
+import { useGenerationStore } from "../store/generation";
+import { getLatestRelease, isNewerVersion, type LatestRelease } from "../api/github";
+import { SettingsPanel } from "./SettingsPanel";
+import packageJson from "../../package.json";
+
+const APP_VERSION: string = packageJson.version;
+
+/**
+ * Account chip pinned to the bottom of the project sidebar.
+ *
+ * Identity (name / email / avatar) flows: extension grabs the Bearer
+ * token → calls Google's /oauth2/v2/userinfo → pushes the profile to
+ * the agent over WebSocket → we read it from /api/auth/me here.
+ *
+ * Polled every 5s so the chip backfills automatically once the
+ * extension finishes the userinfo round-trip after a fresh sign-in.
+ * Stops polling once we have an email — no need to keep hitting it.
+ *
+ * When the sidebar is collapsed (44px wide), render only the avatar +
+ * cog stacked vertically so the chip still fits.
+ */
+export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
+  const setStorePaygateTier = useGenerationStore.setState;
+  const [open, setOpen] = useState(false);
+  const [profile, setProfile] = useState<AuthMe | null>(null);
+
+  // Poll /api/auth/me until BOTH email and paygate_tier are populated.
+  // Email comes from Google's userinfo (fetched once per token rotation
+  // by the extension); tier is sniffed from outgoing Flow API request
+  // bodies and pushed via WS, which can take a few seconds longer.
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      const me = await getAuthMe();
+      if (!alive) return;
+      setProfile(me);
+      // Mirror the tier into the generation store so dispatch paths
+      // continue to read from a single source.
+      if (me?.paygate_tier) {
+        setStorePaygateTier({ paygateTier: me.paygate_tier });
+      }
+      if (me?.email && me?.paygate_tier) return;
+      timer = setTimeout(poll, 5000);
+    };
+    poll();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [setStorePaygateTier]);
+
+  // Surface "new version available" right under the account chip so
+  // users notice without having to open Settings. GitHub's release
+  // endpoint is cached by the helper (sessionStorage, 1h) so this
+  // doesn't burn API quota on every mount.
+  const [latestRelease, setLatestRelease] = useState<LatestRelease | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getLatestRelease().then((r) => {
+      if (alive) setLatestRelease(r);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const updateAvailable =
+    !!latestRelease?.tagName &&
+    isNewerVersion(latestRelease.tagName, APP_VERSION);
+
+  const tier = profile?.paygate_tier ?? null;
+
+  const displayName = profile?.name?.trim() || "Flow account";
+  const email = profile?.email ?? null;
+  const picture = profile?.picture ?? null;
+  const initial = displayName.slice(0, 1).toUpperCase();
+
+  // Google Flow plan tiers — both are paid (Flowboard's hard
+  // requirement). TIER_TWO = Ultra (higher tier), TIER_ONE = Pro.
+  const tierLabel = tier === "PAYGATE_TIER_TWO"
+    ? "Ultra"
+    : tier === "PAYGATE_TIER_ONE"
+      ? "Pro"
+      : "—";
+
+  return (
+    <>
+      <div
+        className={`account-panel${collapsed ? " account-panel--collapsed" : ""}`}
+        role="region"
+        aria-label="Account"
+      >
+        <div
+          className={`account-panel__avatar${picture ? " account-panel__avatar--photo" : ""}`}
+          title={collapsed ? `${displayName} · ${tierLabel}` : undefined}
+          aria-hidden="true"
+        >
+          {picture ? (
+            <img
+              src={picture}
+              alt=""
+              referrerPolicy="no-referrer"
+              onError={(e) => {
+                // Google avatar URL can 403 if the user signed out —
+                // hide the broken image and let the initial fallback
+                // shine through.
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+          ) : (
+            initial
+          )}
+        </div>
+        {!collapsed && (
+          <div className="account-panel__meta">
+            <div className="account-panel__name-row">
+              <span className="account-panel__name">{displayName}</span>
+              {tier && (
+                <span
+                  className={`account-panel__tier${
+                    tier === "PAYGATE_TIER_TWO"
+                      ? " account-panel__tier--ultra"
+                      : " account-panel__tier--pro"
+                  }`}
+                  title={tier}
+                >
+                  {tierLabel}
+                </span>
+              )}
+            </div>
+            {email ? (
+              <span className="account-panel__email" title={email}>{email}</span>
+            ) : (
+              <span className="account-panel__email account-panel__email--muted">
+                Connected via extension
+              </span>
+            )}
+          </div>
+        )}
+        <button
+          type="button"
+          className="account-panel__cog"
+          onClick={() => setOpen((v) => !v)}
+          aria-label="Open settings"
+          title="Settings"
+        >
+          ⚙
+        </button>
+      </div>
+      {!collapsed && (
+        <div className="account-panel__version-row">
+          <span className="account-panel__version-label">
+            Flowboard <code>v{APP_VERSION}</code>
+          </span>
+          {updateAvailable && latestRelease && (
+            <a
+              className="account-panel__update-pill"
+              href={latestRelease.htmlUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`Latest release ${latestRelease.tagName} — click to view`}
+            >
+              ↑ {latestRelease.tagName}
+            </a>
+          )}
+        </div>
+      )}
+      <SettingsPanel open={open} onClose={() => setOpen(false)} />
+    </>
+  );
+}

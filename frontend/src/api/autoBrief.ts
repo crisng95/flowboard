@@ -29,20 +29,12 @@ export async function requestAutoBrief(rfId: string, mediaId: string): Promise<v
       aiBriefStatus: "done",
     });
     // Persist so the brief survives reload — re-running vision per session
-    // would burn CLI invocations for no reason.
+    // would burn CLI invocations for no reason. Backend merges `data` so
+    // only the delta needs to ship.
     const dbId = parseInt(rfId, 10);
     if (!isNaN(dbId)) {
-      const cur = useBoardStore.getState().nodes.find((n) => n.id === rfId);
-      const d = cur?.data;
       patchNode(dbId, {
-        data: {
-          title: d?.title,
-          prompt: d?.prompt,
-          mediaId: d?.mediaId,
-          mediaIds: d?.mediaIds,
-          variantCount: d?.variantCount,
-          aiBrief: res.description,
-        },
+        data: { aiBrief: res.description },
       }).catch(() => {
         // local in-memory state is still correct for this session
       });
