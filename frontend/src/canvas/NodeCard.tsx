@@ -36,14 +36,28 @@ function StatusStrip({ status }: { status?: string }) {
 const ACCEPT_MIME = "image/png,image/jpeg,image/webp,image/gif";
 
 function BriefHint({ data }: { data: FlowboardNodeData }) {
-  const status = data.aiBriefStatus;
+  if (data.autoPromptStatus === "pending") {
+    return <p className="brief-hint brief-hint--pending">✨ Composing prompt…</p>;
+  }
+  if (data.aiBriefStatus === "pending") {
+    return <p className="brief-hint brief-hint--pending">✨ Analyzing…</p>;
+  }
   if (data.aiBrief) {
     return <p className="brief-hint" title={data.aiBrief}>✨ {data.aiBrief}</p>;
   }
-  if (status === "pending") {
-    return <p className="brief-hint brief-hint--pending">✨ Analyzing…</p>;
-  }
   return null;
+}
+
+/**
+ * True while the LLM layer is doing work on this node — composing an
+ * auto-prompt or describing media for an aiBrief. Used to add a busy
+ * treatment + disable Generate so the user can't double-fire.
+ */
+function isLLMBusy(data: FlowboardNodeData): boolean {
+  return (
+    data.autoPromptStatus === "pending"
+    || data.aiBriefStatus === "pending"
+  );
 }
 
 function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
@@ -1069,10 +1083,12 @@ export function NodeCard(props: NodeProps<FlowNode>) {
   const isNote = data.type === "note";
   const isGenerable = ["image", "prompt", "video", "visual_asset", "character"].includes(data.type);
   const isRunning = data.status === "running";
+  const llmBusy = isLLMBusy(data);
   const downloadable = !!data.mediaId && data.type !== "prompt" && data.type !== "note";
 
   function handleGenerate(e: React.MouseEvent) {
     e.stopPropagation();
+    if (llmBusy) return; // guard: backend still composing for this node
     useGenerationStore.getState().openGenerationDialog(props.id, data.prompt ?? "");
   }
 
@@ -1105,13 +1121,25 @@ export function NodeCard(props: NodeProps<FlowNode>) {
   }
 
   return (
-    <div className={`node-card${isNote ? " node-card--note" : ""}${props.selected ? " node-card--selected" : ""}`}>
+    <div
+      className={`node-card${isNote ? " node-card--note" : ""}${
+        props.selected ? " node-card--selected" : ""
+      }${llmBusy ? " node-card--llm-busy" : ""}`}
+    >
       <StatusStrip status={data.status} />
       <Handle type="target" position={Position.Left} className="node-handle" />
 
       <div className="node-header">
         <span className="node-icon" aria-hidden="true">{ICON[data.type] ?? "□"}</span>
         <span className="node-title">{data.title}</span>
+        {llmBusy && (
+          // Compact pill so the busy state reads at a glance even if the
+          // body is collapsed. Title is contextual: composing vs. analysing.
+          <span className="node-header__llm-pill" aria-live="polite">
+            <span className="node-header__llm-spinner" aria-hidden="true" />
+            {data.autoPromptStatus === "pending" ? "Composing…" : "Analyzing…"}
+          </span>
+        )}
         <div className="node-header__actions">
           {downloadable && (
             <button
@@ -1129,8 +1157,9 @@ export function NodeCard(props: NodeProps<FlowNode>) {
               className={`node-header__btn${isRunning ? " node-header__btn--running" : ""}`}
               onClick={handleGenerate}
               aria-label="Generate from this node"
-              title="Generate"
+              title={llmBusy ? "Backend is still composing — try again in a moment" : "Generate"}
               tabIndex={0}
+              disabled={llmBusy}
             >
               ▶
             </button>

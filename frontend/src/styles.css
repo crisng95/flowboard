@@ -4281,3 +4281,83 @@ button:disabled {
   color: var(--accent);
   text-decoration: underline;
 }
+
+/* ── Node busy treatment when LLM (auto-prompt / vision) is in flight ─── */
+
+/* Wrapper modifier — applied to .node-card while either autoPromptStatus
+ * or aiBriefStatus on the node is "pending". The body is dimmed and
+ * pointer-events are disabled so the user can't trigger another LLM
+ * action on the same node mid-flight. The header (and Generate button)
+ * stays clickable so we can still display feedback there. */
+.node-card--llm-busy .node-body,
+.node-card--llm-busy [class$="-empty"],
+.node-card--llm-busy [class$="-tile"] {
+  pointer-events: none;
+  opacity: 0.7;
+  filter: saturate(0.85);
+}
+
+/* Hairline animated band along the top edge of the card so the busy
+ * state catches the eye even when the user looks past the pill. */
+.node-card--llm-busy::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(124, 92, 255, 0.8) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: node-llm-shimmer 1.6s ease-in-out infinite;
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 2;
+}
+@keyframes node-llm-shimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* Compact "Composing… / Analyzing…" pill in the node header. Sits
+ * between the title and the action buttons, so it never gets clipped
+ * when the title ellipsises. */
+.node-header__llm-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  background: rgba(124, 92, 255, 0.16);
+  border: 1px solid rgba(124, 92, 255, 0.4);
+  border-radius: 999px;
+  color: #c5b3ff;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+.node-header__llm-spinner {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid rgba(124, 92, 255, 0.3);
+  border-top-color: #c5b3ff;
+  border-radius: 50%;
+  animation: node-llm-spin 0.8s linear infinite;
+}
+@keyframes node-llm-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Generate button gets the same disabled treatment as elsewhere — but
+ * we flag it visually so it doesn't look like an error state. */
+.node-header__btn[disabled] {
+  cursor: not-allowed;
+  opacity: 0.4;
+}

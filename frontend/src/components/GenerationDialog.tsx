@@ -360,6 +360,10 @@ export function GenerationDialog() {
         return;
       }
       setAutoBuilding(true);
+      // Mark the target node as "auto-prompt running" so the canvas
+      // can render a busy treatment + block duplicate dispatches on
+      // the same node. Cleared in finally below regardless of outcome.
+      useBoardStore.getState().updateNodeData(rfId, { autoPromptStatus: "pending" });
       try {
         if (!isVideo && variants > 1) {
           const res = await autoPromptBatchApi(dbId, variants);
@@ -377,8 +381,10 @@ export function GenerationDialog() {
           setPrompt(finalPrompt);
         }
         setAutoPromptUsed(true);
+        useBoardStore.getState().updateNodeData(rfId, { autoPromptStatus: undefined });
       } catch (err) {
         setAutoBuilding(false);
+        useBoardStore.getState().updateNodeData(rfId, { autoPromptStatus: "failed" });
         useGenerationStore.setState({
           error: err instanceof Error
             ? `Auto-prompt failed: ${err.message}`

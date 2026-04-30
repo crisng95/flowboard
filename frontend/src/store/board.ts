@@ -40,6 +40,12 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   // Spliced into auto-prompts on downstream nodes for richer context.
   aiBrief?: string;
   aiBriefStatus?: "pending" | "done" | "failed";
+  // Transient status while the GenerationDialog runs `autoPrompt` /
+  // `autoPromptBatch` against this node — set to "pending" while the
+  // backend is composing the prompt, cleared on success/failure. Not
+  // persisted to the DB; it's a few-second UX flag so the node can
+  // render a visible "busy" treatment that blocks duplicate dispatches.
+  autoPromptStatus?: "pending" | "done" | "failed";
   // ISO timestamp persisted when a generation completes successfully.
   // Powers the "5 phút trước" relative-time display in ResultViewer.
   // Uploads also stamp this so the timestamp reflects "when the asset
