@@ -482,6 +482,10 @@ Suggested release: **v1.2.0** (minor bump given the user-visible change).
 
 ## Comparison vs the dropped 4-vendor plan
 
-The earlier draft (4 separate provider classes for Claude / Gemini / OpenAI / Grok) is preserved in git history at `c7c1647` for reference. Switching to 9Router cuts effort roughly in half (6d → 4d), provides 25× more model coverage (4 → 100+), and removes the API-key management surface area from Flowboard entirely (4 keys → 1 key, all vendor auth handled in 9Router's dashboard).
+The earlier draft is preserved as a sibling document at [`multi-llm-provider-legacy.md`](./multi-llm-provider-legacy.md). It builds 4 self-contained vendor providers (Claude / Gemini / OpenAI / Grok) inside Flowboard rather than delegating to 9Router.
+
+Switching to 9Router cuts effort roughly in half (6d → 4d), provides 25× more model coverage (4 → 100+), and removes the API-key management surface area from Flowboard entirely (4 keys → 1 key, all vendor auth handled in 9Router's dashboard).
+
+The legacy plan stays useful as a fallback shape if Flowboard ever needs to ship without external npm dependencies (e.g. self-contained Docker image, air-gapped deployment) — at that point the 9Router dependency would be unworkable and direct integrations become the right answer.
 
 Net trade: Flowboard adds an external dependency (`9router`) for power users who want anything beyond Claude. The default UX (Claude CLI) is untouched.
