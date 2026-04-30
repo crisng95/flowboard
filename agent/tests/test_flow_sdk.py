@@ -205,19 +205,55 @@ def test_resolve_video_model_routes_by_tier_quality_aspect():
     assert resolve_video_model(
         "PAYGATE_TIER_ONE", "VIDEO_ASPECT_RATIO_PORTRAIT", "fast"
     ) == "veo_3_1_i2v_s_fast_portrait"
-    # Tier 2 fast — portrait stays mapped to landscape key (known issue,
-    # see flow_sdk.py comment).
+    # Tier 2 fast — distinct landscape and portrait models. Both keys
+    # verified against real Flow web request bodies (curl exports from
+    # labs.google Network tab); never speculate suffixes here. Regression
+    # guard for the bug where Tier 2 Portrait Fast was incorrectly mapped
+    # to a landscape-only `_ultra_relaxed` model that ignored aspectRatio
+    # and forced 1280×720 output even when 9:16 was requested.
+    assert resolve_video_model(
+        "PAYGATE_TIER_TWO", "VIDEO_ASPECT_RATIO_LANDSCAPE", "fast"
+    ) == "veo_3_1_i2v_s_fast_ultra"
     assert resolve_video_model(
         "PAYGATE_TIER_TWO", "VIDEO_ASPECT_RATIO_PORTRAIT", "fast"
-    ) == "veo_3_1_i2v_s_fast_ultra_relaxed"
+    ) == "veo_3_1_i2v_s_fast_portrait_ultra"
 
-    # Lite multi-aspect — same key for landscape and portrait.
+    # Lite is a Tier 2 (Ultra) exclusive — multi-aspect, same key for
+    # landscape and portrait.
     assert resolve_video_model(
         "PAYGATE_TIER_TWO", "VIDEO_ASPECT_RATIO_LANDSCAPE", "lite"
     ) == "veo_3_1_t2v_lite"
     assert resolve_video_model(
         "PAYGATE_TIER_TWO", "VIDEO_ASPECT_RATIO_PORTRAIT", "lite"
     ) == "veo_3_1_t2v_lite"
+
+    # Tier 1 has no Lite checkpoint — a stale frontend that asks for Lite
+    # at Tier 1 must fall back to Tier 1 Fast rather than crash or silently
+    # dispatch a Tier 2-only model the user is not paygated for.
+    assert resolve_video_model(
+        "PAYGATE_TIER_ONE", "VIDEO_ASPECT_RATIO_LANDSCAPE", "lite"
+    ) == "veo_3_1_i2v_s_fast"
+    assert resolve_video_model(
+        "PAYGATE_TIER_ONE", "VIDEO_ASPECT_RATIO_PORTRAIT", "lite"
+    ) == "veo_3_1_i2v_s_fast_portrait"
+
+    # Tier 2 Quality — third quality tier (xịn hơn Fast, slower). Portrait
+    # key verified from a real labs.google curl; landscape key follows the
+    # same drop-`_portrait` naming convention used everywhere else.
+    assert resolve_video_model(
+        "PAYGATE_TIER_TWO", "VIDEO_ASPECT_RATIO_LANDSCAPE", "quality"
+    ) == "veo_3_1_i2v_s"
+    assert resolve_video_model(
+        "PAYGATE_TIER_TWO", "VIDEO_ASPECT_RATIO_PORTRAIT", "quality"
+    ) == "veo_3_1_i2v_s_portrait"
+
+    # Tier 1 has no Quality checkpoint either — same fallback story as Lite.
+    assert resolve_video_model(
+        "PAYGATE_TIER_ONE", "VIDEO_ASPECT_RATIO_LANDSCAPE", "quality"
+    ) == "veo_3_1_i2v_s_fast"
+    assert resolve_video_model(
+        "PAYGATE_TIER_ONE", "VIDEO_ASPECT_RATIO_PORTRAIT", "quality"
+    ) == "veo_3_1_i2v_s_fast_portrait"
 
     # Default quality (None / empty) → fast.
     assert resolve_video_model(

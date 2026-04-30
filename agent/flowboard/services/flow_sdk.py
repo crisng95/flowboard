@@ -49,7 +49,9 @@ def resolve_image_model(key: Optional[str]) -> str:
         return IMAGE_MODELS[key]
     return IMAGE_MODELS[DEFAULT_IMAGE_MODEL_KEY]
 
-# Video model keys nested by [tier][quality][aspect].
+# Video model keys nested by [tier][quality][aspect]. All values verified
+# against real Flow web request bodies (curl exports from labs.google's
+# Network tab) — do NOT speculate suffixes here, only use observed keys.
 #
 # `quality` is "fast" (default — the `_i2v_s_fast*` family) or "lite"
 # (`veo_3_1_t2v_lite` — despite the t2v prefix in the name, this
@@ -58,32 +60,36 @@ def resolve_image_model(key: Optional[str]) -> str:
 # real Flow web request). Lite is multi-aspect — same key for both
 # 16:9 and 9:16; the model adapts via the aspectRatio field.
 #
-# KNOWN ISSUE — Tier 2 Portrait fast: the landscape model
-# `_ultra_relaxed` ignores aspectRatio and always emits 1280×720. A
-# speculative `..._portrait_ultra_relaxed` was rejected with
-# MODEL_ACCESS_DENIED, so Tier 2 Portrait fast stays mapped to the
-# landscape key (output is wrong-aspect but at least generates).
-# Switch to "lite" if you need correct portrait framing on Tier 2.
+# Tier 2 Fast naming pattern: Tier 1 Fast key + `_ultra` suffix
+# (e.g. `veo_3_1_i2v_s_fast` → `veo_3_1_i2v_s_fast_ultra`,
+# `veo_3_1_i2v_s_fast_portrait` → `veo_3_1_i2v_s_fast_portrait_ultra`).
 VIDEO_MODEL_KEYS: dict[str, dict[str, dict[str, str]]] = {
+    # Tier 1 (Pro) — only Fast quality. Lite and Quality are Tier 2 perks.
     "PAYGATE_TIER_ONE": {
         "fast": {
             "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_i2v_s_fast",
             "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_i2v_s_fast_portrait",
         },
-        "lite": {
-            "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_t2v_lite",
-            "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_t2v_lite",
-        },
     },
+    # Tier 2 (Ultra) — three quality levels:
+    #   - lite: `veo_3_1_t2v_lite` (multi-aspect, fastest, lower fidelity)
+    #   - fast: `_fast_ultra` family (default, balanced)
+    #   - quality: `veo_3_1_i2v_s*` family (highest fidelity, slowest).
+    #     PORTRAIT key verified from a real labs.google curl
+    #     (`veo_3_1_i2v_s_portrait`); LANDSCAPE key derived from the same
+    #     naming convention used by Fast (drop `_portrait` for landscape).
     "PAYGATE_TIER_TWO": {
-        "fast": {
-            "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_i2v_s_fast_ultra_relaxed",
-            # FIXME — see comment above; renders landscape regardless.
-            "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_i2v_s_fast_ultra_relaxed",
-        },
         "lite": {
             "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_t2v_lite",
             "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_t2v_lite",
+        },
+        "fast": {
+            "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_i2v_s_fast_ultra",
+            "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_i2v_s_fast_portrait_ultra",
+        },
+        "quality": {
+            "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_i2v_s",
+            "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_i2v_s_portrait",
         },
     },
 }
