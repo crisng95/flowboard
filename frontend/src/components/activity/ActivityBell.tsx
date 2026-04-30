@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ActivityDropdown } from "./ActivityDropdown";
 import { ActivityDetailModal } from "./ActivityDetailModal";
+import { BellIcon } from "./ActivityIcon";
 import { useActivityFeed } from "./useActivityFeed";
 
 /**
@@ -51,7 +52,7 @@ export function ActivityBell() {
                 : `${feed.runningCount} running`
           }
         >
-          🔔
+          <BellIcon size={18} />
           {feed.unreadCount > 0 && (
             <span className={badgeClass} aria-hidden="true">
               {badgeLabel}
