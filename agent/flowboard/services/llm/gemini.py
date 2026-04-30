@@ -31,6 +31,22 @@ _CLI_BIN = "gemini"
 _DEFAULT_TIMEOUT = 90.0
 _PROBE_TIMEOUT = 5.0
 
+# Optional model override. When unset, we DON'T pass `-m` at all and
+# let Gemini CLI use whatever its `/model` setting picks (Auto modes
+# internally rotate between `gemini-3.1-pro` / `gemini-3-flash` etc).
+#
+# When the default Auto mode lands on a preview model that returns 429
+# MODEL_CAPACITY_EXHAUSTED, the CLI retry-with-backoff inflates per-call
+# latency by 5-15s. Operators with capacity-exhausted preview defaults
+# can pin a stable model via FLOWBOARD_GEMINI_MODEL=gemini-2.5-flash
+# (or whatever their plan supports).
+#
+# Direct `-m gemini-3-flash` doesn't work in CLI v0.38.2 — the CodeAssist
+# backend returns ModelNotFound; that name is only resolvable through
+# Auto mode. Stable alternatives that DO work as `-m` values today:
+#   `gemini-2.5-flash` · `gemini-2.5-pro`
+_DEFAULT_MODEL: str | None = None
+
 
 class GeminiProvider:
     """Conforms to ``LLMProvider`` (structural typing)."""
@@ -108,7 +124,14 @@ class GeminiProvider:
             )
         full_prompt = "\n\n".join(parts)
 
-        args: list[str] = [_CLI_BIN, "-p", full_prompt]
+        # Optional model pin via env var — see _DEFAULT_MODEL docstring
+        # for the capacity-exhausted preview-model rationale. When unset
+        # we don't pass `-m` so Gemini CLI's own `/model` setting wins.
+        model = os.environ.get("FLOWBOARD_GEMINI_MODEL") or _DEFAULT_MODEL
+        args: list[str] = [_CLI_BIN]
+        if model:
+            args += ["-m", model]
+        args += ["-p", full_prompt]
 
         try:
             proc = await asyncio.create_subprocess_exec(

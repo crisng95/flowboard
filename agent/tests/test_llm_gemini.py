@@ -117,10 +117,13 @@ async def test_run_passes_prompt_as_argv_token(monkeypatch):
     monkeypatch.setattr("asyncio.create_subprocess_exec", _spawn)
     tricky = 'a "quoted" $VAR\nnewline'
     await p.run(tricky)
-    args = captured["args"]
-    # Args = (binary, "-p", prompt). Prompt is a single argv token.
-    assert args[1] == "-p"
-    assert args[2] == tricky
+    args = list(captured["args"])
+    # `-p` carries the prompt as the next argv token. Locate it by name
+    # rather than hardcoding the index — the argv now also includes
+    # `-m <model>` for stable-model pinning, so positional asserts
+    # would drift if the order changes again.
+    p_idx = args.index("-p")
+    assert args[p_idx + 1] == tricky
 
 
 @pytest.mark.asyncio
@@ -137,14 +140,58 @@ async def test_run_prepends_system_prompt_into_body(monkeypatch):
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", _spawn)
     await p.run("user question", system_prompt="be terse")
-    prompt = captured["args"][2]
+    args = list(captured["args"])
+    prompt = args[args.index("-p") + 1]
     # Both the system block and the user prompt land in the SAME -p arg.
     assert "[System: be terse]" in prompt
     assert "user question" in prompt
     # System block precedes the user content.
     assert prompt.index("[System:") < prompt.index("user question")
     # NO `--system` flag should appear in the argv.
-    assert "--system" not in captured["args"]
+    assert "--system" not in args
+
+
+@pytest.mark.asyncio
+async def test_run_omits_m_flag_when_no_override(monkeypatch):
+    """Default — no FLOWBOARD_GEMINI_MODEL env var → no `-m` flag emitted.
+    Gemini CLI's own `/model` setting (its Auto mode) picks the model.
+    Direct `-m <name>` doesn't accept all of Auto-mode's internal names
+    (e.g. `gemini-3-flash` returns ModelNotFound on the CodeAssist
+    backend in CLI v0.38.2) so we leave model selection to the CLI by
+    default and only override when the operator opts in."""
+    p = GeminiProvider()
+    captured: dict = {}
+
+    async def _spawn(*args, **_kwargs):
+        captured["args"] = args
+        return _FakeProc(stdout=b"ok\n", returncode=0)
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", _spawn)
+    monkeypatch.delenv("FLOWBOARD_GEMINI_MODEL", raising=False)
+    await p.run("hi")
+    args = list(captured["args"])
+    assert "-m" not in args
+
+
+@pytest.mark.asyncio
+async def test_run_respects_env_var_model_override(monkeypatch):
+    """Operator can pin a stable model via FLOWBOARD_GEMINI_MODEL when
+    the CLI's default Auto mode keeps landing on a capacity-exhausted
+    preview variant. Stable values that work as `-m` arguments today:
+    `gemini-2.5-flash`, `gemini-2.5-pro`."""
+    p = GeminiProvider()
+    captured: dict = {}
+
+    async def _spawn(*args, **_kwargs):
+        captured["args"] = args
+        return _FakeProc(stdout=b"ok\n", returncode=0)
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", _spawn)
+    monkeypatch.setenv("FLOWBOARD_GEMINI_MODEL", "gemini-2.5-flash")
+    await p.run("hi")
+    args = list(captured["args"])
+    m_idx = args.index("-m")
+    assert args[m_idx + 1] == "gemini-2.5-flash"
 
 
 @pytest.mark.asyncio
@@ -175,7 +222,8 @@ async def test_run_no_system_prompt_omits_system_block(monkeypatch):
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", _spawn)
     await p.run("just the user prompt")
-    prompt = captured["args"][2]
+    args = list(captured["args"])
+    prompt = args[args.index("-p") + 1]
     assert "[System:" not in prompt
     assert prompt == "just the user prompt"
 
@@ -199,7 +247,8 @@ async def test_run_inlines_attachments_as_at_paths(monkeypatch, tmp_path):
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", _spawn)
     await p.run("describe", attachments=[str(img1), str(img2)])
-    prompt = captured["args"][2]
+    args = list(captured["args"])
+    prompt = args[args.index("-p") + 1]
     # Both absolute paths appear with the @ prefix
     assert f"@{img1}" in prompt or f"@{img1.resolve()}" in prompt
     assert f"@{img2}" in prompt or f"@{img2.resolve()}" in prompt
@@ -218,7 +267,8 @@ async def test_run_attachments_use_absolute_paths(monkeypatch, tmp_path):
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", _spawn)
     await p.run("describe", attachments=[str(img)])
-    prompt = captured["args"][2]
+    args = list(captured["args"])
+    prompt = args[args.index("-p") + 1]
     # The path embedded in the prompt is absolute (starts with `/`).
     assert "@/" in prompt
 
