@@ -314,7 +314,147 @@ function ImageTile({
 function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
   const tileCount = tileCountFor(data);
   const ids = data.mediaIds ?? (data.mediaId ? [data.mediaId] : []);
+  const hasMedia = ids.length > 0;
   const isProcessing = data.status === "queued" || data.status === "running";
+
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function persistMedia(newMediaId: string, aspectRatio?: string) {
+    useBoardStore.getState().updateNodeData(rfId, {
+      mediaId: newMediaId,
+      mediaIds: undefined,
+      variantCount: 1,
+      status: "done",
+      aiBrief: undefined,
+      aspectRatio,
+    });
+    const dbId = parseInt(rfId, 10);
+    if (!isNaN(dbId)) {
+      // Backend merges `data`. `null` is the explicit "delete this key"
+      // sentinel — used here to drop stale variant arrays + cached brief
+      // when the user replaces a generated set with a single uploaded image.
+      patchNode(dbId, {
+        status: "done",
+        data: {
+          mediaId: newMediaId,
+          mediaIds: null,
+          variantCount: 1,
+          aiBrief: null,
+          aspectRatio,
+          renderedAt: new Date().toISOString(),
+        },
+      }).catch(() => {});
+    }
+    requestAutoBrief(rfId, newMediaId);
+  }
+
+  async function uploadOwn(file: File) {
+    setError(null);
+    setUploading(true);
+    try {
+      const projectId = await useGenerationStore.getState().ensureProjectId();
+      if (!projectId) {
+        setError("no project");
+        return;
+      }
+      const dbId = parseInt(rfId, 10);
+      const resp = await uploadImage(file, projectId, isNaN(dbId) ? undefined : dbId);
+      persistMedia(resp.media_id, resp.aspect_ratio);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function onPick() {
+    fileInputRef.current?.click();
+  }
+
+  function onChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (f) uploadOwn(f);
+    e.target.value = "";
+  }
+
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) uploadOwn(f);
+  }
+
+  function onDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!dragOver) setDragOver(true);
+  }
+
+  function onDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+  }
+
+  function openGenerate() {
+    useGenerationStore.getState().openGenerationDialog(rfId, data.prompt ?? "");
+  }
+
+  const hiddenFileInput = (
+    <input
+      ref={fileInputRef}
+      type="file"
+      accept={ACCEPT_MIME}
+      style={{ display: "none" }}
+      onChange={onChange}
+    />
+  );
+
+  // Empty state — same action-bar UX as character/visual_asset so users
+  // can drop a reference image directly onto an image node instead of
+  // having to wire one up via a separate visual_asset node.
+  if (!hasMedia && !isProcessing) {
+    return (
+      <div
+        className="node-body node-body--image"
+        onDrop={onDrop}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+      >
+        <div className={`character-empty${dragOver ? " character-empty--over" : ""}`}>
+          {dragOver ? (
+            <span className="visual-asset__hint">Drop image</span>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="visual-asset__action"
+                onClick={onPick}
+                disabled={uploading}
+              >
+                {uploading ? "Uploading…" : "Upload"}
+              </button>
+              <button
+                type="button"
+                className="visual-asset__action"
+                onClick={openGenerate}
+                disabled={uploading}
+              >
+                Generate
+              </button>
+            </>
+          )}
+        </div>
+        <BriefHint data={data} />
+        {hiddenFileInput}
+        {error && <p className="character-drop__error" role="alert">{error}</p>}
+      </div>
+    );
+  }
 
   const tiles: JSX.Element[] = [];
   for (let i = 0; i < tileCount; i++) {
@@ -338,10 +478,18 @@ function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
   }
 
   return (
-    <div className="node-body node-body--image">
+    <div
+      className={`node-body node-body--image${dragOver ? " node-body--image--over" : ""}`}
+      onDrop={onDrop}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+    >
       <div className={`thumbnail-grid thumbnail-grid--${tileCount}`}>
         {tiles}
       </div>
+      <BriefHint data={data} />
+      {hiddenFileInput}
+      {error && <p className="character-drop__error" role="alert">{error}</p>}
     </div>
   );
 }

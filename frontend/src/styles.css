@@ -3156,6 +3156,15 @@ button:disabled {
   inset: 0;
   z-index: 0;
 }
+
+/* Drag-over highlight when dropping a replacement image onto a filled
+ * image node — matches the accent colour used by character-avatar--over. */
+.node-body--image--over .thumbnail-grid {
+  outline: 1px dashed var(--accent);
+  outline-offset: 2px;
+  background: rgba(110, 168, 254, 0.08);
+  border-radius: 6px;
+}
 .node-card__thumbnail {
   position: relative;
   z-index: 1;
