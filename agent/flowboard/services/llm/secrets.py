@@ -9,7 +9,8 @@ Schema of ``~/.flowboard/secrets.json``:
     "auto_prompt": "claude",
     "vision": "gemini",
     "planner": "claude"
-  }
+  },
+  "visionEnabled": true
 }
 ```
 
@@ -126,4 +127,26 @@ def set_feature_provider(feature: str, provider: str) -> None:
     saved = dict(doc.get("activeProviders") or {})
     saved[feature] = provider
     doc["activeProviders"] = saved
+    write(doc)
+
+
+# ── Vision toggle ──────────────────────────────────────────────────────
+
+# When False, the auto-prompt synthesiser falls back to each upstream
+# node's typed `prompt` instead of its vision-derived `aiBrief`. The
+# upload-triggered vision call is unaffected (the user explicitly
+# uploaded an image, so describing it is intentional). Default True
+# preserves existing behaviour for users who don't open the toggle.
+
+def read_vision_enabled() -> bool:
+    """True when vision-derived briefs should be used by the synth flow."""
+    doc = read()
+    val = doc.get("visionEnabled")
+    # Treat any non-False explicit setting (including missing) as enabled.
+    return val is not False
+
+
+def set_vision_enabled(enabled: bool) -> None:
+    doc = read()
+    doc["visionEnabled"] = bool(enabled)
     write(doc)

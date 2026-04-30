@@ -6,6 +6,7 @@ import {
   type LLMProviderInfo,
   type LLMProviderName,
 } from "../api/client";
+import { useGenerationStore } from "../store/generation";
 import { AiProviderDialog } from "./AiProviderDialog";
 
 /**
@@ -35,7 +36,9 @@ const PROVIDER_LABEL: Record<LLMProviderName, string> = {
   grok: "Grok",
 };
 
-const FEATURE_LABEL: Record<keyof LLMConfig, string> = {
+type FeatureKey = "auto_prompt" | "vision" | "planner";
+const FEATURES: FeatureKey[] = ["auto_prompt", "vision", "planner"];
+const FEATURE_LABEL: Record<FeatureKey, string> = {
   auto_prompt: "Auto-Prompt",
   vision: "Vision",
   planner: "Planner",
@@ -59,6 +62,10 @@ export function AiProviderBadge() {
         if (!alive) return;
         setConfig(c);
         setProviders(p);
+        // Sync the Vision toggle into the generation store so dispatch's
+        // post-gen auto-brief gating uses the right value from app boot,
+        // not just after the user opens the AI Providers dialog.
+        useGenerationStore.setState({ visionEnabled: c.visionEnabled });
       } catch {
         // Network blip — keep stale state, try again next tick.
       }
@@ -81,7 +88,6 @@ export function AiProviderBadge() {
   // While loading or empty, render the badge in a neutral state so the
   // toolbar layout doesn't jump when the data lands.
   const primary: LLMProviderName | null = config?.auto_prompt ?? null;
-  const features = (Object.keys(config ?? {}) as (keyof LLMConfig)[]);
   const allSame =
     config !== null
       && config.auto_prompt === config.vision
@@ -102,10 +108,13 @@ export function AiProviderBadge() {
   const healthIcon = primary ? (unhealthy ? "⚠" : "✓") : "";
 
   // Tooltip — full feature → provider mapping for hover inspection.
+  // Vision-disabled state surfaces here too so the user can see at a
+  // glance that the synth flow is using node prompts instead of briefs.
   const tooltip = config
-    ? features
+    ? FEATURES
       .map((f) => `${FEATURE_LABEL[f]}: ${PROVIDER_LABEL[config[f]]}`)
       .join(" · ")
+      + (config.visionEnabled === false ? " · Vision OFF" : "")
     : "AI Providers — click to configure";
 
   return (

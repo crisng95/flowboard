@@ -40,10 +40,12 @@ class _ApiKeyBody(BaseModel):
 
 
 class _ConfigBody(BaseModel):
-    """PUT /api/llm/config: any subset of the three features."""
+    """PUT /api/llm/config: any subset of the three features + the
+    Vision-toggle flag."""
     auto_prompt: Optional[str] = None
     vision: Optional[str] = None
     planner: Optional[str] = None
+    visionEnabled: Optional[bool] = None
 
 
 # Whitelist for the writable feature → provider mapping. Hand-edited
@@ -152,11 +154,13 @@ async def test_provider(name: str) -> dict:
         # Single-character prompt to keep cost minimal. We do NOT pass
         # max_tokens because some providers (Claude CLI) ignore it; we
         # accept the small overage as a one-shot cost.
-        # Timeout sized for the slowest CLI in the catalogue: Gemini CLI
-        # takes ~15s end-to-end for a single `-p` call (subprocess spawn
-        # + auth load + model invocation). 30s gives headroom without
-        # making the user wait an eternity on a hung provider.
-        await provider.run(".", timeout=30.0)
+        # Timeout aligned with the slowest production feature ceiling
+        # (auto_prompt_batch + vision both at 120s). The test endpoint
+        # used to time out at 30s while Vision dispatches succeeded
+        # because the Test path was tighter than what the user actually
+        # runs. 120s keeps Test honest — if Vision passes here, it'll
+        # pass at dispatch time too.
+        await provider.run(".", timeout=120.0)
     except LLMError as exc:
         return {"ok": False, "error": str(exc)[:200]}
     except Exception as exc:  # noqa: BLE001
@@ -173,8 +177,11 @@ async def test_provider(name: str) -> dict:
 
 @router.get("/config")
 def get_config() -> dict:
-    """Return the feature → provider mapping (defaults filled in)."""
-    return secrets.read_active_providers()
+    """Return the feature → provider mapping (defaults filled in) plus
+    feature toggles like `visionEnabled`."""
+    out = dict(secrets.read_active_providers())
+    out["visionEnabled"] = secrets.read_vision_enabled()
+    return out
 
 
 # ── PUT /api/llm/config ───────────────────────────────────────────────
@@ -193,6 +200,11 @@ def set_config(body: _ConfigBody) -> dict:
     updates = body.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=400, detail="no fields to update")
+
+    # Split feature-routing entries (feature → provider strings) from
+    # toggle flags so the validation below can be feature-specific.
+    vision_enabled = updates.pop("visionEnabled", None)
+
     for feature, provider_name in updates.items():
         if feature not in _VALID_FEATURES:
             raise HTTPException(status_code=400, detail=f"unknown feature {feature!r}")
@@ -202,5 +214,10 @@ def set_config(body: _ConfigBody) -> dict:
             )
     for feature, provider_name in updates.items():
         secrets.set_feature_provider(feature, provider_name)
-    logger.info("llm: config updated %s", updates)
+    if vision_enabled is not None:
+        secrets.set_vision_enabled(bool(vision_enabled))
+    logger.info(
+        "llm: config updated providers=%s vision_enabled=%s",
+        updates, vision_enabled,
+    )
     return {"ok": True}

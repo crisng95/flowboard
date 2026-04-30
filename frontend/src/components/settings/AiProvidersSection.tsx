@@ -9,6 +9,7 @@ import {
   type LLMProviderInfo,
   type LLMProviderName,
 } from "../../api/client";
+import { useGenerationStore } from "../../store/generation";
 import { ProviderCard } from "./ProviderCard";
 import { ProviderSetupModal } from "./ProviderSetupModal";
 
@@ -116,6 +117,7 @@ export function AiProvidersSection() {
   const [applying, setApplying] = useState(false);
   const [helpFor, setHelpFor] = useState<LLMProviderName | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [savingVision, setSavingVision] = useState(false);
 
   const aliveRef = useRef(true);
   useEffect(() => {
@@ -132,6 +134,10 @@ export function AiProvidersSection() {
       setProviders(p);
       setConfig(c);
       setLoadError(null);
+      // Mirror the toggle into the generation store so dispatchGeneration's
+      // post-gen auto-brief skip path stays in sync without an extra
+      // round-trip per gen.
+      useGenerationStore.setState({ visionEnabled: c.visionEnabled });
     } catch (err) {
       if (!aliveRef.current) return;
       setLoadError(err instanceof Error ? err.message : String(err));
@@ -216,6 +222,33 @@ export function AiProvidersSection() {
       );
     } finally {
       if (aliveRef.current) setApplying(false);
+    }
+  }
+
+  async function handleToggleVision(nextEnabled: boolean) {
+    if (savingVision) return;
+    setSavingVision(true);
+    // Optimistic update — both local state AND the generation store
+    // mirror so dispatchGeneration's auto-brief gating sees the new
+    // value immediately, before the next 30s poll.
+    setConfig((c) => (c ? { ...c, visionEnabled: nextEnabled } : c));
+    useGenerationStore.setState({ visionEnabled: nextEnabled });
+    try {
+      await setLlmConfig({ visionEnabled: nextEnabled });
+      showToast(
+        nextEnabled
+          ? "Vision enabled — auto-prompt will use image briefs."
+          : "Vision disabled — auto-prompt will use node prompts instead.",
+      );
+    } catch (err) {
+      // Revert
+      setConfig((c) => (c ? { ...c, visionEnabled: !nextEnabled } : c));
+      useGenerationStore.setState({ visionEnabled: !nextEnabled });
+      showToast(
+        `Couldn't save: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      if (aliveRef.current) setSavingVision(false);
     }
   }
 
@@ -337,6 +370,31 @@ export function AiProvidersSection() {
               <div className="selection-panel__heading">
                 Test {labelOf(pending)} on each feature before applying
               </div>
+              <label
+                className={`vision-toggle${
+                  config && !config.visionEnabled ? " vision-toggle--off" : ""
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  className="vision-toggle__input"
+                  checked={config ? !config.visionEnabled : false}
+                  disabled={savingVision || !config}
+                  onChange={(e) => handleToggleVision(!e.target.checked)}
+                />
+                <span className="vision-toggle__switch" aria-hidden="true">
+                  <span className="vision-toggle__knob" />
+                </span>
+                <span className="vision-toggle__body">
+                  <span className="vision-toggle__title">Disable Vision</span>
+                  <span className="vision-toggle__hint">
+                    Auto-prompt will use each upstream node's typed prompt
+                    instead of an image-derived brief. Uploaded images
+                    still run vision automatically — this only changes
+                    what the synthesiser reads.
+                  </span>
+                </span>
+              </label>
               <div className="feature-test-list">
                 {FEATURES.map((f) => (
                   <FeatureTestRow

@@ -4792,3 +4792,79 @@ button:disabled {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* Vision toggle — sits inside the selection panel above the test
+ * checklist. Custom switch + label so it reads as a setting, not a
+ * disabled-by-default checkbox. */
+.vision-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.vision-toggle:hover {
+  border-color: rgba(124, 92, 255, 0.35);
+}
+.vision-toggle--off {
+  border-color: rgba(255, 170, 0, 0.4);
+  background: rgba(255, 170, 0, 0.04);
+}
+.vision-toggle__input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.vision-toggle__switch {
+  flex-shrink: 0;
+  position: relative;
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--panel-high);
+  border: 1px solid var(--border);
+  transition: background 0.12s, border-color 0.12s;
+  margin-top: 1px;
+}
+.vision-toggle__input:checked + .vision-toggle__switch {
+  background: rgba(255, 170, 0, 0.5);
+  border-color: rgba(255, 170, 0, 0.6);
+}
+.vision-toggle__knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 0.18s ease, background 0.12s;
+}
+.vision-toggle__input:checked + .vision-toggle__switch .vision-toggle__knob {
+  transform: translateX(12px);
+  background: #fff;
+}
+.vision-toggle__input:focus-visible + .vision-toggle__switch {
+  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.4);
+}
+.vision-toggle__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.vision-toggle__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.vision-toggle__hint {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.45;
+}

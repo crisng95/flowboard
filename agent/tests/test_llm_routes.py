@@ -201,13 +201,14 @@ def test_test_endpoint_unknown_provider_404(client, tmp_secrets_path):
 
 
 def test_get_config_returns_defaults_for_fresh_install(client, tmp_secrets_path):
-    """No saved config → every feature defaults to claude."""
+    """No saved config → every feature defaults to claude, vision is on."""
     resp = client.get("/api/llm/config")
     assert resp.status_code == 200
     assert resp.json() == {
         "auto_prompt": "claude",
         "vision": "claude",
         "planner": "claude",
+        "visionEnabled": True,
     }
 
 
@@ -219,7 +220,14 @@ def test_get_config_overlays_user_picks(client, tmp_secrets_path):
         "auto_prompt": "claude",
         "vision": "gemini",
         "planner": "openai",
+        "visionEnabled": True,
     }
+
+
+def test_get_config_includes_vision_disabled_when_set(client, tmp_secrets_path):
+    secrets.set_vision_enabled(False)
+    resp = client.get("/api/llm/config")
+    assert resp.json()["visionEnabled"] is False
 
 
 # ── PUT /api/llm/config ───────────────────────────────────────────────
@@ -246,7 +254,17 @@ def test_set_config_multiple_features(client, tmp_secrets_path):
         "auto_prompt": "grok",
         "vision": "gemini",
         "planner": "openai",
+        "visionEnabled": True,
     }
+
+
+def test_set_config_toggles_vision_enabled(client, tmp_secrets_path):
+    resp = client.put("/api/llm/config", json={"visionEnabled": False})
+    assert resp.status_code == 200
+    assert client.get("/api/llm/config").json()["visionEnabled"] is False
+    # And back on
+    client.put("/api/llm/config", json={"visionEnabled": True})
+    assert client.get("/api/llm/config").json()["visionEnabled"] is True
 
 
 def test_set_config_rejects_unknown_provider(client, tmp_secrets_path):

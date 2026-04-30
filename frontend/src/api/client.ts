@@ -575,6 +575,12 @@ export interface LLMConfig {
   auto_prompt: LLMProviderName;
   vision: LLMProviderName;
   planner: LLMProviderName;
+  // When false, the auto-prompt synthesiser falls back to each upstream
+  // node's typed `prompt` instead of its vision-derived `aiBrief`.
+  // Upload-triggered vision still runs (the user explicitly uploaded
+  // an image, so describing it is intentional). Default true preserves
+  // existing behaviour for users who don't open the toggle.
+  visionEnabled: boolean;
 }
 
 export async function getLlmProviders(): Promise<LLMProviderInfo[]> {

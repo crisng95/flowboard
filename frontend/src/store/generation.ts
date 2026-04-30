@@ -23,6 +23,12 @@ interface GenerationState {
   // default tier for every dispatch so the UI no longer needs to ask.
   // Null until the first successful project bootstrap.
   paygateTier: "PAYGATE_TIER_ONE" | "PAYGATE_TIER_TWO" | null;
+  // Mirrors the backend Vision toggle so dispatchGeneration's post-gen
+  // auto-brief skip path doesn't have to round-trip /api/llm/config.
+  // Synced by AiProvidersSection on its 30s poll + on user toggle.
+  // Default true preserves existing behaviour for users who never open
+  // the AI Providers dialog.
+  visionEnabled: boolean;
   error: string | null;
 
   openGenerationDialog(rfId: string, prompt: string): void;
@@ -86,6 +92,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
   openViewer: { rfId: null, idx: 0 },
   projectId: null,
   paygateTier: null,
+  visionEnabled: true,
   error: null,
 
   openGenerationDialog(rfId, prompt) {
@@ -325,10 +332,20 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                 // Non-fatal: the in-memory state is still correct for this session.
               });
             }
-            // Auto-brief on success for ref-style nodes (character / visual_asset)
-            // so downstream auto-prompt has rich context to work with.
+            // Auto-brief on success for ref-style nodes (character /
+            // visual_asset) so downstream auto-prompt has rich context.
+            // Gated on the user's Vision toggle: when OFF, gen-completion
+            // doesn't auto-fire vision (matches the synthesiser's
+            // fallback to node.prompt). Manual upload paths in
+            // NodeCard.tsx still call requestAutoBrief unconditionally
+            // because the user explicitly added bytes.
             const n = useBoardStore.getState().nodes.find((x) => x.id === rfId);
-            if (mediaId && n && AUTO_BRIEF_TYPES.has(n.data.type)) {
+            if (
+              mediaId
+              && n
+              && AUTO_BRIEF_TYPES.has(n.data.type)
+              && get().visionEnabled
+            ) {
               requestAutoBrief(rfId, mediaId);
             }
             set((s) => {

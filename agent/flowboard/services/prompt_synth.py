@@ -20,7 +20,7 @@ from sqlmodel import select
 from flowboard.db import get_session
 from flowboard.db.models import Edge, Node
 from flowboard.services.activity import record_activity
-from flowboard.services.llm import run_llm
+from flowboard.services.llm import run_llm, secrets as llm_secrets
 from flowboard.services.llm.base import LLMError
 
 logger = logging.getLogger(__name__)
@@ -216,6 +216,11 @@ def _collect_upstream(node_id: int) -> tuple[list[dict], Optional[Node]]:
     so a shot with 2 image siblings each wrapping a different person is
     correctly identified as a couple/group scene.
     """
+    # Vision toggle: when OFF, the synthesiser should ignore the
+    # vision-derived `aiBrief` field on upstream nodes and fall back to
+    # the user's typed prompt. Read once outside the loop for cheapness.
+    vision_on = llm_secrets.read_vision_enabled()
+
     with get_session() as s:
         target = s.get(Node, node_id)
         if target is None:
@@ -228,7 +233,13 @@ def _collect_upstream(node_id: int) -> tuple[list[dict], Optional[Node]]:
             if n is None:
                 continue
             data = n.data or {}
-            brief = data.get("aiBrief")
+            ai_brief = data.get("aiBrief") if isinstance(data.get("aiBrief"), str) else None
+            user_prompt = data.get("prompt") if isinstance(data.get("prompt"), str) else None
+            # When vision is OFF, the user's typed prompt stands in for
+            # the missing aiBrief. When vision is ON, aiBrief wins; the
+            # prompt is still kept on the record under its own key for
+            # the synth template (so prompt/note nodes still surface).
+            brief = ai_brief if vision_on and ai_brief else user_prompt or ai_brief
             subject_chars: list[str] = []
             if n.type == "image":
                 gp_edges = s.exec(select(Edge).where(Edge.target_id == uid)).all()
@@ -241,7 +252,7 @@ def _collect_upstream(node_id: int) -> tuple[list[dict], Optional[Node]]:
                     "type": n.type,
                     "shortId": n.short_id,
                     "brief": brief if isinstance(brief, str) else None,
-                    "prompt": data.get("prompt") if isinstance(data.get("prompt"), str) else None,
+                    "prompt": user_prompt,
                     "title": data.get("title") if isinstance(data.get("title"), str) else None,
                     "has_media": bool(isinstance(data.get("mediaId"), str) and data.get("mediaId")),
                     "subject_chars": subject_chars,
