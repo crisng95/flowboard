@@ -29,12 +29,12 @@ interface ProviderCardProps {
 
 const PROVIDER_META: Record<
   LLMProviderName,
-  { name: string; icon: string; tagline: string }
+  { name: string; tagline: string }
 > = {
-  claude:  { name: "Claude Code",   icon: "⚪", tagline: "Anthropic CLI · OAuth" },
-  gemini:  { name: "Gemini CLI",    icon: "🔵", tagline: "Google CLI · OAuth" },
-  openai:  { name: "OpenAI Codex",  icon: "🟢", tagline: "ChatGPT CLI · OAuth" },
-  grok:    { name: "Grok",          icon: "⚫", tagline: "xAI · API key" },
+  claude:  { name: "Claude Code",   tagline: "Anthropic CLI · OAuth" },
+  gemini:  { name: "Gemini CLI",    tagline: "Google CLI · OAuth" },
+  openai:  { name: "OpenAI Codex",  tagline: "ChatGPT CLI · OAuth" },
+  grok:    { name: "Grok",          tagline: "xAI · API key" },
 };
 
 function statusLabel(p: LLMProviderInfo): string {
@@ -62,11 +62,8 @@ export function ProviderCard({ provider, selected, current, onSelect }: Provider
       aria-pressed={selected}
     >
       <div className="provider-card__head">
-        <span className="provider-card__icon" aria-hidden="true">{meta.icon}</span>
-        <div className="provider-card__name-col">
-          <span className="provider-card__name">{meta.name}</span>
-          <span className="provider-card__tagline">{meta.tagline}</span>
-        </div>
+        <span className="provider-card__name">{meta.name}</span>
+        <span className="provider-card__tagline">{meta.tagline}</span>
       </div>
       <div className="provider-card__foot">
         <span className={`provider-card__status provider-card__status--${kind}`}>
