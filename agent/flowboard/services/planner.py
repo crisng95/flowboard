@@ -293,7 +293,10 @@ async def generate_plan_reply(
             "plan": None,
         }
 
-    reply_text, plan = _extract_plan(raw)
+    # Defensive: if a future provider returns None on empty model output,
+    # `_extract_plan(None)` would explode in the regex search. Coerce to
+    # empty string so the "no plan, just empty reply" path takes over.
+    reply_text, plan = _extract_plan(raw or "")
     if not reply_text.strip():
         # Some LLM runs put nothing but the JSON block. Give the user at least
         # a short acknowledgement.

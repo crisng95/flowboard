@@ -50,13 +50,22 @@ def list_activity(
     if type:
         type_filter = {t.strip() for t in type.split(",") if t.strip()}
 
+    # `LIMIT limit + 1` lets us distinguish "exactly this many rows
+    # exist" from "there's at least one more page" without a second
+    # round-trip. The naive `len == limit` check incorrectly signals
+    # "more pages" when the total happens to be a multiple of `limit`.
+    fetch = limit + 1
+
     with get_session() as s:
-        stmt = select(Request).order_by(Request.id.desc()).limit(limit)
+        stmt = select(Request).order_by(Request.id.desc()).limit(fetch)
         if before_id is not None:
             stmt = stmt.where(Request.id < before_id)
         if type_filter:
             stmt = stmt.where(Request.type.in_(type_filter))
         rows = s.exec(stmt).all()
+
+        has_more = len(rows) > limit
+        rows = rows[:limit]
 
         # Resolve node_short_id in one round trip via a join keyed by
         # the distinct node_ids in this page.
@@ -80,7 +89,7 @@ def list_activity(
         }
         for r in rows
     ]
-    next_before_id = rows[-1].id if len(rows) == limit and rows else None
+    next_before_id = rows[-1].id if has_more and rows else None
     return {"items": items, "next_before_id": next_before_id}
 
 

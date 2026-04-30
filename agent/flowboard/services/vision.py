@@ -58,24 +58,29 @@ async def describe_media(media_id: str, *, node_id: Optional[int] = None) -> str
     feed can show "Vision · #abc1" instead of an orphan row. Callers
     that know the node should pass it; the route-level handler that
     only has ``media_id`` can leave it None.
+
+    Activity log wraps the entire body — cache misses, fetch failures,
+    and provider errors all show up as a single "failed" row. The user
+    debugging from the activity feed sees every Vision attempt rather
+    than only the ones that reached the provider.
     """
     media_id = media_service.normalize_media_id(media_id)
     if not media_service.is_valid_media_id(media_id):
         raise VisionError("invalid media_id")
 
-    cached = media_service.cached_path(media_id)
-    if cached is None:
-        # Try to fetch from the stored URL once before giving up. Vision
-        # makes no sense without bytes.
-        result = await media_service.fetch_and_cache(media_id)
-        if result is None:
-            raise VisionError("media not cached and could not be fetched")
-        _bytes, _mime, path = result
-        cached = path
-
     async with record_activity(
         "vision", params={"media_id": media_id}, node_id=node_id
     ) as activity:
+        cached = media_service.cached_path(media_id)
+        if cached is None:
+            # Try to fetch from the stored URL once before giving up.
+            # Vision makes no sense without bytes.
+            result = await media_service.fetch_and_cache(media_id)
+            if result is None:
+                raise VisionError("media not cached and could not be fetched")
+            _bytes, _mime, path = result
+            cached = path
+
         try:
             # 120s ceiling. Vision is usually fast (5-15s on Claude),
             # but Gemini CLI's cold-start adds ~15s per call and image

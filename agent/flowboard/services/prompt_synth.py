@@ -11,6 +11,7 @@ which one in Settings → AI Providers; default is Claude.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
 
@@ -428,7 +429,6 @@ async def auto_prompt_batch(
                 text = text[4:]
             text = text.rsplit("```", 1)[0].strip()
 
-        import json
         try:
             arr = json.loads(text)
         except json.JSONDecodeError as exc:
