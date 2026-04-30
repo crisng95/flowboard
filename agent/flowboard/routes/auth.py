@@ -52,3 +52,60 @@ def get_me() -> dict:
         "verified_email": info.get("verified_email"),
         "paygate_tier": flow_client.paygate_tier,
     }
+
+
+@router.post("/logout")
+async def logout() -> dict:
+    """Disconnect the extension's identity from the agent.
+
+    Clears the agent-side cached profile + tier so /api/auth/me
+    returns null fields immediately. Sends a `logout` message to the
+    extension over WS so it drops its own in-memory cachedUserInfo +
+    cachedPaygateTier + flowKey — the next time the user wants to
+    reconnect they pick up fresh credentials, not stale ones.
+
+    The extension's WS connection itself stays open. We don't tear it
+    down because the user might log back in with a different account
+    and we want to be ready to push the new identity.
+    """
+    extension_notified = await flow_client.notify({"type": "logout"})
+    flow_client.clear_extension()
+    return {
+        "ok": True,
+        "extension_notified": extension_notified,
+    }
+
+
+@router.post("/scan")
+async def scan_extension() -> dict:
+    """Diagnostic + nudge for the extension connection.
+
+    Returns a snapshot of the connection state so the frontend can
+    decide what to surface to the user, and (when the WS is open but
+    the userinfo cache is empty) asks the extension to re-fetch its
+    Google profile.
+
+    Cases the frontend cares about:
+      - extension_connected=False: Chrome extension isn't running /
+        installed / enabled. The frontend shows install instructions.
+      - extension_connected=True + has_user_info=False: WS is open but
+        Google /oauth2/v2/userinfo hasn't completed yet (or token
+        rotated and the cache cleared). We send a `please_resend_userinfo`
+        nudge — the extension's handler will re-call its
+        fetchAndPushUserInfo flow.
+      - extension_connected=True + has_user_info=True + has_tier=False:
+        Userinfo arrived but the passive paygate-tier sniffer hasn't
+        seen a Flow request body yet. Frontend's existing "Open Flow ↗"
+        banner handles this — the scan endpoint just reports state.
+      - All three present: nothing to do; frontend re-polls /me to
+        refresh the AccountPanel.
+    """
+    nudged = False
+    if flow_client.connected and flow_client.user_info is None:
+        nudged = await flow_client.notify({"type": "please_resend_userinfo"})
+    return {
+        "extension_connected": flow_client.connected,
+        "has_user_info": flow_client.user_info is not None,
+        "has_paygate_tier": flow_client.paygate_tier is not None,
+        "userinfo_nudged": nudged,
+    }

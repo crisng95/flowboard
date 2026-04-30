@@ -342,6 +342,35 @@ export function getAuthMe() {
   return api<AuthMe>("/api/auth/me").catch(() => null);
 }
 
+export interface AuthLogoutResult {
+  ok: boolean;
+  // Whether the agent could push a `logout` message to the extension
+  // over its open WebSocket. False when no extension is connected —
+  // agent-side caches were still cleared so the dashboard reflects
+  // the logged-out state immediately.
+  extension_notified: boolean;
+}
+
+export function logoutExtension() {
+  return api<AuthLogoutResult>("/api/auth/logout", { method: "POST" });
+}
+
+export interface AuthScanResult {
+  // True when the extension WebSocket is currently connected to the
+  // agent. False means the user must install / enable / open Chrome.
+  extension_connected: boolean;
+  has_user_info: boolean;
+  has_paygate_tier: boolean;
+  // True when the agent had to ask the extension to re-fetch userinfo
+  // (i.e. WS open but cache empty). Backend sets this only in that
+  // narrow case; otherwise false.
+  userinfo_nudged: boolean;
+}
+
+export function scanExtension() {
+  return api<AuthScanResult>("/api/auth/scan", { method: "POST" });
+}
+
 export function createRequest(body: {
   type: string;
   node_id?: number;

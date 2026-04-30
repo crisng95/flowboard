@@ -154,6 +154,106 @@ async def test_clear_extension_drops_cached_userinfo_and_tier():
     assert flow_client.paygate_tier is None
 
 
+def test_logout_clears_cached_identity_and_tier(client):
+    """POST /api/auth/logout drops the cached profile + tier so the
+    next /me reflects the logged-out state immediately. extension_notified
+    is False here because no real WS is attached in the test harness —
+    that's the expected return when the user never connected."""
+    flow_client._user_info = {
+        "email": "u@example.com", "name": "U",
+        "picture": "https://x/p.png", "verified_email": True,
+    }
+    flow_client._paygate_tier = "PAYGATE_TIER_TWO"
+
+    r = client.post("/api/auth/logout")
+    assert r.status_code == 200
+    body = r.json()
+    assert body == {"ok": True, "extension_notified": False}
+
+    me = client.get("/api/auth/me").json()
+    assert me["email"] is None
+    assert me["paygate_tier"] is None
+
+
+def test_logout_notifies_extension_when_ws_connected(client):
+    """When the WebSocket is open, /logout pushes a `logout` message
+    so the extension drops its in-memory token + cachedUserInfo."""
+    sent: list[dict] = []
+
+    class _FakeWs:
+        async def send(self, payload):
+            import json
+            sent.append(json.loads(payload))
+
+    flow_client.set_extension(_FakeWs())
+    flow_client._user_info = {"email": "u@example.com"}
+
+    r = client.post("/api/auth/logout")
+    assert r.status_code == 200
+    assert r.json()["extension_notified"] is True
+    assert sent == [{"type": "logout"}]
+    # Cleared agent-side too.
+    assert flow_client.user_info is None
+
+
+def test_scan_reports_disconnected_state_when_no_extension(client):
+    """No WS connection → scan reports it cleanly so the frontend can
+    surface a "extension not found" hint to the user."""
+    flow_client.clear_extension()
+
+    r = client.post("/api/auth/scan")
+    assert r.status_code == 200
+    assert r.json() == {
+        "extension_connected": False,
+        "has_user_info": False,
+        "has_paygate_tier": False,
+        "userinfo_nudged": False,
+    }
+
+
+def test_scan_nudges_extension_when_connected_but_userinfo_empty(client):
+    """WS open + agent has no cached profile → scan asks the extension
+    to re-fetch userinfo. This is the "user clicked Scan after agent
+    restart" path — the WS is fine but the cache is cold."""
+    sent: list[dict] = []
+
+    class _FakeWs:
+        async def send(self, payload):
+            import json
+            sent.append(json.loads(payload))
+
+    flow_client.set_extension(_FakeWs())
+    flow_client._user_info = None
+    flow_client._paygate_tier = None
+
+    r = client.post("/api/auth/scan")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["extension_connected"] is True
+    assert body["has_user_info"] is False
+    assert body["userinfo_nudged"] is True
+    assert sent == [{"type": "please_resend_userinfo"}]
+
+
+def test_scan_does_not_nudge_when_userinfo_already_cached(client):
+    """Cache already populated → no nudge needed; scan just reports
+    state. Avoids spamming the extension on every Scan click."""
+    sent: list[dict] = []
+
+    class _FakeWs:
+        async def send(self, payload):
+            import json
+            sent.append(json.loads(payload))
+
+    flow_client.set_extension(_FakeWs())
+    flow_client._user_info = {"email": "u@example.com"}
+    flow_client._paygate_tier = "PAYGATE_TIER_TWO"
+
+    r = client.post("/api/auth/scan")
+    assert r.json()["userinfo_nudged"] is False
+    assert sent == []
+
+
 def test_me_returns_null_tier_when_extension_has_not_pushed(client):
     """Regression guard for the silent-Pro-downgrade bug.
 

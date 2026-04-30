@@ -276,6 +276,38 @@ function connectToAgent() {
         console.log('[Flowboard] Received callback secret');
       } else if (msg.type === 'pong') {
         // keepalive response — no-op
+      } else if (msg.type === 'logout') {
+        // Agent's /api/auth/logout invoked — drop in-memory identity
+        // so the next reconnect picks up fresh credentials. Don't
+        // touch chrome.storage (we don't persist identity there
+        // anyway, but be explicit). The WS stays open; agent will
+        // re-greet when the user logs back in.
+        console.log('[Flowboard] logout requested by agent');
+        cachedUserInfo = null;
+        cachedPaygateTier = null;
+        flowKey = null;
+      } else if (msg.type === 'please_resend_userinfo') {
+        // Agent's /api/auth/scan asks us to re-fetch userinfo when
+        // its own cache is empty (e.g. agent restarted, or user
+        // clicked "Scan extension" before WS finished its first
+        // round-trip). If we have a cached profile, replay it
+        // immediately; otherwise refetch from Google's userinfo
+        // endpoint with whatever Bearer token we currently hold.
+        if (cachedUserInfo) {
+          ws.send(JSON.stringify({ type: 'user_info', userInfo: cachedUserInfo }));
+        } else if (flowKey) {
+          fetchAndPushUserInfo(flowKey);
+        } else {
+          console.log('[Flowboard] please_resend_userinfo: no token captured yet');
+        }
+        // Also re-send tier if we have it cached, so dashboard fills in.
+        if (cachedPaygateTier && ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'paygate_tier', paygateTier: cachedPaygateTier }));
+        } else if (flowKey) {
+          // Tier wasn't sniffed — nudge Flow tab so its bootstrap
+          // request body trips the sniffer.
+          nudgeFlowTab();
+        }
       } else if (msg.method === 'api_request') {
         await handleApiRequest(msg);
       } else if (msg.method === 'trpc_request') {

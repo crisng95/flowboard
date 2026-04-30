@@ -156,6 +156,25 @@ class FlowClient:
             fut.set_result(data)
 
     # ── outbound ──────────────────────────────────────────────────────────
+    async def notify(self, message: dict) -> bool:
+        """Fire-and-forget WS push to the extension. Returns False when the
+        extension isn't connected so callers can surface a meaningful
+        diagnostic instead of silently losing the message.
+
+        Used by the logout flow (tell extension to clear its in-memory
+        token + cached userinfo) and the scan flow (ask extension to
+        re-fetch userinfo when the agent has a connection but the cache
+        is empty).
+        """
+        if not self.connected or self._ws is None:
+            return False
+        try:
+            await self._ws.send(json.dumps(message))
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("notify failed: %s", exc)
+            return False
+
     async def _send(self, method: str, params: dict, timeout: Optional[float] = None) -> dict:
         if not self.connected:
             return {"error": "extension_disconnected"}

@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { getAuthMe, type AuthMe } from "../api/client";
+import {
+  getAuthMe,
+  logoutExtension,
+  scanExtension,
+  type AuthMe,
+} from "../api/client";
 import { useGenerationStore } from "../store/generation";
 import { getLatestRelease, isNewerVersion, type LatestRelease } from "../api/github";
 import { SettingsPanel } from "./SettingsPanel";
@@ -29,6 +34,12 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
   // the "Tier unknown" banner so it doesn't flash on initial cold-start
   // while the extension is still doing its first round-trip.
   const [pollsWithoutTier, setPollsWithoutTier] = useState(0);
+  // Scan / logout transient state for button affordances.
+  const [scanState, setScanState] = useState<"idle" | "scanning" | "no-extension">("idle");
+  const [logoutPending, setLogoutPending] = useState(false);
+  // Bumped by handleScan / handleLogout to kick the poll effect into
+  // re-running immediately instead of waiting for the next 5s tick.
+  const [pollNonce, setPollNonce] = useState(0);
 
   // Poll /api/auth/me until BOTH email and paygate_tier are populated.
   // Email comes from Google's userinfo (fetched once per token rotation
@@ -63,7 +74,57 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
       alive = false;
       if (timer) clearTimeout(timer);
     };
-  }, [setStorePaygateTier]);
+  }, [setStorePaygateTier, pollNonce]);
+
+  // Logout: clears agent-side cache + tells extension to drop in-memory
+  // identity. Resets local state immediately so the chip flips to the
+  // "Not connected" affordance without waiting for the next poll tick.
+  async function handleLogout() {
+    if (logoutPending) return;
+    setLogoutPending(true);
+    try {
+      await logoutExtension();
+      setProfile({
+        email: null,
+        name: null,
+        picture: null,
+        verified_email: null,
+        paygate_tier: null,
+      });
+      setStorePaygateTier({ paygateTier: null });
+      setPollsWithoutTier(0);
+      setPollNonce((n) => n + 1);
+    } catch {
+      // non-fatal: re-poll will reflect the real state in 5s anyway
+    } finally {
+      setLogoutPending(false);
+    }
+  }
+
+  // Scan: probe the extension state and, if a connection is open but
+  // userinfo is missing, ask the extension to re-fetch from Google.
+  // The poll loop above picks up the new state on the next /me hit.
+  async function handleScan() {
+    if (scanState === "scanning") return;
+    setScanState("scanning");
+    try {
+      const res = await scanExtension();
+      if (!res.extension_connected) {
+        setScanState("no-extension");
+        // Auto-clear the warning after 8s so the button doesn't get
+        // stuck — gives the user time to read it but recovers on its own.
+        setTimeout(() => setScanState("idle"), 8000);
+        return;
+      }
+      // Extension is alive — kick the poll loop so the chip refreshes
+      // as soon as userinfo lands. The 5s default would feel sluggish
+      // right after a deliberate user action.
+      setPollNonce((n) => n + 1);
+      setScanState("idle");
+    } catch {
+      setScanState("idle");
+    }
+  }
 
   // Surface "new version available" right under the account chip so
   // users notice without having to open Settings. GitHub's release
@@ -146,11 +207,36 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
             {email ? (
               <span className="account-panel__email" title={email}>{email}</span>
             ) : (
-              <span className="account-panel__email account-panel__email--muted">
-                Connected via extension
-              </span>
+              <button
+                type="button"
+                className="account-panel__scan-btn"
+                onClick={handleScan}
+                disabled={scanState === "scanning"}
+                title="Scan for an extension connection and re-fetch user info"
+              >
+                {scanState === "scanning"
+                  ? "Scanning…"
+                  : scanState === "no-extension"
+                    ? "⚠ Extension not found"
+                    : "🔍 Scan extension"}
+              </button>
             )}
           </div>
+        )}
+        {email && !collapsed && (
+          // Logout sits next to the cog only when an identity is loaded —
+          // before login it would be confusing. Icon-only with a tooltip
+          // to stay narrow in the sidebar.
+          <button
+            type="button"
+            className="account-panel__logout-btn"
+            onClick={handleLogout}
+            disabled={logoutPending}
+            aria-label="Log out from extension"
+            title={logoutPending ? "Logging out…" : "Log out — clear cached identity"}
+          >
+            ⏻
+          </button>
         )}
         <button
           type="button"

@@ -525,6 +525,59 @@ button:disabled {
   color: #c5b3ff;
 }
 
+/* Logout button — same shape/size as the cog so the chip line stays
+ * visually balanced. Sits left of the cog when the user is signed in. */
+.account-panel__logout-btn {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-high);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.account-panel__logout-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: #ef4444;
+  color: #fca5a5;
+}
+.account-panel__logout-btn:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+/* Scan-extension button — replaces the muted "Connected via extension"
+ * subtitle when the agent has no userinfo cached. Lets the user trigger
+ * a probe + nudge without having to wait for the next 5s poll. */
+.account-panel__scan-btn {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(124, 92, 255, 0.12);
+  border: 1px solid rgba(124, 92, 255, 0.4);
+  border-radius: 999px;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.account-panel__scan-btn:hover:not(:disabled) {
+  background: rgba(124, 92, 255, 0.20);
+  border-color: var(--accent);
+}
+.account-panel__scan-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 /* Version row sits under the account chip — full sidebar width, thin
    top border so it visually anchors to the panel above without
    competing with the avatar/name row. */
