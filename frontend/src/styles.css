@@ -4128,3 +4128,99 @@ button:disabled {
   white-space: nowrap;
   border: 0;
 }
+
+/* ── AI Provider toolbar badge + standalone dialog ───────────────────── */
+
+/* Badge sits in the toolbar action group, just left of Sponsor. Compact
+ * enough to not crowd the row but readable enough for the provider name
+ * to scan at a glance. */
+.ai-provider-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 14px;
+  background: rgba(124, 92, 255, 0.10);
+  border: 1px solid rgba(124, 92, 255, 0.30);
+  color: #c5b3ff;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.ai-provider-badge:hover {
+  background: rgba(124, 92, 255, 0.18);
+  border-color: rgba(124, 92, 255, 0.5);
+}
+.ai-provider-badge--warn {
+  background: rgba(255, 170, 0, 0.10);
+  border-color: rgba(255, 170, 0, 0.35);
+  color: #ffc266;
+}
+.ai-provider-badge--warn:hover {
+  background: rgba(255, 170, 0, 0.18);
+  border-color: rgba(255, 170, 0, 0.55);
+}
+.ai-provider-badge__icon {
+  font-size: 12px;
+  line-height: 1;
+}
+.ai-provider-badge__label {
+  letter-spacing: 0.01em;
+}
+.ai-provider-badge__status {
+  font-size: 10px;
+  margin-left: 1px;
+}
+.ai-provider-badge__status--ok { color: #88e0a8; }
+.ai-provider-badge__status--warn { color: #ffc266; }
+
+/* Standalone dialog wrapper — re-uses the AI Providers section content
+ * but stands on its own (not embedded in SettingsPanel anymore). Same
+ * backdrop/dismiss pattern as SettingsPanel for consistency. */
+.ai-provider-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 80px;
+  z-index: 900;
+}
+.ai-provider-dialog {
+  width: 460px;
+  max-width: 90vw;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.ai-provider-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+.ai-provider-dialog__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ai-provider-dialog__close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+}
+.ai-provider-dialog__close:hover { color: var(--text); }

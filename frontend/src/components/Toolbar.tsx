@@ -1,5 +1,6 @@
 import { useState, useRef, type KeyboardEvent } from "react";
 import { useBoardStore } from "../store/board";
+import { AiProviderBadge } from "./AiProviderBadge";
 import { SponsorButton } from "./SponsorDialog";
 
 export function Toolbar() {
@@ -67,6 +68,7 @@ export function Toolbar() {
           ⚙
         </button>
         <span className="toolbar-actions__divider" aria-hidden="true" />
+        <AiProviderBadge />
         <SponsorButton />
       </div>
     </div>

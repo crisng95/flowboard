@@ -6,7 +6,6 @@ import {
   type VideoQuality,
 } from "../store/settings";
 import { getLatestRelease, isNewerVersion, type LatestRelease } from "../api/github";
-import { AiProvidersSection } from "./settings/AiProvidersSection";
 import packageJson from "../../package.json";
 
 const APP_VERSION: string = packageJson.version;
@@ -192,8 +191,6 @@ export function SettingsPanel({ open, onClose, onLogout, logoutPending }: Settin
           })}
         </div>
       </div>
-
-      <AiProvidersSection />
 
       <div className="settings-panel__section">
         <div className="settings-panel__label">Image model</div>

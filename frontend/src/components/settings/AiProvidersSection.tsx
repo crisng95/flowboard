@@ -151,8 +151,7 @@ export function AiProvidersSection() {
 
   // From here on `providers` and `config` are non-null.
   return (
-    <div className="settings-panel__section ai-providers-section">
-      <div className="settings-panel__label">AI Providers</div>
+    <div className="ai-providers-section">
       <div className="ai-providers-section__intro">
         Pick which AI powers each Flowboard feature. Claude / Gemini /
         OpenAI use your existing subscription via their official CLIs —
