@@ -3,13 +3,20 @@
 Two paths:
 
 - ``generate_mock_reply`` — deterministic, no LLM. Used as fallback when the
-  ``claude`` CLI is unavailable or when ``FLOWBOARD_PLANNER_BACKEND=mock``.
-- ``generate_plan_reply`` — invokes ``claude`` CLI via subprocess, asks it to
-  produce a conversational acknowledgement and (optionally) a JSON pipeline
-  plan matching the schema in ``docs/PLAN.md``.
+  configured Planner provider is unavailable or when
+  ``FLOWBOARD_PLANNER_BACKEND=mock``.
+- ``generate_plan_reply`` — invokes the configured Planner provider via
+  ``run_llm("planner", ...)`` (default = Claude CLI; user can pin Gemini /
+  OpenAI / Grok in Settings → AI Providers). Asks it to produce a
+  conversational acknowledgement and (optionally) a JSON pipeline plan
+  matching the schema in ``docs/PLAN.md``.
 
 The backend is chosen at dispatch time by ``FLOWBOARD_PLANNER_BACKEND``
-(``cli|mock|auto``, default ``auto``).
+(``cli|mock|auto``, default ``auto``). Post-multi-LLM, the env var name
+is historical — "cli" now means "use the configured provider" and "auto"
+means "use the configured provider if available, else mock". The mode
+matters because dev / test environments without any LLM available need
+the mock fallback to keep working.
 """
 from __future__ import annotations
 
@@ -22,7 +29,8 @@ from sqlmodel import select
 
 from flowboard.config import PLANNER_BACKEND
 from flowboard.db.models import Node
-from flowboard.services import claude_cli
+from flowboard.services.llm import registry, run_llm, secrets
+from flowboard.services.llm.base import LLMError
 
 logger = logging.getLogger(__name__)
 
@@ -195,8 +203,15 @@ async def generate_plan_reply(
 
     Honors ``FLOWBOARD_PLANNER_BACKEND``:
     - ``mock`` → always use the deterministic mock (plan is None).
-    - ``cli``  → require the CLI; surface the error in reply_text on failure.
-    - ``auto`` → try CLI, fall back to mock on unavailable/error.
+    - ``cli``  → require the configured Planner provider; surface the
+      error in reply_text on failure.
+    - ``auto`` → try the configured Planner provider, fall back to mock
+      on unavailable / error.
+
+    The auto-fallback respects the user's Settings pin: if they picked
+    ``planner = gemini`` and Gemini CLI isn't installed, we fall back to
+    mock (not Claude). Picking the right provider but having it down still
+    means "the user's chosen LLM is unavailable" — mock is the right fallback.
     """
     backend = (PLANNER_BACKEND or "auto").lower()
 
@@ -208,14 +223,23 @@ async def generate_plan_reply(
             "plan": None,
         }
 
-    if backend == "auto" and not await claude_cli.is_available():
-        logger.info("planner: claude CLI unavailable, using mock")
-        return {
-            "reply_text": generate_mock_reply(
-                session, board_id, user_text, mention_short_ids
-            ),
-            "plan": None,
-        }
+    if backend == "auto":
+        # Probe the configured Planner provider, not Claude unconditionally.
+        # Saves the cost of building the prompt context if we already know
+        # we'll fall back to mock.
+        config = secrets.read_active_providers()
+        provider_name = config.get("planner", "claude")
+        provider = registry.get_provider(provider_name)
+        if provider is None or not await provider.is_available():
+            logger.info(
+                "planner: %s unavailable, using mock", provider_name
+            )
+            return {
+                "reply_text": generate_mock_reply(
+                    session, board_id, user_text, mention_short_ids
+                ),
+                "plan": None,
+            }
 
     resolved = _lookup_nodes(session, board_id, mention_short_ids)
     board_context = _node_summary_for_context(session, board_id)
@@ -238,15 +262,16 @@ async def generate_plan_reply(
     user_prompt = "\n".join(user_prompt_parts)
 
     try:
-        raw = await claude_cli.run_claude(
+        raw = await run_llm(
+            "planner",
             user_prompt=user_prompt,
             system_prompt=_PLANNER_SYSTEM_PROMPT,
         )
-    except claude_cli.ClaudeCliError as exc:
-        logger.warning("planner: claude CLI failed (%s), falling back to mock", exc)
+    except LLMError as exc:
+        logger.warning("planner: provider failed (%s), falling back to mock", exc)
         if backend == "cli":
-            # Surface the error to the user so they know CLI path is selected
-            # but failing.
+            # Surface the error to the user so they know the configured
+            # provider was reached but failed (vs. silently falling back).
             return {
                 "reply_text": f"(planner unavailable: {exc})",
                 "plan": None,
