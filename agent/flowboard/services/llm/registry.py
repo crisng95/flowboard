@@ -18,6 +18,7 @@ from .base import LLMError, LLMProvider
 from .claude import ClaudeProvider
 from .gemini import GeminiProvider
 from .grok import GrokProvider
+from .openai import OpenAIProvider
 from . import secrets
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ Feature = Literal["auto_prompt", "vision", "planner"]
 _PROVIDERS: dict[str, LLMProvider] = {
     "claude": ClaudeProvider(),
     "gemini": GeminiProvider(),
+    "openai": OpenAIProvider(),
     "grok": GrokProvider(),
 }
 
