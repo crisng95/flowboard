@@ -381,14 +381,22 @@ button:disabled {
 
 .account-panel {
   flex-shrink: 0;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
+  display: flex;
   align-items: center;
-  column-gap: 10px;
+  gap: 10px;
   padding: 10px 12px;
   margin: 0;
   border-top: 1px solid var(--border);
   background: var(--panel);
+}
+
+/* Buttons cluster on the right (logout + cog) — wraps cleanly without
+ * pushing the cog onto a second row when both are visible. */
+.account-panel__actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .account-panel--collapsed {
@@ -428,11 +436,35 @@ button:disabled {
 
 .account-panel__meta {
   min-width: 0;
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
   /* Squeeze the badge inline with name+email so the chip reads as one
      cohesive unit instead of three stacked rows. */
+}
+
+/* Credits row — third line under email when /v1/credits returned a
+ * balance. Visually quieter than name/tier so it doesn't compete, but
+ * uses the accent for the number itself so it scans at a glance. */
+.account-panel__credits {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--muted);
+  margin-top: 1px;
+}
+.account-panel__credits-value {
+  color: var(--accent);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.account-panel__credits-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 /* Disconnected state — meta column holds only the Scan button, so

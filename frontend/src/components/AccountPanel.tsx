@@ -152,6 +152,14 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
   const email = profile?.email ?? null;
   const picture = profile?.picture ?? null;
   const initial = displayName.slice(0, 1).toUpperCase();
+  const credits = profile?.credits ?? null;
+  // Format credits with locale-aware thousand separators so 24340 →
+  // "24,340". Tabular-nums in CSS keeps the digits aligned even when
+  // the value updates (e.g. after a generation).
+  const creditsLabel =
+    credits !== null
+      ? new Intl.NumberFormat("en-US").format(credits)
+      : null;
 
   // Google Flow plan tiers — both are paid (Flowboard's hard
   // requirement). TIER_TWO = Ultra (higher tier), TIER_ONE = Pro.
@@ -208,6 +216,12 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
               )}
             </div>
             <span className="account-panel__email" title={email}>{email}</span>
+            {creditsLabel && (
+              <div className="account-panel__credits" title="Subscription credits remaining">
+                <span className="account-panel__credits-value">{creditsLabel}</span>
+                <span className="account-panel__credits-label">credits</span>
+              </div>
+            )}
           </div>
         )}
         {!collapsed && !email && (
@@ -230,30 +244,32 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
             </button>
           </div>
         )}
-        {email && !collapsed && (
-          // Logout sits next to the cog only when an identity is loaded —
-          // before login it would be confusing. Icon-only with a tooltip
-          // to stay narrow in the sidebar.
+        <div className="account-panel__actions">
+          {email && !collapsed && (
+            // Logout only shown when identity is loaded — before login
+            // it would be confusing. Icon-only with a tooltip to stay
+            // narrow in the sidebar.
+            <button
+              type="button"
+              className="account-panel__logout-btn"
+              onClick={handleLogout}
+              disabled={logoutPending}
+              aria-label="Log out from extension"
+              title={logoutPending ? "Logging out…" : "Log out — clear cached identity"}
+            >
+              ⏻
+            </button>
+          )}
           <button
             type="button"
-            className="account-panel__logout-btn"
-            onClick={handleLogout}
-            disabled={logoutPending}
-            aria-label="Log out from extension"
-            title={logoutPending ? "Logging out…" : "Log out — clear cached identity"}
+            className="account-panel__cog"
+            onClick={() => setOpen((v) => !v)}
+            aria-label="Open settings"
+            title="Settings"
           >
-            ⏻
+            ⚙
           </button>
-        )}
-        <button
-          type="button"
-          className="account-panel__cog"
-          onClick={() => setOpen((v) => !v)}
-          aria-label="Open settings"
-          title="Settings"
-        >
-          ⚙
-        </button>
+        </div>
       </div>
       {!collapsed && (
         <div className="account-panel__version-row">
