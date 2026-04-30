@@ -19,7 +19,10 @@ from __future__ import annotations
 
 import logging
 
+from typing import Optional
+
 from flowboard.services import media as media_service
+from flowboard.services.activity import record_activity
 from flowboard.services.llm import run_llm
 from flowboard.services.llm.base import LLMError
 
@@ -44,12 +47,17 @@ class VisionError(RuntimeError):
     pass
 
 
-async def describe_media(media_id: str) -> str:
+async def describe_media(media_id: str, *, node_id: Optional[int] = None) -> str:
     """Return a short factual description of the cached media.
 
     Raises ``VisionError`` if the media is not cached locally or if the
     configured Vision provider fails. Caller decides whether to retry
     or fall back.
+
+    ``node_id`` (optional) is forwarded to the activity log so the
+    feed can show "Vision · #abc1" instead of an orphan row. Callers
+    that know the node should pass it; the route-level handler that
+    only has ``media_id`` can leave it None.
     """
     media_id = media_service.normalize_media_id(media_id)
     if not media_service.is_valid_media_id(media_id):
@@ -65,22 +73,26 @@ async def describe_media(media_id: str) -> str:
         _bytes, _mime, path = result
         cached = path
 
-    try:
-        text = await run_llm(
-            "vision",
-            _VISION_USER_PROMPT,
-            system_prompt=_VISION_SYSTEM,
-            attachments=[str(cached.resolve())],
-            timeout=45.0,
-        )
-    except LLMError as exc:
-        raise VisionError(f"vision provider failed: {exc}") from exc
+    async with record_activity(
+        "vision", params={"media_id": media_id}, node_id=node_id
+    ) as activity:
+        try:
+            text = await run_llm(
+                "vision",
+                _VISION_USER_PROMPT,
+                system_prompt=_VISION_SYSTEM,
+                attachments=[str(cached.resolve())],
+                timeout=45.0,
+            )
+        except LLMError as exc:
+            raise VisionError(f"vision provider failed: {exc}") from exc
 
-    # Trim and cap — defence-in-depth in case the model ignores the length
-    # cap from the system prompt.
-    text = (text or "").strip()
-    if not text:
-        raise VisionError("empty response from vision provider")
-    if len(text) > 400:
-        text = text[:400].rstrip() + "…"
-    return text
+        # Trim and cap — defence-in-depth in case the model ignores the
+        # length cap from the system prompt.
+        text = (text or "").strip()
+        if not text:
+            raise VisionError("empty response from vision provider")
+        if len(text) > 400:
+            text = text[:400].rstrip() + "…"
+        activity.set_result({"description": text})
+        return text

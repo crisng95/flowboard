@@ -29,6 +29,7 @@ from sqlmodel import select
 
 from flowboard.config import PLANNER_BACKEND
 from flowboard.db.models import Node
+from flowboard.services.activity import record_activity
 from flowboard.services.llm import registry, run_llm, secrets
 from flowboard.services.llm.base import LLMError
 
@@ -261,17 +262,26 @@ async def generate_plan_reply(
 
     user_prompt = "\n".join(user_prompt_parts)
 
+    # Activity log captures redacted params only — full board context can
+    # be large (kilobytes per gen) and is reconstructable from Node/Edge
+    # rows at the same timestamp anyway. Wrap only the LLM call so an
+    # LLMError naturally marks the row failed; caller's mock-fallback
+    # path runs OUTSIDE the activity context.
+    raw: Optional[str] = None
     try:
-        raw = await run_llm(
+        async with record_activity(
             "planner",
-            user_prompt=user_prompt,
-            system_prompt=_PLANNER_SYSTEM_PROMPT,
-        )
+            params={"user_text": user_text, "mention_short_ids": list(mention_short_ids)},
+        ) as activity:
+            raw = await run_llm(
+                "planner",
+                user_prompt=user_prompt,
+                system_prompt=_PLANNER_SYSTEM_PROMPT,
+            )
+            activity.set_result({"raw_length": len(raw) if isinstance(raw, str) else 0})
     except LLMError as exc:
         logger.warning("planner: provider failed (%s), falling back to mock", exc)
         if backend == "cli":
-            # Surface the error to the user so they know the configured
-            # provider was reached but failed (vs. silently falling back).
             return {
                 "reply_text": f"(planner unavailable: {exc})",
                 "plan": None,

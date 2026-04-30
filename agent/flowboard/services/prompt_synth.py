@@ -18,6 +18,7 @@ from sqlmodel import select
 
 from flowboard.db import get_session
 from flowboard.db.models import Edge, Node
+from flowboard.services.activity import record_activity
 from flowboard.services.llm import run_llm
 from flowboard.services.llm.base import LLMError
 
@@ -399,40 +400,46 @@ async def auto_prompt_batch(
     system_prompt = base_system + _BATCH_SUFFIX.format(count=count)
     user_msg = _format_user_message(records, target)
 
-    try:
-        text = await run_llm(
-            "auto_prompt", user_msg, system_prompt=system_prompt, timeout=45.0
-        )
-    except LLMError as exc:
-        raise PromptSynthError(f"auto-prompt provider failed: {exc}") from exc
+    async with record_activity(
+        "auto_prompt_batch",
+        params={"node_id": node_id, "count": count, "camera": camera},
+        node_id=node_id,
+    ) as activity:
+        try:
+            text = await run_llm(
+                "auto_prompt", user_msg, system_prompt=system_prompt, timeout=45.0
+            )
+        except LLMError as exc:
+            raise PromptSynthError(f"auto-prompt provider failed: {exc}") from exc
 
-    text = (text or "").strip()
-    # Strip markdown fences if the provider added them despite instructions.
-    if text.startswith("```"):
-        text = text.lstrip("`")
-        # "json\n[...]\n```" → "[...]\n"
-        if text.lower().startswith("json"):
-            text = text[4:]
-        text = text.rsplit("```", 1)[0].strip()
+        text = (text or "").strip()
+        # Strip markdown fences if the provider added them despite instructions.
+        if text.startswith("```"):
+            text = text.lstrip("`")
+            # "json\n[...]\n```" → "[...]\n"
+            if text.lower().startswith("json"):
+                text = text[4:]
+            text = text.rsplit("```", 1)[0].strip()
 
-    import json
-    try:
-        arr = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise PromptSynthError(
-            f"auto-prompt provider returned non-JSON for batch: {text[:200]!r}"
-        ) from exc
-    if not isinstance(arr, list):
-        raise PromptSynthError("auto-prompt batch response is not a JSON array")
-    prompts = [str(p).strip() for p in arr if isinstance(p, str) and p.strip()]
-    if not prompts:
-        raise PromptSynthError("auto-prompt batch returned no valid prompts")
-    # Pad / trim to requested count. If the provider returned fewer, repeat
-    # the last one — better to have N items than fail the dispatch.
-    while len(prompts) < count:
-        prompts.append(prompts[-1])
-    prompts = prompts[:count]
-    return prompts
+        import json
+        try:
+            arr = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise PromptSynthError(
+                f"auto-prompt provider returned non-JSON for batch: {text[:200]!r}"
+            ) from exc
+        if not isinstance(arr, list):
+            raise PromptSynthError("auto-prompt batch response is not a JSON array")
+        prompts = [str(p).strip() for p in arr if isinstance(p, str) and p.strip()]
+        if not prompts:
+            raise PromptSynthError("auto-prompt batch returned no valid prompts")
+        # Pad / trim to requested count. If the provider returned fewer, repeat
+        # the last one — better to have N items than fail the dispatch.
+        while len(prompts) < count:
+            prompts.append(prompts[-1])
+        prompts = prompts[:count]
+        activity.set_result({"prompts": prompts})
+        return prompts
 
 
 async def auto_prompt(node_id: int, *, camera: Optional[str] = None) -> str:
@@ -459,19 +466,25 @@ async def auto_prompt(node_id: int, *, camera: Optional[str] = None) -> str:
         system_prompt = _image_system_prompt(subject_count)
     user_msg = _format_user_message(records, target)
 
-    try:
-        text = await run_llm(
-            "auto_prompt",
-            user_msg,
-            system_prompt=system_prompt,
-            timeout=30.0,
-        )
-    except LLMError as exc:
-        raise PromptSynthError(f"auto-prompt provider failed: {exc}") from exc
+    async with record_activity(
+        "auto_prompt",
+        params={"node_id": node_id, "camera": camera},
+        node_id=node_id,
+    ) as activity:
+        try:
+            text = await run_llm(
+                "auto_prompt",
+                user_msg,
+                system_prompt=system_prompt,
+                timeout=30.0,
+            )
+        except LLMError as exc:
+            raise PromptSynthError(f"auto-prompt provider failed: {exc}") from exc
 
-    text = (text or "").strip().strip('"').strip("'")
-    if not text:
-        raise PromptSynthError("empty response from auto-prompt provider")
-    if len(text) > 500:
-        text = text[:500].rstrip() + "…"
-    return text
+        text = (text or "").strip().strip('"').strip("'")
+        if not text:
+            raise PromptSynthError("empty response from auto-prompt provider")
+        if len(text) > 500:
+            text = text[:500].rstrip() + "…"
+        activity.set_result({"prompt": text})
+        return text

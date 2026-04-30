@@ -19,6 +19,14 @@ from flowboard.services.llm import registry
 from flowboard.services.llm.base import LLMError
 
 
+@pytest.fixture(autouse=True)
+def _isolated_secrets(tmp_path, monkeypatch):
+    """Each test reads an isolated secrets file so the developer's real
+    ~/.flowboard/secrets.json (with custom planner provider pinned)
+    can't bleed into the test's defaults."""
+    monkeypatch.setenv("FLOWBOARD_SECRETS_PATH", str(tmp_path / "secrets.json"))
+
+
 # ── Plan extraction (pure parsing — no provider involvement) ──────────────
 
 

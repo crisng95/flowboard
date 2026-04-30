@@ -637,3 +637,54 @@ export async function testLlmProvider(
   }
   return res.json();
 }
+
+
+// ── Activity feed ─────────────────────────────────────────────────────────
+// Read-only surface over the Request table. Captures every backend op:
+// gen_image / gen_video / edit_image (worker), auto_prompt /
+// auto_prompt_batch / vision / planner (LLM layer via record_activity).
+
+export type ActivityType =
+  | "auto_prompt" | "auto_prompt_batch"
+  | "vision" | "planner"
+  | "gen_image" | "gen_video" | "edit_image"
+  | "upload" | "upload_url";
+export type ActivityStatus = "queued" | "running" | "done" | "failed";
+
+export interface ActivityListItem {
+  id: number;
+  type: ActivityType | string; // string fallback for forward-compat
+  status: ActivityStatus | string;
+  node_id: number | null;
+  node_short_id: string | null;
+  created_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+}
+
+export interface ActivityDetail extends ActivityListItem {
+  params: Record<string, unknown>;
+  result: Record<string, unknown>;
+  error: string | null;
+}
+
+export async function getActivityList(opts?: {
+  limit?: number;
+  beforeId?: number;
+  type?: string[];
+}): Promise<{ items: ActivityListItem[]; next_before_id: number | null }> {
+  const search = new URLSearchParams();
+  if (opts?.limit) search.set("limit", String(opts.limit));
+  if (opts?.beforeId) search.set("before_id", String(opts.beforeId));
+  if (opts?.type && opts.type.length > 0) search.set("type", opts.type.join(","));
+  const q = search.toString();
+  const res = await fetch(`/api/activity${q ? `?${q}` : ""}`);
+  if (!res.ok) throw new Error(`getActivityList: ${res.status}`);
+  return res.json();
+}
+
+export async function getActivityDetail(id: number): Promise<ActivityDetail> {
+  const res = await fetch(`/api/activity/${id}`);
+  if (!res.ok) throw new Error(`getActivityDetail: ${res.status}`);
+  return res.json();
+}
