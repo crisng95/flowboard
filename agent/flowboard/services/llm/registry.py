@@ -17,6 +17,7 @@ from typing import Literal, Optional
 from .base import LLMError, LLMProvider
 from .claude import ClaudeProvider
 from .gemini import GeminiProvider
+from .grok import GrokProvider
 from . import secrets
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ Feature = Literal["auto_prompt", "vision", "planner"]
 _PROVIDERS: dict[str, LLMProvider] = {
     "claude": ClaudeProvider(),
     "gemini": GeminiProvider(),
+    "grok": GrokProvider(),
 }
 
 
