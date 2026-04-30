@@ -13,8 +13,8 @@
   <img src="https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white" alt="Chrome MV3"/>
   <img src="https://img.shields.io/badge/Veo%203.1-i2v-FF6F00?logo=google&logoColor=white" alt="Veo 3.1"/>
   <img src="https://img.shields.io/badge/Flow-Pro%20%2F%20Ultra%20only-EA4335?logo=google&logoColor=white" alt="Flow Pro / Ultra only"/>
-  <img src="https://img.shields.io/badge/Claude-CLI%20only-D97757?logo=anthropic&logoColor=white" alt="Claude CLI only"/>
-  <img src="https://img.shields.io/badge/Tests-190%20passing-success?logo=pytest&logoColor=white" alt="190 passing"/>
+  <img src="https://img.shields.io/badge/LLM-Claude%20%C2%B7%20Gemini%20%C2%B7%20Codex-D97757" alt="Claude / Gemini / OpenAI Codex"/>
+  <img src="https://img.shields.io/badge/Tests-333%20passing-success?logo=pytest&logoColor=white" alt="333 passing"/>
   <img src="https://img.shields.io/badge/Status-personal%20local--only-orange" alt="Status"/>
 </p>
 
@@ -36,11 +36,25 @@
 >    your authenticated Flow session + reCAPTCHA token. Without the
 >    extension loaded and connected to `labs.google/fx/tools/flow`, the
 >    `▶ Generate` button does nothing.
-> 3. **Claude CLI subprocess only.** Auto-prompt + vision rely **only**
->    on the [**Claude CLI**](https://docs.claude.com/claude-code/install)
->    shelled out as a local subprocess — Flowboard does not use the
->    Anthropic API, OpenAI, Gemini, or any cloud LLM endpoint. Your
->    existing Claude subscription does the work.
+> 3. **One LLM CLI on `PATH` for auto-prompt / vision / planner.**
+>    Flowboard ships a swappable provider layer — pick one in
+>    `Settings → AI Providers`:
+>
+>    - **Claude Code** (default, recommended) —
+>      [`@anthropic-ai/claude-code`](https://docs.claude.com/claude-code/install) ·
+>      OAuth via your Claude subscription · fully tested in production.
+>    - **Gemini CLI** — [`@google/gemini-cli`](https://github.com/google-gemini/gemini-cli) ·
+>      OAuth via Google AI · tested live; ~15 s slower per call than
+>      Claude due to subprocess cold-start.
+>    - **OpenAI Codex** —
+>      [`@openai/codex`](https://github.com/openai/codex) · OAuth via
+>      ChatGPT Plus/Pro · provider class implemented + auto-detected
+>      but **not yet smoke-tested end-to-end**; treat as beta.
+>
+>    Flowboard does not call any cloud LLM API directly — every
+>    auto-prompt / vision / planner round-trip shells out to the CLI
+>    you've connected, so the cost lives on your existing AI
+>    subscription.
 
 <p align="center">
   <a href="#why">Why</a> ·
@@ -78,9 +92,10 @@ Flowboard treats the workflow as a graph:
 - **Composed shots are nodes** — `(Character) + (Product) → Image`.
 - **Videos are nodes** — `(Image) → Video` via i2v, with multi-source batch
   so a 4-variant image spawns 4 videos in one click.
-- **Prompts are auto-synthesised** from upstream context (Claude CLI
-  vision → describes each ref → a downstream generator gets the brief
-  spliced into a fashion-editorial prompt).
+- **Prompts are auto-synthesised** from upstream context (the configured
+  LLM CLI's vision pass describes each ref → a downstream generator
+  gets the brief spliced into a fashion-editorial prompt). Switch
+  provider in `Settings → AI Providers`; defaults to Claude Code.
 
 The result: one source-of-truth canvas for an entire campaign.
 
@@ -213,9 +228,11 @@ Two node types act as **anchors** for the rest of the graph:
 | **Character** | A person whose identity you want to keep stable across many shots. | Generate from gender + nationality presets (Nam / Nữ × VN / JP / KR / CN / TH / US / FR), or upload your own portrait. The synth hard-anchors it to a frontal, closed-mouth, neutral-expression studio headshot — Veo i2v can't keep identity stable from a smiling-with-teeth source. |
 | **Visual asset** | A product / garment / object that needs to appear in scenes. | Upload (file or URL) or generate from a prompt. Inline `Refine` button uses Flow's `edit_image` to iterate without losing the original. |
 
-Each ref node gets an `aiBrief` automatically (Claude vision describes the
-image once, persists the description on the node). Downstream auto-prompt
-walks upstream and pulls these briefs as context.
+Each ref node gets an `aiBrief` automatically (the configured Vision
+provider describes the image once, persists the description on the
+node). Downstream auto-prompt walks upstream and pulls these briefs as
+context. Toggle off in `Settings → AI Providers` if you'd rather
+synthesise from typed prompts.
 
 ### 2. Composition is just connecting nodes
 
@@ -231,10 +248,10 @@ into it. Click `Generate` (or just press Enter with the prompt empty):
 ```
 
 All upstream `mediaId`s are fed to Flow as `IMAGE_INPUT_TYPE_REFERENCE`
-inputs. The auto-prompt synth (`/api/prompt/auto-batch`) asks Claude to
-compose **N pose-distinct prompts** in a single LLM call when you ask for
-multiple variants — so 4 variants don't all collapse to the same
-"hand-on-hip" stance. The prompt template is fashion-editorial style:
+inputs. The auto-prompt synth (`/api/prompt/auto-batch`) asks the
+configured LLM to compose **N pose-distinct prompts** in a single
+call when you ask for multiple variants — so 4 variants don't all
+collapse to the same "hand-on-hip" stance. The prompt template is fashion-editorial style:
 direct gaze, neutral closed-mouth, three-quarter angle, hand gesturing
 toward the garment, knees-up framing.
 
@@ -268,7 +285,7 @@ vocabulary based on detected scene:
 | Beach / nature / outdoor | hair flutter in breeze, slow exhale, look toward horizon |
 
 A studio shot gets editorial poses; a NYC-street shot gets walk-and-glance
-motion. No code branches — Claude detects the keyword and picks the
+motion. No code branches — the LLM detects the keyword and picks the
 matching vocab from the system prompt.
 
 ---
@@ -281,7 +298,7 @@ matching vocab from the system prompt.
 │  - content script    │ WS │  127.0.0.1:8100    │    │  Board, Node, Edge,  │
 │  - injected MAIN     │ ws │  + worker queue    │    │  Request, Asset,     │
 │  - CDN URL allow     │9222│  + WS server :9222 │    │  Plan, ChatMessage,  │
-│  - Captcha bridge    │    │  + Claude CLI      │    │  BoardFlowProject    │
+│  - Captcha bridge    │    │  + LLM CLI bridge  │    │  BoardFlowProject    │
 └──────────────────────┘    └─────────┬──────────┘    └──────────────────────┘
         ▲                             │
         │                             ▼
@@ -289,7 +306,7 @@ matching vocab from the system prompt.
         └───── Google Flow  │  React + Vite      │
               labs.google   │  ReactFlow canvas  │
               (i2v / image) │  Zustand store     │
-                            │  127.0.0.1:5175    │
+                            │  127.0.0.1:5173    │
                             └────────────────────┘
 ```
 
@@ -298,8 +315,9 @@ matching vocab from the system prompt.
   calls to Google Flow.
 - **Agent** — FastAPI + SQLModel + SQLite. Owns the board state, runs
   an in-process worker queue that proxies all generation requests
-  through the extension, and shells out to the Claude CLI for vision +
-  auto-prompt synthesis.
+  through the extension, and shells out to the configured LLM CLI
+  (Claude / Gemini / Codex — see *AI Providers* below) for vision +
+  auto-prompt + planner synthesis.
 - **Extension** — Chrome MV3. Lives on `labs.google/fx/tools/flow`,
   intercepts Flow's API calls (multimodal-fetch in MAIN world for the
   reCAPTCHA token), proxies them over a localhost WebSocket so the
@@ -320,7 +338,7 @@ matching vocab from the system prompt.
 | **Python 3.11** | Agent runtime (FastAPI + SQLModel) |
 | **Node 20+** | Frontend dev server (Vite) |
 | **Chrome / Chromium** | **Mandatory** — hosts the MV3 extension that proxies every Google Flow API call. The agent has zero direct path to Flow without it. |
-| **Claude CLI** on `PATH` | Vision describe + auto-prompt synth (no API key — uses your existing Claude subscription). [Install](https://docs.claude.com/claude-code/install) |
+| **One LLM CLI** on `PATH` | Vision describe + auto-prompt + planner. Pick one — defaults to **Claude Code** ([`@anthropic-ai/claude-code`](https://docs.claude.com/claude-code/install)); also supports **Gemini CLI** ([`@google/gemini-cli`](https://github.com/google-gemini/gemini-cli)) and **OpenAI Codex** ([`@openai/codex`](https://github.com/openai/codex), provider implemented but not yet smoke-tested). All use OAuth against your existing AI subscription — no API key needed. |
 | **Google Flow `Pro` or `Ultra` plan** at [`labs.google/fx/tools/flow`](https://labs.google/fx/tools/flow) | **Free tier and trial accounts will not work.** Veo 3.1 i2v + GEM_PIX_2 image gen are gated to paid plans. |
 
 > **Windows:** Use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install). All commands assume a Unix shell.
@@ -335,7 +353,7 @@ make install        # agent venv + frontend deps (uses uv if available, else pip
 make install-dev    # same, but adds ruff + pytest extras
 make update         # upgrade agent + frontend deps in place
 make agent          # run FastAPI on :8100
-make frontend       # run Vite on :5175
+make frontend       # run Vite on :5173
 ```
 
 `uv` is auto-detected (~10× faster installs). Install it once with
@@ -382,7 +400,7 @@ curl http://127.0.0.1:8100/api/health
 cd frontend
 npm install
 npm run dev
-# → http://localhost:5175
+# → http://localhost:5173
 ```
 
 Open the URL. The first board ("Untitled") auto-creates if the DB is
@@ -395,7 +413,7 @@ about 15 minutes of clicking.
 ```bash
 # Agent
 cd agent && .venv/bin/python -m pytest -q
-# 190 passed
+# 333 passed
 
 # Frontend
 cd frontend && npx tsc -p . --noEmit && npx vite build
@@ -421,7 +439,7 @@ cd frontend && npx tsc -p . --noEmit && npx vite build
   characters, visual assets, or other images; all of them flow in as
   Flow's `IMAGE_INPUT_TYPE_REFERENCE` inputs.
   - 1–4 variants per gen, each with its own pose-distinct prompt
-    (Claude rotates through an 8-stance pool per variant — never two
+    (the LLM rotates through an 8-stance pool per variant — never two
     "hand-on-hip" variants in the same gen).
   - Default aspect ratio inherits from upstream node; mismatched
     upstream aspects fall back to 9:16.
@@ -437,13 +455,52 @@ cd frontend && npx tsc -p . --noEmit && npx vite build
 
 ### Auto-prompt synthesis
 
-- Vision describes each new asset (Claude CLI multimodal attachments) →
-  saved as `aiBrief` on the node.
+- Vision describes each new asset (configured CLI's multimodal
+  attachment path — `@<path>` for Claude / Gemini, `--image` for Codex
+  when available) → saved as `aiBrief` on the node.
 - Downstream gen with empty prompt → `/api/prompt/auto` walks upstream
-  edges, gathers briefs, asks Claude to compose a prompt that matches
-  the scene + showcases the product.
+  edges, gathers briefs, asks the configured LLM to compose a prompt
+  that matches the scene + showcases the product.
 - For multi-variant gens, `/api/prompt/auto-batch` returns N
   pose-distinct prompts in a single LLM call.
+- **Vision toggle** in `Settings → AI Providers`: when OFF, the
+  synthesiser falls back to each upstream node's typed `prompt`
+  instead of a vision-derived brief. Manual upload paths still run
+  vision automatically (the user explicitly added bytes) — only the
+  gen-completion auto-brief is gated.
+
+### AI Providers (multi-LLM)
+
+A **🤖 Provider** chip in the top-right toolbar opens a dialog where
+you switch which LLM powers Flowboard. One provider serves all three
+features (Auto-Prompt / Vision / Planner) — switching is one decision,
+not three. Per-feature test buttons run a small ping per feature and
+gate the **Apply changes** button until all three pass green, so you
+never apply a switch that's silently broken.
+
+| Provider | Auth | Status |
+|---|---|---|
+| **Claude Code** | OAuth via `claude` CLI · Anthropic browser sign-in | ✅ Default · production-tested |
+| **Gemini CLI** | OAuth via `gemini` CLI · Google AI Ultra plan | ✅ Tested · ~15 s slower than Claude |
+| **OpenAI Codex** | OAuth via `codex` CLI · ChatGPT Plus/Pro | ⚠ Provider implemented but not yet smoke-tested |
+
+Backend keeps a Grok REST provider class for power users who edit
+`~/.flowboard/secrets.json` directly, but the UI doesn't surface it
+because xAI hasn't shipped an end-user CLI.
+
+### Activity feed
+
+A **🔔 bell** sits in the toolbar next to the AI Provider chip. Click
+it to see every backend operation in DESC order: gen image / gen
+video / edit image / auto-prompt / vision / planner — each with its
+status pill (✓ done · ⟳ running · ✗ failed) and how long it ran. Click
+a row to open a detail modal with the full input params, output
+result, and error JSON (with copy buttons), so you can diagnose a
+failed gen without tailing agent logs.
+
+The bell badge counts running + recently-failed-unread items, with a
+red tint when any failure is unread. Polling is 5 s while the dropdown
+is open, 30 s while closed, and pauses when the tab is backgrounded.
 
 ### Workflow ergonomics
 
@@ -468,20 +525,25 @@ cd frontend && npx tsc -p . --noEmit && npx vite build
 agent/                  FastAPI service (Python 3.11)
   flowboard/
     routes/             HTTP endpoints (boards, nodes, edges, requests,
-                        upload, vision, prompt, plans, …)
-    services/           Flow SDK, Claude CLI wrapper, prompt synth,
-                        vision describe, pipeline executor
+                        upload, vision, prompt, plans, llm, activity, …)
+    services/           Flow SDK, prompt synth, vision describe,
+                        pipeline executor, activity logger
+      llm/              Multi-LLM provider layer (registry, secrets,
+                        Claude / Gemini / OpenAI Codex / Grok)
+      claude_cli.py     Subprocess detail behind ClaudeProvider
     worker/             In-process queue (gen_image, gen_video,
                         edit_image, upload_image)
     db/                 SQLModel definitions
-  tests/                190+ pytest tests
+  tests/                333+ pytest tests
 
 frontend/               Vite + React + ReactFlow
   src/
     canvas/             Board.tsx, NodeCard.tsx, AddNodePalette.tsx
-    components/         GenerationDialog, ResultViewer, ProjectSidebar,
-                        ChatSidebar, Toolbar, Toaster
-    store/              Zustand: board, generation, pipeline
+    components/
+      activity/         ActivityBell + dropdown + detail modal
+      settings/         AiProvidersSection + ProviderCard + setup modal
+      AiProviderBadge.tsx · AiProviderDialog.tsx · GenerationDialog · ResultViewer · ProjectSidebar · ChatSidebar · Toolbar · Toaster
+    store/              Zustand: board, generation, pipeline, settings
     api/                client.ts, autoBrief.ts
 
 extension/              Chrome MV3 (content script + injected MAIN)
@@ -493,7 +555,7 @@ storage/                Local cache + SQLite (gitignored)
 
 ## Status
 
-Personal local-only tool. **190 / 190 tests passing** (agent), tsc
+Personal local-only tool. **333 / 333 tests passing** (agent), tsc
 clean (frontend). Caveats:
 
 - ⚠ **Google Flow plan must be `Pro` or `Ultra`.** Free tier and trial
@@ -508,10 +570,13 @@ clean (frontend). Caveats:
 - ⚠ Google Flow rate limits still apply within your paid tier.
 - ⚠ Veo / Imagen content filters
   (`PUBLIC_ERROR_PROMINENT_PEOPLE_FILTER_FAILED`,
-  `PUBLIC_ERROR_AUDIO_FILTERED`) — surfaced verbatim in the
-  failed-request error so the user can diagnose / iterate.
-- ⚠ Auto-prompt + vision require the `claude` CLI on `PATH`. Without
-  it, the `Generate` button still works if you type your own prompt.
+  `PUBLIC_ERROR_AUDIO_FILTERED`) — surfaced verbatim in the activity
+  feed + failed-request error so the user can diagnose / iterate.
+- ⚠ Auto-prompt + vision + planner require **one** LLM CLI on `PATH`
+  (Claude Code recommended; Gemini CLI tested; OpenAI Codex provider
+  implemented but not yet smoke-tested). Without any CLI, the
+  `Generate` button still works if you type your own prompt — only
+  the auto-prompt-from-empty path is unavailable.
 
 ## Related
 
@@ -530,7 +595,10 @@ MIT (proposed — license file pending).
 
 Generated media in this README was produced through the pipeline using
 [Google Flow](https://labs.google/flow). Auto-prompt + vision synthesis
-runs through [Claude](https://claude.ai) via the local CLI.
+defaults to [Claude](https://claude.ai) via the local CLI; multi-LLM
+support adds Google's [Gemini CLI](https://github.com/google-gemini/gemini-cli)
+and OpenAI's [Codex CLI](https://github.com/openai/codex) as alternative
+providers — pick one in `Settings → AI Providers`.
 
 ---
 
@@ -548,6 +616,6 @@ The shared community for both **FlowKit** and **Flowboard**. Drop in to:
 - Share node-graph patterns, vibe presets, and prompt recipes that work for you
 - Ask for help when an output isn't matching what you imagined
 - Request features and report bugs you've hit in the wild
-- Trade tips on Google Flow plan limits, Veo i2v behaviour, and Claude CLI setup
+- Trade tips on Google Flow plan limits, Veo i2v behaviour, and LLM CLI setup (Claude / Gemini / Codex)
 
 → **[facebook.com/groups/flowkit.flowboard.community](https://www.facebook.com/groups/flowkit.flowboard.community)**
