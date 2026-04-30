@@ -92,7 +92,10 @@ export function ProviderSetupModal({ provider, open, onClose }: ProviderSetupMod
         {provider === "openai" && (
           <OpenAiContent tab={openaiTab} onTabChange={setOpenaiTab} />
         )}
-        {provider === "grok" && <GrokContent />}
+        {/* Grok is intentionally not surfaced — xAI hasn't shipped a CLI,
+            so it doesn't fit Flowboard's "use your existing subscription"
+            philosophy. Backend keeps the provider class registered for
+            power users who edit secrets.json directly. */}
 
         <div className="setup-modal__footer">
           <a
@@ -257,50 +260,6 @@ function OpenAiContent({ tab, onTabChange }: OpenAiContentProps) {
           </p>
         </>
       )}
-    </div>
-  );
-}
-
-function GrokContent() {
-  return (
-    <div className="setup-modal__body">
-      <p>
-        xAI hasn't shipped an end-user CLI yet — Flowboard uses their REST
-        API directly with your key.
-      </p>
-      <ol className="setup-modal__steps">
-        <li>
-          <span className="setup-modal__step-label">Get a key</span>
-          <a
-            className="setup-modal__step-link"
-            href="https://console.x.ai/api-keys"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            console.x.ai/api-keys ↗
-          </a>
-          <span className="setup-modal__step-hint">
-            Create a new key with the chat:completions scope.
-          </span>
-        </li>
-        <li>
-          <span className="setup-modal__step-label">Save it</span>
-          <span className="setup-modal__step-hint">
-            Paste the key in the Grok row above and click Save.
-          </span>
-        </li>
-        <li>
-          <span className="setup-modal__step-label">Test</span>
-          <span className="setup-modal__step-hint">
-            Click "Test" to verify the key works.
-          </span>
-        </li>
-      </ol>
-      <p className="setup-modal__note">
-        The key stays in <code>~/.flowboard/secrets.json</code> (mode 600,
-        local only) and is never sent anywhere except api.x.ai. Cost:
-        Grok bills per-token — see xAI pricing for rates.
-      </p>
     </div>
   );
 }
