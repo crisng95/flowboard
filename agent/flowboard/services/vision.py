@@ -77,12 +77,16 @@ async def describe_media(media_id: str, *, node_id: Optional[int] = None) -> str
         "vision", params={"media_id": media_id}, node_id=node_id
     ) as activity:
         try:
+            # 90s ceiling. Vision is usually fast (5-15s on Claude),
+            # but Gemini CLI's cold-start adds ~15s per call and image
+            # attachment via `@<path>` adds a few seconds for the CLI
+            # to read + base64-encode the file before sending.
             text = await run_llm(
                 "vision",
                 _VISION_USER_PROMPT,
                 system_prompt=_VISION_SYSTEM,
                 attachments=[str(cached.resolve())],
-                timeout=45.0,
+                timeout=90.0,
             )
         except LLMError as exc:
             raise VisionError(f"vision provider failed: {exc}") from exc
