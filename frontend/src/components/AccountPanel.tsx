@@ -198,28 +198,36 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
           )}
         </div>
         {!collapsed && email && (
-          // Connected — show full identity (name + tier + email).
+          // Connected — three stacked rows: name, email, status (tier
+          // + credits). Tier badge moved out of the name row so the
+          // name has full width and doesn't ellipsize on narrow
+          // sidebars; credits join it in the status row so all the
+          // "subscription state" info reads as one unit.
           <div className="account-panel__meta">
-            <div className="account-panel__name-row">
-              <span className="account-panel__name">{displayName}</span>
-              {tier && (
-                <span
-                  className={`account-panel__tier${
-                    tier === "PAYGATE_TIER_TWO"
-                      ? " account-panel__tier--ultra"
-                      : " account-panel__tier--pro"
-                  }`}
-                  title={tier}
-                >
-                  {tierLabel}
-                </span>
-              )}
-            </div>
+            <span className="account-panel__name" title={displayName}>{displayName}</span>
             <span className="account-panel__email" title={email}>{email}</span>
-            {creditsLabel && (
-              <div className="account-panel__credits" title="Subscription credits remaining">
-                <span className="account-panel__credits-value">{creditsLabel}</span>
-                <span className="account-panel__credits-label">credits</span>
+            {(tier || creditsLabel) && (
+              <div
+                className="account-panel__status-row"
+                title={tier ? `${tierLabel}${creditsLabel ? ` · ${creditsLabel} credits remaining` : ""}` : undefined}
+              >
+                {tier && (
+                  <span
+                    className={`account-panel__tier${
+                      tier === "PAYGATE_TIER_TWO"
+                        ? " account-panel__tier--ultra"
+                        : " account-panel__tier--pro"
+                    }`}
+                  >
+                    {tierLabel}
+                  </span>
+                )}
+                {creditsLabel && (
+                  <span className="account-panel__credits-inline">
+                    <span className="account-panel__credits-value">{creditsLabel}</span>
+                    {" credits"}
+                  </span>
+                )}
               </div>
             )}
           </div>
