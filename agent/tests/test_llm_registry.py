@@ -189,6 +189,27 @@ async def test_run_forwards_all_kwargs(tmp_secrets_path, fake_providers):
 # ── Real ClaudeProvider smoke (no actual subprocess) ───────────────────
 
 @pytest.mark.asyncio
+async def test_real_claude_provider_wraps_cli_error_as_llm_error():
+    """Contract: caller doing `except LLMError:` must catch every Claude
+    failure mode. The provider translates `ClaudeCliError` → `LLMError`
+    so callers never have to import claude_cli to handle errors. Without
+    the wrap, every Claude timeout / non-zero exit / bad envelope would
+    leak through as the wrong exception type."""
+    from flowboard.services import claude_cli
+    from flowboard.services.llm.claude import ClaudeProvider
+
+    p = ClaudeProvider()
+    with patch(
+        "flowboard.services.claude_cli.run_claude",
+        side_effect=claude_cli.ClaudeCliError("subprocess timeout"),
+    ):
+        with pytest.raises(LLMError, match="subprocess timeout"):
+            await p.run("hello")
+    # Cause chain preserved for diagnostics — the original ClaudeCliError
+    # is still reachable via __cause__ if a logger / debugger wants it.
+
+
+@pytest.mark.asyncio
 async def test_real_claude_provider_delegates_to_claude_cli():
     """Sanity check that ClaudeProvider actually wires through to
     claude_cli.run_claude — caught early if the function signature drifts.
