@@ -12,5 +12,6 @@ and the per-provider classes from ``registry`` for status / test endpoints.
 from __future__ import annotations
 
 from .base import LLMError, LLMProvider
+from .registry import get_provider, list_providers, run_llm
 
-__all__ = ["LLMError", "LLMProvider"]
+__all__ = ["LLMError", "LLMProvider", "get_provider", "list_providers", "run_llm"]
