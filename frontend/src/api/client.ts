@@ -544,3 +544,96 @@ export async function uploadImageFromUrl(
   }
   return res.json() as Promise<UploadResponse>;
 }
+
+
+// ── LLM provider Settings ─────────────────────────────────────────────────
+// See .omc/plans/multi-llm-provider-legacy.md → UI Specification → Frontend ↔
+// backend contract for the full shape.
+
+export type LLMProviderName = "claude" | "gemini" | "openai" | "grok";
+export type LLMFeature = "auto_prompt" | "vision" | "planner";
+export type LLMProviderMode = "cli" | "api" | "none";
+export type LLMLastError =
+  | "not_installed"
+  | "not_authenticated"
+  | "no_key"
+  | "unreachable"
+  | "unknown";
+
+export interface LLMProviderInfo {
+  name: LLMProviderName;
+  supportsVision: boolean;
+  available: boolean;
+  configured: boolean;
+  requiresKey: boolean;
+  mode: LLMProviderMode;
+  lastError?: LLMLastError;
+  lastTest?: { ok: boolean; latencyMs?: number; error?: string };
+}
+
+export interface LLMConfig {
+  auto_prompt: LLMProviderName;
+  vision: LLMProviderName;
+  planner: LLMProviderName;
+}
+
+export async function getLlmProviders(): Promise<LLMProviderInfo[]> {
+  // Backend returns snake-case keys mapped from Python — but the route
+  // already emits camelCase for the public surface. Re-typed here so
+  // the spread/destructure pattern in the UI components stays clean.
+  const res = await fetch("/api/llm/providers");
+  if (!res.ok) throw new Error(`getLlmProviders: ${res.status}`);
+  return res.json() as Promise<LLMProviderInfo[]>;
+}
+
+export async function getLlmConfig(): Promise<LLMConfig> {
+  const res = await fetch("/api/llm/config");
+  if (!res.ok) throw new Error(`getLlmConfig: ${res.status}`);
+  return res.json() as Promise<LLMConfig>;
+}
+
+export async function setLlmConfig(
+  partial: Partial<LLMConfig>,
+): Promise<{ ok: boolean }> {
+  const res = await fetch("/api/llm/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(partial),
+  });
+  if (!res.ok) throw new Error(await extractErrorMessage(res));
+  return res.json();
+}
+
+export async function setLlmApiKey(
+  name: LLMProviderName,
+  apiKey: string | null,
+): Promise<{ ok: boolean }> {
+  // null clears the key. Backend chmods secrets.json to 0o600 after
+  // every write; the key is never echoed back via getLlmProviders.
+  const res = await fetch(`/api/llm/providers/${name}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apiKey }),
+  });
+  if (!res.ok) throw new Error(await extractErrorMessage(res));
+  return res.json();
+}
+
+export interface LlmTestResult {
+  ok: boolean;
+  latencyMs?: number;
+  error?: string;
+}
+
+export async function testLlmProvider(
+  name: LLMProviderName,
+): Promise<LlmTestResult> {
+  // Cost-bounded by the backend: 1-token ping, 15s deadline. Returns
+  // ok:false (NOT a non-200 HTTP status) on any failure mode so the
+  // UI can render the error inline without try/catch boilerplate.
+  const res = await fetch(`/api/llm/providers/${name}/test`, { method: "POST" });
+  if (!res.ok) {
+    return { ok: false, error: `HTTP ${res.status}` };
+  }
+  return res.json();
+}
