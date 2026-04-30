@@ -197,9 +197,11 @@ export function AiProvidersSection() {
 
   async function runAllTests() {
     if (!pending) return;
-    for (const f of FEATURES) {
-      await runTest(f);
-    }
+    // Run the 3 feature tests in PARALLEL — each backend test endpoint
+    // spawns an independent subprocess, so there's no contention. Slow
+    // CLIs (Gemini ~15s cold-start) used to mean sequential = 45s+ wall
+    // time; parallel collapses that to single-call latency.
+    await Promise.all(FEATURES.map(runTest));
   }
 
   async function handleApply() {
