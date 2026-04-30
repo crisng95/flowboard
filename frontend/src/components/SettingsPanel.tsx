@@ -63,9 +63,17 @@ const VIDEO_QUALITIES: { key: VideoQuality; label: string; hint: string; ultraOn
 interface SettingsPanelProps {
   open: boolean;
   onClose(): void;
+  // Provided by AccountPanel. Called when the user clicks "Sign out"
+  // — AccountPanel owns the post-logout state reset (clear cached
+  // profile, kick the /me poll). Pass undefined when no identity is
+  // loaded (the button auto-hides in that case).
+  onLogout?: () => Promise<void> | void;
+  // True while the parent's logout call is in flight — disables the
+  // button so a double-click doesn't fire two POSTs.
+  logoutPending?: boolean;
 }
 
-export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
+export function SettingsPanel({ open, onClose, onLogout, logoutPending }: SettingsPanelProps) {
   const tier = useGenerationStore((s) => s.paygateTier);
   const imageModel = useSettingsStore((s) => s.imageModel);
   const setImageModel = useSettingsStore((s) => s.setImageModel);
@@ -239,6 +247,27 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
           </a>
         </div>
       </div>
+
+      {onLogout && (
+        // Sign out lives here (not in the AccountPanel chip) so the
+        // chip stays narrow enough for the email + status row to
+        // render without ellipsizing on default sidebar widths.
+        <div className="settings-panel__section settings-panel__section--logout">
+          <button
+            type="button"
+            className="settings-panel__logout-btn"
+            onClick={onLogout}
+            disabled={logoutPending}
+          >
+            {logoutPending ? "Signing out…" : "Sign out from Flow account"}
+          </button>
+          <div className="settings-panel__hint">
+            Clears the cached identity and tells the extension to drop
+            its in-memory token. The WebSocket stays open so signing
+            back in doesn't require a Chrome restart.
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );

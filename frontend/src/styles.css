@@ -390,15 +390,6 @@ button:disabled {
   background: var(--panel);
 }
 
-/* Buttons cluster on the right (logout + cog) — both 28px so two
- * buttons total ~62px, leaving the meta column ~200px on a default
- * sidebar before name/email start ellipsizing. */
-.account-panel__actions {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
 
 .account-panel--collapsed {
   display: flex;
@@ -564,34 +555,6 @@ button:disabled {
   background: rgba(124, 92, 255, 0.16);
   border-color: var(--accent);
   color: #c5b3ff;
-}
-
-/* Logout button — same shape/size as the cog so the chip line stays
- * visually balanced. Sits left of the cog when the user is signed in. */
-.account-panel__logout-btn {
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--panel-high);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 12px;
-  line-height: 1;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
-}
-.account-panel__logout-btn:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.12);
-  border-color: #ef4444;
-  color: #fca5a5;
-}
-.account-panel__logout-btn:disabled {
-  opacity: 0.5;
-  cursor: progress;
 }
 
 /* Scan-extension button — replaces the muted "Connected via extension"
@@ -787,6 +750,34 @@ button:disabled {
 
 .settings-panel__section:last-child {
   border-bottom: none;
+}
+
+/* Sign-out section — destructive action, lives at the bottom of
+ * Settings so it doesn't accidentally get hit while changing models.
+ * Red-tinted button to signal "this clears state". */
+.settings-panel__section--logout {
+  background: rgba(239, 68, 68, 0.04);
+}
+.settings-panel__logout-btn {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.08);
+  color: #fca5a5;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.settings-panel__logout-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: #ef4444;
+  color: #fecaca;
+}
+.settings-panel__logout-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
 }
 
 .settings-panel__label {

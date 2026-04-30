@@ -252,32 +252,15 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
             </button>
           </div>
         )}
-        <div className="account-panel__actions">
-          {email && !collapsed && (
-            // Logout only shown when identity is loaded — before login
-            // it would be confusing. Icon-only with a tooltip to stay
-            // narrow in the sidebar.
-            <button
-              type="button"
-              className="account-panel__logout-btn"
-              onClick={handleLogout}
-              disabled={logoutPending}
-              aria-label="Log out from extension"
-              title={logoutPending ? "Logging out…" : "Log out — clear cached identity"}
-            >
-              ⏻
-            </button>
-          )}
-          <button
-            type="button"
-            className="account-panel__cog"
-            onClick={() => setOpen((v) => !v)}
-            aria-label="Open settings"
-            title="Settings"
-          >
-            ⚙
-          </button>
-        </div>
+        <button
+          type="button"
+          className="account-panel__cog"
+          onClick={() => setOpen((v) => !v)}
+          aria-label="Open settings"
+          title="Settings"
+        >
+          ⚙
+        </button>
       </div>
       {!collapsed && (
         <div className="account-panel__version-row">
@@ -324,7 +307,18 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
           </a>
         </div>
       )}
-      <SettingsPanel open={open} onClose={() => setOpen(false)} />
+      <SettingsPanel
+        open={open}
+        onClose={() => setOpen(false)}
+        // Sign out lives in Settings now — only render the action when
+        // there's actually a session to drop (no `email` = nothing to
+        // sign out from).
+        onLogout={email ? async () => {
+          await handleLogout();
+          setOpen(false);
+        } : undefined}
+        logoutPending={logoutPending}
+      />
     </>
   );
 }
