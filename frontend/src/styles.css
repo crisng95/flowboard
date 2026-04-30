@@ -4361,3 +4361,33 @@ button:disabled {
   cursor: not-allowed;
   opacity: 0.4;
 }
+
+/* Busy banner inside the ResultViewer actions row — explains why the
+ * Regenerate / New variant buttons are temporarily disabled while the
+ * LLM layer composes a prompt or analyses media for this node. Reuses
+ * the spinner glyph from the canvas-side header pill so the visual
+ * language stays consistent. */
+.result-viewer__busy-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  background: rgba(124, 92, 255, 0.12);
+  border: 1px solid rgba(124, 92, 255, 0.4);
+  border-radius: 6px;
+  color: #c5b3ff;
+  font-size: 11px;
+  width: 100%;
+}
+
+/* Apply the same disabled affordance to the edit-prompt anchor-style
+ * button so it matches Regenerate / New variant. */
+.result-viewer__edit-prompt[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.result-viewer__btn[disabled]:not(.result-viewer__btn--link) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

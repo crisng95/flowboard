@@ -271,8 +271,16 @@ export function ResultViewer() {
     hintText = "Fetching bytes from Google…";
   }
 
+  // Blocks the three generation-flow buttons (Edit prompt, Regenerate,
+  // New variant) while the LLM layer is mid-flight on this node — same
+  // signal as the canvas-side .node-card--llm-busy treatment so the user
+  // can't fire a duplicate dispatch via the detail panel either.
+  const llmBusy =
+    data?.autoPromptStatus === "pending"
+    || data?.aiBriefStatus === "pending";
+
   function handleRegenerate() {
-    if (!rfId || !data) return;
+    if (!rfId || !data || llmBusy) return;
     // Carry forward the node's persisted setup so regenerate matches the
     // original generation. Without this we silently snap to LANDSCAPE / 1
     // variant — wrong for portrait/square shots, character refs (square),
@@ -323,13 +331,13 @@ export function ResultViewer() {
   }
 
   function handleEditPrompt() {
-    if (!rfId || !data) return;
+    if (!rfId || !data || llmBusy) return;
     closeResultViewer();
     openGenerationDialog(rfId, data.prompt ?? "");
   }
 
   async function handleNewVariant() {
-    if (!rfId) return;
+    if (!rfId || llmBusy) return;
     const newRfId = await useBoardStore
       .getState()
       .cloneNodeWithUpstream(rfId);
@@ -450,7 +458,12 @@ export function ResultViewer() {
 
           <span className="result-viewer__section-label">PROMPT</span>
           <p className="result-viewer__prompt">{data.prompt ?? "(no prompt)"}</p>
-          <button className="result-viewer__edit-prompt" onClick={handleEditPrompt}>
+          <button
+            className="result-viewer__edit-prompt"
+            onClick={handleEditPrompt}
+            disabled={llmBusy}
+            title={llmBusy ? "Backend is composing — try again in a moment" : undefined}
+          >
             Edit prompt →
           </button>
 
@@ -510,13 +523,33 @@ export function ResultViewer() {
           </dl>
 
           <div className="result-viewer__actions">
-            <button className="result-viewer__btn result-viewer__btn--primary" onClick={handleRegenerate}>
+            {llmBusy && (
+              // Inline busy banner explains why the action buttons are
+              // disabled — without this the disabled state looks like a bug.
+              <div className="result-viewer__busy-banner" role="status">
+                <span className="node-header__llm-spinner" aria-hidden="true" />
+                {data?.autoPromptStatus === "pending"
+                  ? "Composing prompt — actions disabled until done"
+                  : "Analyzing image — actions disabled until done"}
+              </div>
+            )}
+            <button
+              className="result-viewer__btn result-viewer__btn--primary"
+              onClick={handleRegenerate}
+              disabled={llmBusy}
+              title={llmBusy ? "Backend is busy on this node — try again in a moment" : undefined}
+            >
               Regenerate ⌘R
             </button>
             <button
               className="result-viewer__btn"
               onClick={handleNewVariant}
-              title="Clone this node onto the canvas with the same upstream refs"
+              disabled={llmBusy}
+              title={
+                llmBusy
+                  ? "Backend is busy on this node — try again in a moment"
+                  : "Clone this node onto the canvas with the same upstream refs"
+              }
             >
               New variant +
             </button>
