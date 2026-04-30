@@ -81,15 +81,16 @@ async def _handle_gen_image(params: dict) -> tuple[dict, Optional[str]]:
     if not is_valid_project_id(project_id):
         return {}, "invalid_project_id"
     aspect = params.get("aspect_ratio") or "IMAGE_ASPECT_RATIO_LANDSCAPE"
-    # Tier resolution chain — caller-stamped value first (set at
-    # dispatch time), then live signal from extension WS sniff (covers
-    # legacy nodes where the frontend fell back to TIER_ONE before
-    # the extension pushed the real tier), then TIER_ONE last-resort.
-    tier = (
-        params.get("paygate_tier")
-        or flow_client.paygate_tier
-        or "PAYGATE_TIER_ONE"
-    )
+    # Tier resolution: caller-stamped value first (set at dispatch time),
+    # then live signal from extension WS sniff. NO silent default — if
+    # both are absent we fail loud with `paygate_tier_unknown`. The old
+    # behaviour (default `PAYGATE_TIER_ONE`) silently downgraded Ultra
+    # users to Pro and stamped the wrong tier into request.params, which
+    # then fed back through `_last_observed_paygate_tier_from_db()` and
+    # corrupted /api/auth/me responses for the rest of the session.
+    tier = params.get("paygate_tier") or flow_client.paygate_tier
+    if tier is None:
+        return {}, "paygate_tier_unknown"
     # `ref_media_ids` is the broader name (any upstream image / character /
     # visual_asset feeds in as IMAGE_INPUT_TYPE_REFERENCE). Older callers used
     # `character_media_ids` — accept both.
@@ -172,15 +173,12 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
     ):
         return {}, "missing_start_media_id"
     aspect = params.get("aspect_ratio") or "VIDEO_ASPECT_RATIO_LANDSCAPE"
-    # Tier resolution chain — caller-stamped value first (set at
-    # dispatch time), then live signal from extension WS sniff (covers
-    # legacy nodes where the frontend fell back to TIER_ONE before
-    # the extension pushed the real tier), then TIER_ONE last-resort.
-    tier = (
-        params.get("paygate_tier")
-        or flow_client.paygate_tier
-        or "PAYGATE_TIER_ONE"
-    )
+    # Tier resolution — see the matching block in _handle_gen_image for
+    # the rationale. No silent default; missing tier is a hard error so
+    # we never dispatch an Ultra user's video at the Pro checkpoint.
+    tier = params.get("paygate_tier") or flow_client.paygate_tier
+    if tier is None:
+        return {}, "paygate_tier_unknown"
     video_quality = params.get("video_quality")
     if not isinstance(video_quality, str) or not video_quality.strip():
         video_quality = None
@@ -299,15 +297,11 @@ async def _handle_edit_image(params: dict) -> tuple[dict, Optional[str]]:
     if not isinstance(source_media_id, str) or not source_media_id.strip():
         return {}, "missing_source_media_id"
     aspect = params.get("aspect_ratio") or "IMAGE_ASPECT_RATIO_LANDSCAPE"
-    # Tier resolution chain — caller-stamped value first (set at
-    # dispatch time), then live signal from extension WS sniff (covers
-    # legacy nodes where the frontend fell back to TIER_ONE before
-    # the extension pushed the real tier), then TIER_ONE last-resort.
-    tier = (
-        params.get("paygate_tier")
-        or flow_client.paygate_tier
-        or "PAYGATE_TIER_ONE"
-    )
+    # Tier resolution — see _handle_gen_image for rationale. Fail loud,
+    # no silent fallback to Pro.
+    tier = params.get("paygate_tier") or flow_client.paygate_tier
+    if tier is None:
+        return {}, "paygate_tier_unknown"
     raw_refs = params.get("ref_media_ids")
     ref_ids: Optional[list[str]] = None
     if isinstance(raw_refs, list):

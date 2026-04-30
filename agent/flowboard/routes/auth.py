@@ -7,92 +7,48 @@ exposes the cached object for the frontend's AccountPanel.
 """
 from __future__ import annotations
 
-import time
-from typing import Optional
-
 from fastapi import APIRouter
-from sqlmodel import select
 
-from flowboard.db import get_session
-from flowboard.db.models import Request
 from flowboard.services.flow_client import flow_client
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-# Module-level TTL cache for the DB tier fallback. The AccountPanel
-# polls /api/auth/me every 5s until both email + tier resolve, and
-# this fallback runs whenever the in-memory tier is None (legacy
-# boards, cold-start). Without a cache we'd re-scan up to 20 request
-# rows per poll — wasteful on slow SQLite.
-_DB_TIER_CACHE_TTL_S = 30.0
-_db_tier_cache: tuple[float, Optional[str]] = (0.0, None)
-
-
-def _last_observed_paygate_tier_from_db() -> Optional[str]:
-    """Fallback: read the tier from the most recent successful gen
-    request the user dispatched. Useful right after agent restart when
-    the extension hasn't pushed a fresh `paygate_tier` yet — any past
-    `gen_image` / `gen_video` request that completed against Flow
-    proves the tier the user is on, since Flow would have rejected it
-    otherwise. Returns None when no usable row is present.
-
-    Result is cached for ~30s — the only signal that would invalidate
-    the cache is a fresh successful gen, and the AccountPanel polls at
-    most every 5s, so we'd hit the same answer 5+ times in a row
-    without caching.
-    """
-    global _db_tier_cache
-    now = time.monotonic()
-    cached_at, cached_tier = _db_tier_cache
-    if now - cached_at < _DB_TIER_CACHE_TTL_S:
-        return cached_tier
-
-    with get_session() as s:
-        rows = s.exec(
-            select(Request)
-            .where(Request.status == "done")
-            .where(Request.type.in_(("gen_image", "gen_video")))  # type: ignore[attr-defined]
-            .order_by(Request.id.desc())
-            .limit(20)
-        ).all()
-    tier: Optional[str] = None
-    for r in rows:
-        params = r.params if isinstance(r.params, dict) else {}
-        candidate = params.get("paygate_tier")
-        if candidate in ("PAYGATE_TIER_ONE", "PAYGATE_TIER_TWO"):
-            tier = candidate
-            break
-    _db_tier_cache = (now, tier)
-    return tier
-
-
+# Test hook kept for backward compatibility with existing test imports.
+# The DB-tier-fallback cache it used to reset is gone — see the
+# `_last_observed_paygate_tier_from_db` removal below.
 def _reset_db_tier_cache_for_tests() -> None:
-    """Test hook — flush the TTL cache so tests don't bleed state."""
-    global _db_tier_cache
-    _db_tier_cache = (0.0, None)
+    """No-op — preserved so existing tests' `from .auth import
+    _reset_db_tier_cache_for_tests` doesn't break. Will be removed in
+    v1.2 along with the test imports."""
+    return
 
 
 @router.get("/me")
 def get_me() -> dict:
-    """Return the cached Google profile + paygate tier, or null fields
-    when neither has arrived yet.
+    """Return the cached Google profile + paygate tier from the live
+    extension signal only.
 
-    Tier resolution order:
-      1. Live signal pushed by the extension's request-body sniffer
-         (authoritative — what Flow web sends on the user's behalf).
-      2. Last observed tier on a successful gen request in DB
-         (fallback so refreshes after agent restart aren't blank).
+    The previous version had a "fall back to last observed tier in DB"
+    branch that read `request.params.paygate_tier` from the most recent
+    gen request. That branch was a footgun: the worker used to default
+    to `PAYGATE_TIER_ONE` when no live tier was present, and that wrong
+    value got stamped into request.params, polluting the DB. The next
+    /api/auth/me call would then read the polluted row and report Pro
+    forever — even for Ultra users — until a fresh known-good gen
+    happened to overwrite the fallback row.
 
-    Never throws — the AccountPanel polls this and renders sensible
-    placeholders while we wait for one of the signals to land.
+    Now: the worker fails loud when tier is unknown (see
+    `worker/processor.py:_handle_gen_image` etc), so no bogus tier
+    gets into the DB. /api/auth/me returns `paygate_tier: null` until
+    the extension pushes a real signal, and the AccountPanel renders a
+    "Tier unknown — open Flow tab" banner instead of lying.
     """
     info = flow_client.user_info or {}
-    tier = flow_client.paygate_tier or _last_observed_paygate_tier_from_db()
     return {
         "email": info.get("email"),
         "name": info.get("name"),
         "picture": info.get("picture"),
         "verified_email": info.get("verified_email"),
-        "paygate_tier": tier,
+        "paygate_tier": flow_client.paygate_tier,
     }

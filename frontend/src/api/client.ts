@@ -17,6 +17,15 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 // the raw message.
 function humanizeBackendError(token: string): string | null {
   const t = token.toLowerCase();
+  if (t === "paygate_tier_unknown") {
+    return (
+      "Flowboard doesn't know your Google Flow plan tier yet — the "
+      + "extension hasn't seen a Flow request that exposes it. Open "
+      + "https://labs.google/fx/tools/flow in a tab and reload it once, "
+      + "then retry. Flowboard refuses to dispatch in this state to "
+      + "avoid silently serving Ultra users at the Pro checkpoint."
+    );
+  }
   if (t === "no_media_id_in_upload_response") {
     return (
       "Google Flow accepted the upload but didn't return a media handle — "

@@ -25,6 +25,10 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
   const setStorePaygateTier = useGenerationStore.setState;
   const [open, setOpen] = useState(false);
   const [profile, setProfile] = useState<AuthMe | null>(null);
+  // Counts polls that returned a profile but no tier. Used to delay
+  // the "Tier unknown" banner so it doesn't flash on initial cold-start
+  // while the extension is still doing its first round-trip.
+  const [pollsWithoutTier, setPollsWithoutTier] = useState(0);
 
   // Poll /api/auth/me until BOTH email and paygate_tier are populated.
   // Email comes from Google's userinfo (fetched once per token rotation
@@ -38,9 +42,18 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
       if (!alive) return;
       setProfile(me);
       // Mirror the tier into the generation store so dispatch paths
-      // continue to read from a single source.
+      // continue to read from a single source. When tier becomes null
+      // again (extension disconnect / sign-out), clear the store too —
+      // otherwise dispatch would happily reuse a stale tier.
       if (me?.paygate_tier) {
         setStorePaygateTier({ paygateTier: me.paygate_tier });
+        setPollsWithoutTier(0);
+      } else if (me?.email) {
+        // Email present but tier missing — extension connected but
+        // hasn't sniffed a Flow request body yet. Count up so the UI
+        // knows when to surface the warning banner.
+        setStorePaygateTier({ paygateTier: null });
+        setPollsWithoutTier((n) => n + 1);
       }
       if (me?.email && me?.paygate_tier) return;
       timer = setTimeout(poll, 5000);
@@ -165,6 +178,33 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
               ↑ {latestRelease.tagName}
             </a>
           )}
+        </div>
+      )}
+      {!collapsed && profile?.email && !profile.paygate_tier && pollsWithoutTier >= 2 && (
+        // Extension connected (we got the Google profile) but hasn't
+        // sniffed a Flow request body yet — tier is unknown. Without
+        // this banner, the user would either see an empty tier slot
+        // (silently, before v1.1.5) or get a "paygate_tier_unknown"
+        // dispatch error with no recovery hint. Surface the gap and
+        // give a 1-click path to fix it.
+        <div className="account-panel__tier-warning" role="alert">
+          <span className="account-panel__tier-warning-icon" aria-hidden="true">⚠</span>
+          <div className="account-panel__tier-warning-body">
+            <span className="account-panel__tier-warning-title">
+              Tier unknown
+            </span>
+            <span className="account-panel__tier-warning-text">
+              Open Flow once so the extension can detect your plan.
+            </span>
+          </div>
+          <a
+            className="account-panel__tier-warning-cta"
+            href="https://labs.google/fx/tools/flow"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open Flow ↗
+          </a>
         </div>
       )}
       <SettingsPanel open={open} onClose={() => setOpen(false)} />

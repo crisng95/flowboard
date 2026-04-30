@@ -135,6 +135,25 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     const projectId = await get().ensureProjectId();
     if (projectId === null) return;
 
+    // Pre-flight: refuse to dispatch if the paygate tier is unknown.
+    // The backend would reject with `paygate_tier_unknown` anyway (since
+    // Phase 1 stopped silently defaulting to Pro), but bailing here gives
+    // the user a clearer hint without spending a captcha round-trip and
+    // without leaving a `failed` request row in the DB. The
+    // AccountPanel's "Tier unknown — Open Flow" banner is the recovery
+    // path.
+    const knownTier = opts.paygateTier ?? get().paygateTier;
+    if (!knownTier) {
+      set({
+        error: "Open Flow once so the extension can detect your plan, then retry. (See the Tier-unknown banner in the bottom-left.)",
+      });
+      useBoardStore.getState().updateNodeData(rfId, {
+        status: "error",
+        error: "paygate_tier_unknown",
+      });
+      return;
+    }
+
     // Cancel existing poll for this node if any
     const existingEntry = get().active[rfId];
     if (existingEntry && existingEntry.timerId !== null) {

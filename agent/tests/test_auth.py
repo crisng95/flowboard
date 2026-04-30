@@ -154,64 +154,37 @@ async def test_clear_extension_drops_cached_userinfo_and_tier():
     assert flow_client.paygate_tier is None
 
 
-def test_db_tier_fallback_caches_within_ttl(client):
-    """The DB tier fallback caches results for ~30s — the AccountPanel
-    polls every 5s and we don't want to re-scan the request table on
-    every poll. First call should hit the DB; second call within the
-    TTL should return the cached value without another query."""
-    from unittest.mock import patch as mock_patch
-    from flowboard.routes import auth as auth_route
+def test_me_returns_null_tier_when_extension_has_not_pushed(client):
+    """Regression guard for the silent-Pro-downgrade bug.
 
-    # Seed the cache by calling /me once with the in-memory tier
-    # missing — falls through to the DB query, which returns None on
-    # an empty test DB and caches that.
+    Old behaviour: when `flow_client.paygate_tier` was None, /api/auth/me
+    fell back to scanning request.params for the most recently observed
+    tier. Combined with the worker's old default of PAYGATE_TIER_ONE,
+    that meant any gen dispatched before extension sniffed would stamp
+    Pro into the DB, and subsequent /me calls would report Pro forever
+    even for Ultra users.
+
+    Now the route returns `paygate_tier: null` in this state. The
+    AccountPanel surfaces a "Tier unknown — open Flow tab" banner so
+    the user sees the gap explicitly instead of being silently lied to.
+    """
     flow_client._paygate_tier = None
-    auth_route._reset_db_tier_cache_for_tests()
 
-    with mock_patch.object(
-        auth_route, "_last_observed_paygate_tier_from_db",
-        wraps=auth_route._last_observed_paygate_tier_from_db,
-    ) as spy:
-        # First call: cold — should run the underlying query.
-        r1 = client.get("/api/auth/me")
-        assert r1.status_code == 200
-        # Second call ~immediately: must hit the TTL cache, not re-query.
-        r2 = client.get("/api/auth/me")
-        assert r2.status_code == 200
-        # Both calls go through the wrapper, but only one should reach
-        # the actual DB scan. We can't easily count DB queries here,
-        # but we CAN verify the cached tuple is set after the first
-        # call and unchanged after the second.
-        assert auth_route._db_tier_cache[1] is None  # cached "no tier"
-        cached_at_after_first = auth_route._db_tier_cache[0]
-        # Second call should not have updated the timestamp — proves
-        # the cache short-circuited the recompute.
-        assert auth_route._db_tier_cache[0] == cached_at_after_first
-        # Spy got called twice (route handler entry) but the cache
-        # short-circuit means the inner DB select ran only once.
-        assert spy.call_count == 2
+    # Even with a polluted DB row stamped at PAYGATE_TIER_ONE — the kind
+    # the old code used to "recover" the tier from — the route MUST
+    # return null. We don't trust DB-stamped tiers anymore because the
+    # path that wrote them was the bug.
+    from flowboard.db import get_session
+    from flowboard.db.models import Request
+    with get_session() as s:
+        s.add(Request(
+            type="gen_image",
+            status="done",
+            params={"paygate_tier": "PAYGATE_TIER_ONE", "prompt": "x"},
+            result={"media_ids": ["m"]},
+        ))
+        s.commit()
 
-
-def test_db_tier_fallback_expires_after_ttl(client):
-    """Force the cache timestamp into the past and verify the next
-    call re-runs the DB scan. Without this we'd never pick up a fresh
-    tier signal after the user generates their first successful
-    request post-cold-start."""
-    from flowboard.routes import auth as auth_route
-
-    flow_client._paygate_tier = None
-    auth_route._reset_db_tier_cache_for_tests()
-
-    # Prime cache.
-    client.get("/api/auth/me")
-    cached_at_first = auth_route._db_tier_cache[0]
-    assert cached_at_first > 0
-
-    # Simulate TTL expiry by rewinding the cache timestamp.
-    auth_route._db_tier_cache = (
-        cached_at_first - auth_route._DB_TIER_CACHE_TTL_S - 1,
-        None,
-    )
-    client.get("/api/auth/me")
-    # Cache timestamp should have moved forward — fresh query ran.
-    assert auth_route._db_tier_cache[0] > cached_at_first
+    r = client.get("/api/auth/me")
+    assert r.status_code == 200
+    assert r.json()["paygate_tier"] is None

@@ -575,6 +575,52 @@ button:disabled {
   animation-play-state: paused;
 }
 
+/* Tier-unknown warning banner — surfaces when the extension has
+ * connected (Google profile loaded) but hasn't sniffed Flow's
+ * paygate tier yet, so dispatch would fail. v1.1.5 fix for the
+ * silent-Pro-downgrade bug. */
+.account-panel__tier-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 8px 0;
+  padding: 8px 10px;
+  border: 1px solid #f59e0b;
+  background: rgba(245, 158, 11, 0.10);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.account-panel__tier-warning-icon {
+  color: #f59e0b;
+  font-size: 14px;
+  line-height: 1;
+}
+.account-panel__tier-warning-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.account-panel__tier-warning-title {
+  font-weight: 600;
+  color: #fbbf24;
+}
+.account-panel__tier-warning-text {
+  color: var(--muted);
+}
+.account-panel__tier-warning-cta {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.account-panel__tier-warning-cta:hover {
+  text-decoration: underline;
+}
+
 @keyframes account-update-pulse {
   0%, 100% {
     box-shadow: 0 2px 10px rgba(197, 118, 255, 0.32);

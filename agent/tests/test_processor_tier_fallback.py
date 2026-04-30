@@ -72,10 +72,18 @@ async def test_gen_image_falls_back_to_live_flow_client_tier():
 
 
 @pytest.mark.asyncio
-async def test_gen_image_defaults_to_tier_one_when_nothing_set():
-    """No params, no flow_client cache → safe default. Without this
-    the SDK would receive None and pass it through to Flow, which the
-    audit fix #16 already clamps but ideally never sees."""
+async def test_gen_image_fails_loud_when_no_tier_signal_anywhere():
+    """No caller-stamped tier, no live signal from extension → the
+    handler MUST refuse to dispatch with `paygate_tier_unknown`, NOT
+    silently fall back to PAYGATE_TIER_ONE.
+
+    Regression guard for the silent-Pro-downgrade bug. The original
+    code defaulted to TIER_ONE here, which:
+      1. served Ultra users at the Pro checkpoint without warning, and
+      2. stamped the wrong tier into request.params, polluting the DB
+         and feeding back through /api/auth/me as a permanent Pro
+         status until a fresh known-good gen overwrote it.
+    """
     flow_client._paygate_tier = None
 
     with patch("flowboard.worker.processor.get_flow_sdk") as m:
@@ -83,12 +91,50 @@ async def test_gen_image_defaults_to_tier_one_when_nothing_set():
             "media_ids": ["m"],
             "media_entries": [],
         })
-        await proc._handle_gen_image({
+        result, err = await proc._handle_gen_image({
             "prompt": "x",
             "project_id": "8b62385c-4916-4abd-b01f-b28173d8eb04",
         })
-        kwargs = m.return_value.gen_image.call_args.kwargs
-        assert kwargs["paygate_tier"] == "PAYGATE_TIER_ONE"
+        assert err == "paygate_tier_unknown"
+        # SDK must NOT have been called — the worker bailed before dispatch.
+        m.return_value.gen_image.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_gen_video_fails_loud_when_no_tier_signal_anywhere():
+    """Same regression guard as above, gen_video path."""
+    flow_client._paygate_tier = None
+
+    with patch("flowboard.worker.processor.get_flow_sdk") as m:
+        m.return_value.gen_video = AsyncMock(return_value={
+            "operation_names": [],
+        })
+        result, err = await proc._handle_gen_video({
+            "prompt": "x",
+            "project_id": "8b62385c-4916-4abd-b01f-b28173d8eb04",
+            "start_media_id": "src-1",
+        })
+        assert err == "paygate_tier_unknown"
+        m.return_value.gen_video.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_edit_image_fails_loud_when_no_tier_signal_anywhere():
+    """Same regression guard, edit_image path."""
+    flow_client._paygate_tier = None
+
+    with patch("flowboard.worker.processor.get_flow_sdk") as m:
+        m.return_value.edit_image = AsyncMock(return_value={
+            "media_ids": ["m"],
+            "media_entries": [],
+        })
+        result, err = await proc._handle_edit_image({
+            "prompt": "make it pop",
+            "project_id": "8b62385c-4916-4abd-b01f-b28173d8eb04",
+            "source_media_id": "src-1",
+        })
+        assert err == "paygate_tier_unknown"
+        m.return_value.edit_image.assert_not_called()
 
 
 @pytest.mark.asyncio
