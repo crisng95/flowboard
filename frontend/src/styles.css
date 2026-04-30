@@ -3683,15 +3683,16 @@ button:disabled {
 .provider-group__cards {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+  gap: 12px;
 }
 
 .provider-card {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 12px;
+  gap: 8px;
+  padding: 14px 38px 14px 14px; /* extra right padding leaves room for the radio */
+  min-height: 88px;
   background: var(--panel-high);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -4189,17 +4190,17 @@ button:disabled {
   z-index: 900;
 }
 .ai-provider-dialog {
-  width: 460px;
-  max-width: 90vw;
+  width: 760px;
+  max-width: 92vw;
   max-height: calc(100vh - 120px);
   overflow-y: auto;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 16px;
+  padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
 .ai-provider-dialog__header {
