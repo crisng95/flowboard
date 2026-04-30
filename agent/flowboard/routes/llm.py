@@ -152,7 +152,11 @@ async def test_provider(name: str) -> dict:
         # Single-character prompt to keep cost minimal. We do NOT pass
         # max_tokens because some providers (Claude CLI) ignore it; we
         # accept the small overage as a one-shot cost.
-        await provider.run(".", timeout=15.0)
+        # Timeout sized for the slowest CLI in the catalogue: Gemini CLI
+        # takes ~15s end-to-end for a single `-p` call (subprocess spawn
+        # + auth load + model invocation). 30s gives headroom without
+        # making the user wait an eternity on a hung provider.
+        await provider.run(".", timeout=30.0)
     except LLMError as exc:
         return {"ok": False, "error": str(exc)[:200]}
     except Exception as exc:  # noqa: BLE001

@@ -1,13 +1,16 @@
-"""Tests for the Gemini provider — subprocess flow + image-flag detection.
+"""Tests for the Gemini provider.
 
-No real `gemini` binary is invoked. We patch ``asyncio.create_subprocess_exec``
-to return a fake process that simulates whatever stdout/stderr/returncode
-the test wants.
+The Gemini CLI's non-interactive surface only has ``-p, --prompt`` — no
+``--system`` and no image-attachment flag. Both are folded into the
+prompt body (system prompt as a `[System: ...]` block, attachments as
+``@<path>`` inline). These tests pin that contract.
+
+No real `gemini` binary is invoked — ``asyncio.create_subprocess_exec``
+is patched to return a fake process per test.
 """
 from __future__ import annotations
 
-from typing import Optional
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -16,8 +19,6 @@ from flowboard.services.llm.gemini import GeminiProvider
 
 
 class _FakeProc:
-    """Stand-in for ``asyncio.subprocess.Process``."""
-
     def __init__(self, *, stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0):
         self._stdout = stdout
         self._stderr = stderr
@@ -31,10 +32,6 @@ class _FakeProc:
 
 
 def _spawn_returning(*procs: _FakeProc):
-    """Build a side_effect that returns each fake process in order.
-
-    Lets a single test sequence multiple subprocess calls (e.g. probe
-    --version, then probe --help, then run -p) without re-mocking."""
     iterator = iter(procs)
 
     async def _spawn(*_args, **_kwargs):
@@ -46,14 +43,15 @@ def _spawn_returning(*procs: _FakeProc):
     return _spawn
 
 
-# ── is_available ────────────────────────────────────────────────────
+# ── is_available ───────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_is_available_true_when_version_succeeds(monkeypatch):
     p = GeminiProvider()
     monkeypatch.setattr(
         "asyncio.create_subprocess_exec",
-        _spawn_returning(_FakeProc(stdout=b"gemini 1.0.0\n", returncode=0)),
+        _spawn_returning(_FakeProc(stdout=b"gemini 0.30.0\n", returncode=0)),
     )
     assert await p.is_available() is True
 
@@ -69,8 +67,8 @@ async def test_is_available_false_when_binary_missing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_is_available_false_when_version_nonzero(monkeypatch):
-    """CLI installed but the binary returns a non-zero exit code (e.g.
-    incompatible Node version) — treat as unavailable."""
+    """CLI installed but the binary returns non-zero (e.g. incompatible
+    Node version) — treat as unavailable."""
     p = GeminiProvider()
     monkeypatch.setattr(
         "asyncio.create_subprocess_exec",
@@ -81,8 +79,7 @@ async def test_is_available_false_when_version_nonzero(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_is_available_caches_after_first_probe(monkeypatch):
-    """The probe is supposed to be cheap — we don't want to re-spawn
-    `gemini --version` on every dispatch."""
+    """Probe should be cheap — don't re-spawn `gemini --version` per dispatch."""
     p = GeminiProvider()
     spawn_mock = AsyncMock(return_value=_FakeProc(returncode=0))
     monkeypatch.setattr("asyncio.create_subprocess_exec", spawn_mock)
@@ -92,58 +89,8 @@ async def test_is_available_caches_after_first_probe(monkeypatch):
     assert spawn_mock.call_count == 1
 
 
-# ── image-flag resolution ──────────────────────────────────────────
+# ── run — prompt composition ──────────────────────────────────────────
 
-@pytest.mark.asyncio
-async def test_resolve_image_flag_picks_image_first(monkeypatch):
-    p = GeminiProvider()
-    help_text = b"Usage: gemini [options]\n  --image PATH\n  --file PATH\n"
-    monkeypatch.setattr(
-        "asyncio.create_subprocess_exec",
-        _spawn_returning(_FakeProc(stdout=help_text, returncode=0)),
-    )
-    assert await p._resolve_image_flag() == "--image"
-
-
-@pytest.mark.asyncio
-async def test_resolve_image_flag_falls_back_to_file(monkeypatch):
-    """When `--image` isn't advertised, accept `--file` as the next
-    candidate. Mirrors how older / newer gemini-cli versions might
-    rename the flag."""
-    p = GeminiProvider()
-    help_text = b"Usage:\n  -p PROMPT\n  --file PATH\n  --json\n"
-    monkeypatch.setattr(
-        "asyncio.create_subprocess_exec",
-        _spawn_returning(_FakeProc(stdout=help_text, returncode=0)),
-    )
-    assert await p._resolve_image_flag() == "--file"
-
-
-@pytest.mark.asyncio
-async def test_resolve_image_flag_returns_none_when_unknown(monkeypatch):
-    """No recognised flag → None. Caller must treat as 'this version is
-    text-only' and surface a clear vision-unsupported error rather than
-    silently dropping the attachment."""
-    p = GeminiProvider()
-    help_text = b"Usage:\n  -p PROMPT\n  --json\n"
-    monkeypatch.setattr(
-        "asyncio.create_subprocess_exec",
-        _spawn_returning(_FakeProc(stdout=help_text, returncode=0)),
-    )
-    assert await p._resolve_image_flag() is None
-
-
-@pytest.mark.asyncio
-async def test_resolve_image_flag_caches(monkeypatch):
-    p = GeminiProvider()
-    spawn_mock = AsyncMock(return_value=_FakeProc(stdout=b"--image PATH\n", returncode=0))
-    monkeypatch.setattr("asyncio.create_subprocess_exec", spawn_mock)
-    await p._resolve_image_flag()
-    await p._resolve_image_flag()
-    assert spawn_mock.call_count == 1
-
-
-# ── run ────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_run_returns_stdout_stripped(monkeypatch):
@@ -158,8 +105,8 @@ async def test_run_returns_stdout_stripped(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_passes_prompt_as_argv_token(monkeypatch):
-    """No shell — prompt with quotes/newlines must reach the CLI verbatim
-    via argv, not get mangled by a shell substitution."""
+    """No shell — prompt with quotes/newlines reaches the CLI verbatim
+    via argv, not mangled by shell substitution."""
     p = GeminiProvider()
     captured: dict = {}
 
@@ -171,13 +118,16 @@ async def test_run_passes_prompt_as_argv_token(monkeypatch):
     tricky = 'a "quoted" $VAR\nnewline'
     await p.run(tricky)
     args = captured["args"]
-    # Args = (binary, "-p", prompt). Prompt is one argv token verbatim.
+    # Args = (binary, "-p", prompt). Prompt is a single argv token.
     assert args[1] == "-p"
     assert args[2] == tricky
 
 
 @pytest.mark.asyncio
-async def test_run_includes_system_prompt(monkeypatch):
+async def test_run_prepends_system_prompt_into_body(monkeypatch):
+    """The CLI has no `--system` flag (verified against the real binary's
+    `--help`), so the system prompt is prepended into the prompt body
+    as a `[System: ...]` block separated by a blank line."""
     p = GeminiProvider()
     captured: dict = {}
 
@@ -186,52 +136,94 @@ async def test_run_includes_system_prompt(monkeypatch):
         return _FakeProc(stdout=b"ok\n", returncode=0)
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", _spawn)
-    await p.run("hi", system_prompt="be terse")
-    assert "--system" in captured["args"]
-    assert "be terse" in captured["args"]
+    await p.run("user question", system_prompt="be terse")
+    prompt = captured["args"][2]
+    # Both the system block and the user prompt land in the SAME -p arg.
+    assert "[System: be terse]" in prompt
+    assert "user question" in prompt
+    # System block precedes the user content.
+    assert prompt.index("[System:") < prompt.index("user question")
+    # NO `--system` flag should appear in the argv.
+    assert "--system" not in captured["args"]
 
 
 @pytest.mark.asyncio
-async def test_run_attaches_images_with_resolved_flag(monkeypatch, tmp_path):
-    """End-to-end attachment path: --help probe resolves the image flag,
-    then `run` repeats it per attachment with absolute paths."""
+async def test_run_does_not_pass_system_flag(monkeypatch):
+    """Regression guard — earlier versions of this provider passed
+    `--system <text>` which the real CLI rejects (it prints `--help` to
+    stderr and exits non-zero). Verify we never emit that flag."""
+    p = GeminiProvider()
+    captured: dict = {}
+
+    async def _spawn(*args, **_kwargs):
+        captured["args"] = args
+        return _FakeProc(stdout=b"ok\n", returncode=0)
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", _spawn)
+    await p.run("hi", system_prompt="anything")
+    assert "--system" not in captured["args"]
+
+
+@pytest.mark.asyncio
+async def test_run_no_system_prompt_omits_system_block(monkeypatch):
+    p = GeminiProvider()
+    captured: dict = {}
+
+    async def _spawn(*args, **_kwargs):
+        captured["args"] = args
+        return _FakeProc(stdout=b"ok\n", returncode=0)
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", _spawn)
+    await p.run("just the user prompt")
+    prompt = captured["args"][2]
+    assert "[System:" not in prompt
+    assert prompt == "just the user prompt"
+
+
+# ── run — image attachments via @path ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_inlines_attachments_as_at_paths(monkeypatch, tmp_path):
+    """Gemini CLI reads `@<path>` tokens from the prompt body and
+    forwards the file as a multimodal block. Same pattern as Claude
+    CLI — no `--image` flag exists. Verified live."""
     p = GeminiProvider()
     img1 = tmp_path / "a.jpg"; img1.write_bytes(b"fake")
     img2 = tmp_path / "b.jpg"; img2.write_bytes(b"fake")
     captured: dict = {}
 
-    procs = iter([
-        _FakeProc(stdout=b"  --image PATH\n", returncode=0),  # --help probe
-        _FakeProc(stdout=b"ok\n", returncode=0),               # actual run
-    ])
-
     async def _spawn(*args, **_kwargs):
-        proc = next(procs)
-        if "-p" in args:
-            captured["run_args"] = args
-        return proc
+        captured["args"] = args
+        return _FakeProc(stdout=b"ok\n", returncode=0)
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", _spawn)
     await p.run("describe", attachments=[str(img1), str(img2)])
-    args = captured["run_args"]
-    # Each attachment paired with the flag, paths absolute.
-    assert args.count("--image") == 2
-    assert str(img1) in args
-    assert str(img2) in args
+    prompt = captured["args"][2]
+    # Both absolute paths appear with the @ prefix
+    assert f"@{img1}" in prompt or f"@{img1.resolve()}" in prompt
+    assert f"@{img2}" in prompt or f"@{img2.resolve()}" in prompt
 
 
 @pytest.mark.asyncio
-async def test_run_raises_when_attachments_but_no_image_flag(monkeypatch, tmp_path):
+async def test_run_attachments_use_absolute_paths(monkeypatch, tmp_path):
+    """@<path> tokens must be absolute so the CLI's cwd doesn't matter."""
     p = GeminiProvider()
     img = tmp_path / "x.jpg"; img.write_bytes(b"fake")
+    captured: dict = {}
 
-    # --help advertises NO image flag → vision dispatch must fail.
-    monkeypatch.setattr(
-        "asyncio.create_subprocess_exec",
-        _spawn_returning(_FakeProc(stdout=b"  -p PROMPT\n", returncode=0)),
-    )
-    with pytest.raises(LLMError, match="image attachment flag"):
-        await p.run("describe", attachments=[str(img)])
+    async def _spawn(*args, **_kwargs):
+        captured["args"] = args
+        return _FakeProc(stdout=b"ok\n", returncode=0)
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", _spawn)
+    await p.run("describe", attachments=[str(img)])
+    prompt = captured["args"][2]
+    # The path embedded in the prompt is absolute (starts with `/`).
+    assert "@/" in prompt
+
+
+# ── run — error paths ─────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
