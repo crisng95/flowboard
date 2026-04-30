@@ -45,6 +45,21 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   // Uploads also stamp this so the timestamp reflects "when the asset
   // landed on the node" regardless of source.
   renderedAt?: string;
+  // Model used to produce the rendered media. Populated on completion
+  // of gen_image / edit_image (`imageModel`, e.g. "NANO_BANANA_PRO") or
+  // gen_video (`videoQuality`, e.g. "fast" / "lite" / "quality"). Absent
+  // on uploads (no model involved) and on nodes generated before this
+  // feature shipped — ResultViewer falls back to current settings as
+  // plain text in that case so the user knows it's an estimate.
+  imageModel?: string;
+  videoQuality?: string;
+  // Character-builder selections — persisted on dispatch so the detail
+  // panel can show "Country / Vibe / Gender" pills under METADATA. Keys
+  // (`vn`, `clean`, `female`) match the constants in
+  // `src/constants/character.ts`; viewer maps key → display label.
+  charCountry?: string;
+  charVibe?: string;
+  charGender?: string;
   error?: string;
 }
 
@@ -185,6 +200,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           variantCount: n.data["variantCount"] as number | undefined,
           aspectRatio: n.data["aspectRatio"] as string | undefined,
           aiBrief: n.data["aiBrief"] as string | undefined,
+          imageModel: n.data["imageModel"] as string | undefined,
+          videoQuality: n.data["videoQuality"] as string | undefined,
+          charCountry: n.data["charCountry"] as string | undefined,
+          charVibe: n.data["charVibe"] as string | undefined,
+          charGender: n.data["charGender"] as string | undefined,
         },
       }));
 
@@ -238,6 +258,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           variantCount: n.data["variantCount"] as number | undefined,
           aspectRatio: n.data["aspectRatio"] as string | undefined,
           aiBrief: n.data["aiBrief"] as string | undefined,
+          imageModel: n.data["imageModel"] as string | undefined,
+          videoQuality: n.data["videoQuality"] as string | undefined,
+          charCountry: n.data["charCountry"] as string | undefined,
+          charVibe: n.data["charVibe"] as string | undefined,
+          charGender: n.data["charGender"] as string | undefined,
         },
       }));
       const edges: Edge[] = detail.edges.map((e) => ({
@@ -318,6 +343,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           mediaIds: n.data["mediaIds"] as string[] | undefined,
           variantCount: n.data["variantCount"] as number | undefined,
           aiBrief: n.data["aiBrief"] as string | undefined,
+          imageModel: n.data["imageModel"] as string | undefined,
+          videoQuality: n.data["videoQuality"] as string | undefined,
+          charCountry: n.data["charCountry"] as string | undefined,
+          charVibe: n.data["charVibe"] as string | undefined,
+          charGender: n.data["charGender"] as string | undefined,
           error: n.data["error"] as string | undefined,
         },
       }));

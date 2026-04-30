@@ -718,15 +718,45 @@ button:disabled {
   background: rgba(124, 92, 255, 0.08);
 }
 
+.settings-panel__radio--locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.settings-panel__radio--locked:hover {
+  background: var(--panel);
+}
+
 .settings-panel__radio input[type="radio"] {
   margin-top: 3px;
   accent-color: var(--accent);
+}
+.settings-panel__radio input[type="radio"]:disabled {
+  cursor: not-allowed;
 }
 
 .settings-panel__radio-label {
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Shared badge pill — used by Settings panel "Ultra only" tag and
+ * by the ResultViewer metadata grid to indicate the exact model that
+ * produced a node (Banana Pro / Banana 2 / Lite / Fast / Quality). */
+.model-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #7c5cff, #b388ff);
+  color: #fff;
+  line-height: 1.4;
 }
 
 .settings-panel__radio-hint {

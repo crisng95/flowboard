@@ -252,6 +252,18 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           } else if (req.status === "done") {
             const mediaIds = req.result["media_ids"] as string[] | undefined ?? [];
             const mediaId = mediaIds[0];
+            // Stamp the model used onto the node so the detail panel can
+            // show "Banana Pro" / "Quality" etc. — read from req.params
+            // (what was dispatched). Tier-1 UI locks Lite + Quality so
+            // we trust params directly without a backend fallback round-trip.
+            const stampedImageModel =
+              req.type === "gen_image"
+                ? (req.params["image_model"] as string | undefined)
+                : undefined;
+            const stampedVideoQuality =
+              req.type === "gen_video"
+                ? (req.params["video_quality"] as string | undefined)
+                : undefined;
             useBoardStore.getState().updateNodeData(rfId, {
               status: "done",
               mediaId,
@@ -259,6 +271,8 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               aiBrief: undefined,
               aspectRatio: opts.aspectRatio,
               renderedAt: new Date().toISOString(),
+              ...(stampedImageModel ? { imageModel: stampedImageModel } : {}),
+              ...(stampedVideoQuality ? { videoQuality: stampedVideoQuality } : {}),
             });
             // Persist to backend so the node survives page reload.
             const dbId = parseInt(rfId, 10);
@@ -272,12 +286,21 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               patchNode(dbId, {
                 status: "done",
                 data: {
+                  // Persist prompt — without this, reloading the page
+                  // shows "(no prompt)" in the detail panel because the
+                  // dispatch flow only stamps prompt into the in-memory
+                  // store, never to the backend. This used to live in
+                  // the patchNode payload pre-Phase 20 and was
+                  // accidentally dropped during the "only deltas" refactor.
+                  prompt: opts.prompt,
                   mediaId,
                   mediaIds,
                   variantCount: d?.variantCount ?? mediaIds.length,
                   aiBrief: null,
                   aspectRatio: opts.aspectRatio,
                   renderedAt: new Date().toISOString(),
+                  ...(stampedImageModel ? { imageModel: stampedImageModel } : {}),
+                  ...(stampedVideoQuality ? { videoQuality: stampedVideoQuality } : {}),
                 },
               }).catch(() => {
                 // Non-fatal: the in-memory state is still correct for this session.
@@ -414,23 +437,32 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         if (req.status === "done") {
           const mediaIds = (req.result["media_ids"] as string[] | undefined) ?? [];
           const mediaId = mediaIds[0];
+          // edit_image still routes through the user's image model setting.
+          const stampedImageModel = req.params["image_model"] as string | undefined;
           useBoardStore.getState().updateNodeData(rfId, {
             status: "done",
             mediaId,
             mediaIds,
             aspectRatio: opts.aspectRatio,
             renderedAt: new Date().toISOString(),
+            ...(stampedImageModel ? { imageModel: stampedImageModel } : {}),
           });
           const dbId = parseInt(rfId, 10);
           if (!isNaN(dbId) && mediaId) {
-            // Backend merges `data` — only ship the deltas.
+            // Backend merges `data` — ship the new state including
+            // prompt so it survives reload (regression fix: pre-Phase 20
+            // the patchNode payload included prompt; the "only deltas"
+            // refactor dropped it on the assumption prompt was already
+            // persisted, but the dispatch flow never wrote it to backend).
             patchNode(dbId, {
               data: {
+                prompt: opts.prompt,
                 mediaId,
                 mediaIds,
                 variantCount: 1,
                 aspectRatio: opts.aspectRatio,
                 renderedAt: new Date().toISOString(),
+                ...(stampedImageModel ? { imageModel: stampedImageModel } : {}),
               },
             }).catch(() => {});
           }

@@ -3,6 +3,7 @@ import { useGenerationStore } from "../store/generation";
 import { useBoardStore } from "../store/board";
 import { useSettingsStore } from "../store/settings";
 import { getMediaStatus, mediaUrl, type MediaStatus } from "../api/client";
+import { countryLabel, vibeLabel } from "../constants/character";
 
 const ICON: Record<string, string> = {
   character: "◎",
@@ -10,6 +11,19 @@ const ICON: Record<string, string> = {
   video: "▶",
   prompt: "✦",
   note: "✎",
+};
+
+// Friendly labels for the metadata grid's `model` row. Keys match what
+// the dispatch code stamps onto node.data — keep in sync with
+// `ImageModelKey` (store/settings.ts) and `VideoQuality` respectively.
+const IMAGE_MODEL_LABELS: Record<string, string> = {
+  NANO_BANANA_PRO: "Banana Pro",
+  NANO_BANANA_2: "Banana 2",
+};
+const VIDEO_QUALITY_LABELS: Record<string, string> = {
+  lite: "Lite",
+  fast: "Fast",
+  quality: "Quality",
 };
 
 /** Format Flow's aspect-ratio enum to the human label shown on the node
@@ -72,18 +86,41 @@ export function ResultViewer() {
   const data = node?.data;
   const mediaIds = data?.mediaIds ?? (data?.mediaId ? [data.mediaId] : []);
 
-  // METADATA model label — image / character / visual_asset render
-  // through the user's chosen image checkpoint, video routes through
-  // the Veo quality preset. Falls back to "—" for non-renderable
-  // node types (prompt, note) so the row stays present but neutral.
-  const metadataModel =
-    data?.type === "video"
-      ? settingsVideoQuality === "lite"
-        ? "Veo 3.1 Lite"
-        : "Veo 3.1 Fast"
-      : data && ["image", "character", "visual_asset"].includes(data.type)
-        ? settingsImageModel
-        : "—";
+  // METADATA model label. Two tiers:
+  //   - `isBadge: true` — node was generated AFTER the model-stamp feature
+  //     shipped, so we know the exact model that produced it. Render as
+  //     a pill (matches the Settings "Ultra only" badge visual language).
+  //   - `isBadge: false` — old node, or unrenderable type (prompt/note),
+  //     or upload (no model). Render as plain text so the visual
+  //     difference signals "estimate vs ground truth".
+  const metadataModel: { label: string; isBadge: boolean } = (() => {
+    if (data?.type === "video") {
+      if (data.videoQuality) {
+        return {
+          label: VIDEO_QUALITY_LABELS[data.videoQuality] ?? data.videoQuality,
+          isBadge: true,
+        };
+      }
+      // Pre-feature node — fall back to the user's current preference.
+      return {
+        label: VIDEO_QUALITY_LABELS[settingsVideoQuality] ?? settingsVideoQuality,
+        isBadge: false,
+      };
+    }
+    if (data && ["image", "character", "visual_asset"].includes(data.type)) {
+      if (data.imageModel) {
+        return {
+          label: IMAGE_MODEL_LABELS[data.imageModel] ?? data.imageModel,
+          isBadge: true,
+        };
+      }
+      return {
+        label: IMAGE_MODEL_LABELS[settingsImageModel] ?? settingsImageModel,
+        isBadge: false,
+      };
+    }
+    return { label: "—", isBadge: false };
+  })();
 
   // Upstream nodes feeding this one as reference images (image/video target).
   const REF_TYPES = new Set(["character", "image", "visual_asset"]);
@@ -443,7 +480,29 @@ export function ResultViewer() {
           <span className="result-viewer__section-label">METADATA</span>
           <dl className="result-viewer__metadata-grid">
             <dt>model</dt>
-            <dd>{metadataModel}</dd>
+            <dd>
+              {metadataModel.isBadge ? (
+                <span className="model-badge">{metadataModel.label}</span>
+              ) : (
+                metadataModel.label
+              )}
+            </dd>
+            {data?.type === "character" && countryLabel(data.charCountry) && (
+              <>
+                <dt>country</dt>
+                <dd>
+                  <span className="model-badge">{countryLabel(data.charCountry)}</span>
+                </dd>
+              </>
+            )}
+            {data?.type === "character" && vibeLabel(data.charVibe) && (
+              <>
+                <dt>vibe</dt>
+                <dd>
+                  <span className="model-badge">{vibeLabel(data.charVibe)}</span>
+                </dd>
+              </>
+            )}
             <dt>aspect</dt>
             <dd>{formatAspectRatio(data?.aspectRatio)}</dd>
             <dt>time</dt>

@@ -5,97 +5,18 @@ import {
   autoPrompt as autoPromptApi,
   autoPromptBatch as autoPromptBatchApi,
   mediaUrl,
+  patchNode,
 } from "../api/client";
+import {
+  CHARACTER_GENDERS,
+  CHARACTER_COUNTRIES,
+  CHARACTER_VIBES,
+  type GenderKey,
+  type CountryKey,
+  type VibeKey,
+} from "../constants/character";
 
 const REF_SOURCE_TYPES = new Set(["character", "image", "visual_asset"]);
-
-// Character builder presets — keep the list short and opinionated. Labels
-// shown to the user; `tag` is the English noun injected into the prompt.
-const CHARACTER_GENDERS = [
-  { key: "male", label: "Nam", tag: "male" },
-  { key: "female", label: "Nữ", tag: "female" },
-] as const;
-
-const CHARACTER_COUNTRIES = [
-  { key: "vn", label: "Việt Nam", tag: "Vietnamese" },
-  { key: "jp", label: "Nhật Bản", tag: "Japanese" },
-  { key: "kr", label: "Hàn Quốc", tag: "Korean" },
-  { key: "cn", label: "Trung Quốc", tag: "Chinese" },
-  { key: "th", label: "Thái Lan", tag: "Thai" },
-  { key: "us", label: "Mỹ", tag: "American" },
-  { key: "fr", label: "Pháp", tag: "French" },
-] as const;
-
-// Vibe presets drive everything *except* framing: makeup/grooming, hair,
-// outfit, expression, lighting, backdrop, mood. Framing anchors (frontal
-// face, both eyes, no occlusion, head-and-shoulders) stay fixed below so
-// the character reference remains usable across downstream shots.
-const CHARACTER_VIBES = [
-  {
-    key: "clean",
-    label: "Clean Girl",
-    tokens: [
-      "Clean Girl makeup styling, fresh dewy skin with sheer skin-tint coverage, healthy natural radiance, peachy cream blush on the cheek apples",
-      "brushed-up laminated brows with clear brow gel finish, minimal eye makeup, glossy plump lips with lip-oil sheen",
-      "slicked-back low bun or polished sleek hair, simple modern minimalist outfit, delicate gold hoop earrings",
-      "relaxed friendly expression with a gentle subtle smile, soft natural gaze, soft natural daylight, airy bright tone, clean minimalist backdrop",
-    ],
-  },
-  {
-    key: "douyin",
-    label: "Douyin",
-    tokens: [
-      "Douyin makeup styling, porcelain-smooth flawless complexion, glossy ethereal skin with subtle pearl glow",
-      "shimmery glittery eyeshadow with light-catching pearl highlights, defined aegyo sal under-eye accent, individual cluster false lashes",
-      "blurred-edge gradient lip in soft berry or muted red tone with diffused outline, delicate styled hair with face-framing strands, refined feminine outfit",
-      "soft alluring expression with a composed sultry gaze, soft beauty lighting with subtle ethereal glow, clean pale studio backdrop, dreamy atmosphere",
-    ],
-  },
-  {
-    key: "oldmoney",
-    label: "Old Money",
-    tokens: [
-      "Old Money makeup styling, polished neutral palette in earth tones (taupe, nude, soft coral), matte refined skin finish",
-      "softly contoured eyes with warm matte brown shadow, groomed defined brows, classic red or elegant nude-pink lip",
-      "polished sleek hair, timeless tailored outfit, understated gold or pearl jewelry",
-      "composed dignified expression with a calm refined gaze, soft directional studio lighting, warm neutral backdrop, timeless heritage atmosphere",
-    ],
-  },
-  {
-    key: "coldgirl",
-    label: "Cold Girl",
-    tokens: [
-      "Cool-tone makeup styling, ash-pink, mauve and cool grey-brown palette, matte velvety skin finish",
-      "cool-toned smoky eye, ash-pink blush, soft mauve lip, subtle high-point highlight on cheekbones, brow bone and cupid's bow",
-      "sleek modern hair, edgy contemporary outfit, minimalist silver accessories",
-      "cool composed expression with a confident detached gaze, cool-toned cinematic lighting, muted soft blue-grey backdrop, modern moody atmosphere",
-    ],
-  },
-  {
-    key: "kpop",
-    label: "K-Pop",
-    tokens: [
-      "K-pop idol styling, glossy plump lips, soft sculpted contour, glittery inner-corner highlight, dewy skin",
-      "glossy hair with face-framing layers, trendy stylish outfit, delicate accessories",
-      "soft confident expression, gentle closed-lip smile",
-      "soft beauty lighting, clean studio glow, smooth pastel backdrop",
-    ],
-  },
-  {
-    key: "casual",
-    label: "Casual",
-    tokens: [
-      "minimal natural styling, fresh clear skin, soft tinted lips",
-      "relaxed natural hair, simple everyday outfit",
-      "warm friendly soft smile, gentle natural gaze",
-      "soft natural daylight, airy bright tone, clean light backdrop",
-    ],
-  },
-] as const;
-
-type GenderKey = (typeof CHARACTER_GENDERS)[number]["key"];
-type CountryKey = (typeof CHARACTER_COUNTRIES)[number]["key"];
-type VibeKey = (typeof CHARACTER_VIBES)[number]["key"];
 
 function buildCharacterPrompt(
   gender: GenderKey | null,
@@ -402,6 +323,23 @@ export function GenerationDialog() {
     if (!rfId) return;
     if (isCharacter) {
       const built = buildCharacterPrompt(charGender, charCountry, charVibe, charExtras);
+      // Stamp the picker selections directly onto the node so the detail
+      // panel can show "Country: Nhật Bản · Vibe: Douyin" later. These
+      // choices don't round-trip through the backend params (they're
+      // baked into the prompt text), so we persist them here at dispatch
+      // time. patchNode merges, so this fires alongside the generation
+      // store's own status patches without colliding.
+      const charStamp: Record<string, unknown> = {};
+      if (charCountry) charStamp.charCountry = charCountry;
+      if (charVibe) charStamp.charVibe = charVibe;
+      if (charGender) charStamp.charGender = charGender;
+      if (Object.keys(charStamp).length > 0) {
+        useBoardStore.getState().updateNodeData(rfId, charStamp);
+        const dbId = parseInt(rfId, 10);
+        if (!isNaN(dbId)) {
+          patchNode(dbId, { data: charStamp }).catch(() => {});
+        }
+      }
       dispatchGeneration(rfId, {
         prompt: built,
         aspectRatio,
