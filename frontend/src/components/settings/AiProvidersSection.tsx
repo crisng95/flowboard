@@ -35,7 +35,9 @@ import { ProviderSetupModal } from "./ProviderSetupModal";
  */
 
 const REFRESH_INTERVAL_MS = 30_000;
-const SHOWN_PROVIDERS: LLMProviderName[] = ["claude", "gemini", "openai"];
+// Order matters — this is the left-to-right card order in the dialog.
+// Gemini first (Google's most popular CLI), Claude middle, OpenAI Codex last.
+const SHOWN_PROVIDERS: LLMProviderName[] = ["gemini", "claude", "openai"];
 const FEATURES: LLMFeature[] = ["auto_prompt", "vision", "planner"];
 const FEATURE_LABEL: Record<LLMFeature, string> = {
   auto_prompt: "Auto-Prompt",
