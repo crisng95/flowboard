@@ -4543,10 +4543,32 @@ button:disabled {
 }
 .activity-row__icon {
   flex-shrink: 0;
-  width: 24px;
-  font-size: 16px;
-  text-align: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-high);
+  color: var(--muted);
   margin-top: 1px;
+}
+.activity-row:hover .activity-row__icon {
+  background: rgba(124, 92, 255, 0.10);
+}
+/* Per-group tints — subtle, just enough that the user can scan the
+ * feed and tell LLM rows from gen rows from upload rows at a glance. */
+.activity-row__icon--llm {
+  color: #c5b3ff;
+  background: rgba(124, 92, 255, 0.12);
+}
+.activity-row__icon--gen {
+  color: #88e0a8;
+  background: rgba(80, 200, 120, 0.10);
+}
+.activity-row__icon--upload {
+  color: #74c8ff;
+  background: rgba(64, 175, 255, 0.10);
 }
 .activity-row__body {
   flex: 1;

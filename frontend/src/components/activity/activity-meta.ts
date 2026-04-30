@@ -1,26 +1,28 @@
-// Static maps for type → icon/label and status → color/icon. Kept in
-// one file so adding a new activity type means touching one place.
+// Static maps for type → label and status → color/icon. Kept in one
+// file so adding a new activity type means touching one place. Icons
+// (SVG) live in ActivityIcon.tsx; status icons stay as ASCII glyphs
+// since they read clean at small sizes.
 
 export const ACTIVITY_TYPE_META: Record<
   string,
-  { icon: string; label: string; group: "llm" | "gen" | "upload" }
+  { label: string; group: "llm" | "gen" | "upload" }
 > = {
-  auto_prompt:       { icon: "✨", label: "Auto-Prompt",        group: "llm" },
-  auto_prompt_batch: { icon: "✨", label: "Auto-Prompt (batch)", group: "llm" },
-  vision:            { icon: "👁",  label: "Vision",             group: "llm" },
-  planner:           { icon: "💬", label: "Planner",            group: "llm" },
-  gen_image:         { icon: "🖼",  label: "Generate image",     group: "gen" },
-  gen_video:         { icon: "🎬", label: "Generate video",     group: "gen" },
-  edit_image:        { icon: "✏",  label: "Edit image",         group: "gen" },
-  upload:            { icon: "⬆",  label: "Upload (file)",      group: "upload" },
-  upload_url:        { icon: "🔗", label: "Upload (link)",      group: "upload" },
+  auto_prompt:       { label: "Auto-Prompt",         group: "llm" },
+  auto_prompt_batch: { label: "Auto-Prompt (batch)", group: "llm" },
+  vision:            { label: "Vision",              group: "llm" },
+  planner:           { label: "Planner",             group: "llm" },
+  gen_image:         { label: "Generate image",      group: "gen" },
+  gen_video:         { label: "Generate video",      group: "gen" },
+  edit_image:        { label: "Edit image",          group: "gen" },
+  upload:            { label: "Upload (file)",       group: "upload" },
+  upload_url:        { label: "Upload (link)",       group: "upload" },
 };
 
 // Fallback for unknown types — keeps the UI rendering forward-compat
 // when the backend ships a new type before the frontend catches up.
 export function metaFor(type: string) {
   return (
-    ACTIVITY_TYPE_META[type] ?? { icon: "•", label: type, group: "llm" as const }
+    ACTIVITY_TYPE_META[type] ?? { label: type, group: "llm" as const }
   );
 }
 

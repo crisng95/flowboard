@@ -1,4 +1,5 @@
 import type { ActivityListItem } from "../../api/client";
+import { ActivityTypeIcon } from "./ActivityIcon";
 import { formatDuration, metaFor, relativeTime, statusMeta } from "./activity-meta";
 
 interface ActivityRowProps {
@@ -19,8 +20,11 @@ export function ActivityRow({ item, onClick }: ActivityRowProps) {
       onClick={onClick}
       title={`Started ${item.created_at}`}
     >
-      <span className="activity-row__icon" aria-hidden="true">
-        {meta.icon}
+      <span
+        className={`activity-row__icon activity-row__icon--${meta.group}`}
+        aria-hidden="true"
+      >
+        <ActivityTypeIcon type={item.type} size={14} />
       </span>
       <div className="activity-row__body">
         <div className="activity-row__title">
