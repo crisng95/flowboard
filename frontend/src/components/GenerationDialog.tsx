@@ -321,6 +321,16 @@ export function GenerationDialog() {
 
   async function handleSubmit() {
     if (!rfId) return;
+    // Defense in depth — block submit if the LLM layer is still composing
+    // for this node from a prior dialog session. The Generate button is
+    // already `disabled` at this point, but the user could still trigger
+    // ⌘↵ via keyboard.
+    if (
+      node?.data.autoPromptStatus === "pending"
+      || node?.data.aiBriefStatus === "pending"
+    ) {
+      return;
+    }
     if (isCharacter) {
       const built = buildCharacterPrompt(charGender, charCountry, charVibe, charExtras);
       // Stamp the picker selections directly onto the node so the detail
@@ -429,13 +439,23 @@ export function GenerationDialog() {
     closeGenerationDialog();
   }
 
+  // The dialog's local `autoBuilding` flag covers the in-flight window
+  // when THIS dialog instance is composing. But the dialog can be closed
+  // + reopened mid-flight, leaving the local flag fresh while the node-
+  // level `autoPromptStatus` / `aiBriefStatus` is still pending from the
+  // first run. Treat both signals as "busy" so the user can't double-fire.
+  const nodeLLMBusy =
+    node?.data.autoPromptStatus === "pending"
+    || node?.data.aiBriefStatus === "pending";
+  const isWorking = autoBuilding || nodeLLMBusy;
+
   // Both image and video allow empty prompt — we'll auto-synth on submit.
   // Video needs at least one selected source variant.
   const canGenerate = isCharacter
     ? charGender !== null || charCountry !== null || charExtras.trim().length > 0
     : isVideo
-    ? selectedSourceIdx.size > 0 && !autoBuilding
-    : !autoBuilding;
+    ? selectedSourceIdx.size > 0 && !isWorking
+    : !isWorking;
 
   return (
     <div
@@ -505,10 +525,14 @@ export function GenerationDialog() {
                   ? "Bỏ trống để tự sinh motion prompt từ source image ✨"
                   : "Bỏ trống để tự generate prompt từ upstream nodes ✨"
               }
-              disabled={autoBuilding}
+              disabled={isWorking}
             />
-            {autoBuilding && (
-              <p className="gen-dialog__hint">✨ Đang dựng prompt từ upstream context…</p>
+            {isWorking && (
+              <p className="gen-dialog__hint">
+                {node?.data.aiBriefStatus === "pending"
+                  ? "✨ Đang phân tích image…"
+                  : "✨ Đang dựng prompt từ upstream context…"}
+              </p>
             )}
           </div>
         )}
@@ -781,8 +805,13 @@ export function GenerationDialog() {
             type="button"
             onClick={handleSubmit}
             disabled={!canGenerate}
+            title={
+              nodeLLMBusy && !autoBuilding
+                ? "Backend is still composing — try again in a moment"
+                : undefined
+            }
           >
-            {autoBuilding ? "Building…" : "Generate ⌘↵"}
+            {isWorking ? "Building…" : "Generate ⌘↵"}
           </button>
         </div>
       </div>
