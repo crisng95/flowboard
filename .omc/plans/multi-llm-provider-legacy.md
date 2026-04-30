@@ -17,17 +17,17 @@
 >
 > | Metric | This (5-vendor) | 9Router |
 > |---|---|---|
-> | Effort | ~6.5 days | ~4 days |
+> | Effort | ~7 days | ~4 days |
 > | Provider classes to write | 5 | 2 |
 > | Models reachable | 5 | 100+ |
-> | API keys Flowboard manages | 3 (OpenAI / Grok / DeepSeek; Claude + Gemini use CLI auth) | 1 |
-> | CLI subscription benefit (no key) | Claude + Gemini | Claude direct, plus 9Router routes Claude Code OAuth, Codex OAuth, Cursor OAuth, GitHub Copilot OAuth, Kiro Free, OpenCode Free, Vertex Free |
+> | API keys Flowboard might manage | 3 max (OpenAI fallback / Grok / DeepSeek; Claude + Gemini + OpenAI CLI auth use OAuth) | 1 |
+> | CLI subscription benefit (no key) | **Claude + Gemini + OpenAI (Codex CLI)** | Claude direct, plus 9Router routes Claude Code OAuth, Codex OAuth, Cursor OAuth, GitHub Copilot OAuth, Kiro Free, OpenCode Free, Vertex Free |
 > | External dependency | None (uses each vendor's own CLI/API) | `9router` npm package |
 > | Token-saving (RTK 20-40%) | No | Yes |
 > | Built-in fallback chain | No | Yes (combos) |
 > | Cheapest text option | DeepSeek-chat ($0.14/M in) | DeepSeek-chat via 9Router (same vendor, +0% markup) |
 >
-> Last updated: 2026-04-30 (added DeepSeek as 5th provider; original draft commit `c7c1647` had 4).
+> Last updated: 2026-04-30 (added Codex CLI as Tier 1 for OpenAI; DeepSeek as 5th provider; original draft commit `c7c1647` had 4).
 
 ---
 
@@ -49,7 +49,8 @@ Replace the single Claude-CLI dependency with a swappable provider layer so user
 |---|---|---|
 | Provider granularity | **Per-feature** (Auto-Prompt / Vision / Planner each pick) | Vision much cheaper on Gemini; planner JSON extraction more reliable on Claude. One global setting forces a bad compromise. |
 | Auth model — Claude / Gemini | **CLI auth** (existing `claude` + new `gemini` CLI subscription) | Matches Flowboard's "no API key, use your existing subscription" philosophy. Both vendors ship official CLIs (Anthropic Claude CLI, Google `gemini-cli` via npm). |
-| Auth model — OpenAI / Grok / DeepSeek | **API key entry in UI** | None of these vendors have a stable end-user CLI with auth flow. Direct REST API + user-supplied key. DeepSeek's API is OpenAI-compatible (`https://api.deepseek.com/v1`), so the same `httpx` client shape works. |
+| Auth model — OpenAI | **Tier 1: Codex CLI (OAuth with ChatGPT subscription) — Tier 2: API key fallback** | OpenAI ships `@openai/codex` CLI with OAuth auth against ChatGPT Plus/Pro accounts. Same "use your existing subscription" benefit as Claude CLI. CLI mode is preferred when `codex` binary is detected + authenticated; API key mode is the documented fallback for users without a ChatGPT subscription (or when Codex CLI vision support proves inadequate — see risks). The `OpenAIProvider` class probes at init and selects the mode automatically. |
+| Auth model — Grok / DeepSeek | **API key entry in UI** | Neither vendor has a stable end-user CLI with OAuth flow as of plan date. Direct REST API + user-supplied key. DeepSeek's API is OpenAI-compatible (`https://api.deepseek.com/v1`), so the same `httpx` client shape works. |
 | DeepSeek vision | **Not supported — `supports_vision = False`** | DeepSeek's public API (`deepseek-chat` / `deepseek-reasoner`) is text-only as of 2026-04. Their vision models (`deepseek-vl2` family) aren't on the same endpoint. Picking DeepSeek as the Vision provider must be blocked at backend boundary + disabled in the UI dropdown. This is the first time the vision-capability check actually triggers — the other 4 providers all have vision. |
 | DeepSeek model selection | Default `deepseek-chat` for Auto-Prompt; `deepseek-reasoner` (R1) for Planner | Reasoner model is heavier but excels at structured-output / JSON-extraction tasks (the Planner flow). Auto-Prompt uses the cheaper / faster chat model. |
 | Secret storage | **Plain JSON at `~/.flowboard/secrets.json` with file mode 600** | Single-user local app, OS-level file permissions are sufficient. Encryption adds key-management surface area without real benefit. Gitignored by virtue of being outside the repo. |
@@ -181,8 +182,9 @@ def set_feature_provider(feature: str, provider: str) -> None: ...
 |---|---|---|---|
 | Claude | ✓ | CLI subprocess | Pass `@<absolute_path>` arg + `--add-dir <parent> --permission-mode bypassPermissions` (existing pattern) |
 | Gemini | ✓ | CLI subprocess | Pass `--image <absolute_path>` per attachment (verify exact flag via `gemini --help`) |
-| OpenAI | ✓ | REST API (httpx) | Read file bytes → `base64.b64encode` → embed as data URL in `messages[].content[].image_url.url`. Mime type detected via `mimetypes.guess_type(path)`. |
-| Grok | ✓ | REST API (httpx) | Same base64 data-URL pattern as OpenAI (xAI uses OpenAI-compatible message schema) |
+| OpenAI (Codex CLI mode) | ✓ if CLI supports it · ✗ otherwise | CLI subprocess (`codex exec --output-format json -p <prompt>`) | If `codex --help` advertises an image flag (e.g. `--image <path>` or `--attach <path>` — verify at provider init), use it. **If Codex CLI lacks vision support**, OpenAIProvider falls back to API mode for vision dispatches only (text features stay on Codex). This dual-mode is documented in the provider class. |
+| OpenAI (API mode — fallback) | ✓ | REST API (httpx) | Read file bytes → `base64.b64encode` → embed as data URL in `messages[].content[].image_url.url`. Mime type detected via `mimetypes.guess_type(path)`. Used when no Codex CLI installed OR Codex CLI lacks vision support. |
+| Grok | ✓ | REST API (httpx) | Same base64 data-URL pattern as OpenAI API mode (xAI uses OpenAI-compatible message schema) |
 | DeepSeek | ✗ | REST API (httpx) | Reject non-empty attachments at `Provider.run()` boundary. Registry is the primary guard, but defense in depth keeps DeepSeek from silently dropping image content if a stale code path bypasses the check. |
 
 **File-size guard** — vision-capable provider modules reject attachments >5MB before sending (each provider has a different max but 5MB is comfortably under all of them; Flow image outputs are typically <2MB so non-issue in practice). Surfaced as `LLMError("attachment too large for {provider}: {size}MB > 5MB cap")`.
@@ -195,7 +197,44 @@ def set_feature_provider(feature: str, provider: str) -> None: ...
 
 **`gemini.py`**: subprocess `gemini -p <prompt> --json` (verify exact CLI flags via `gemini --help`). Vision attachments via `--image <path>` per file. Same `--version` probe pattern as Claude. `supports_vision = True` (Gemini Flash / Pro both have vision).
 
-**`openai.py`**: httpx async client. `POST https://api.openai.com/v1/chat/completions`. Default model: `gpt-5` for text, auto-bump to `gpt-4o` (or whichever vision-capable variant is current) when `attachments` is non-empty. Vision payload shape:
+**`openai.py`** — dual-mode provider that prefers the OpenAI Codex CLI (OAuth with ChatGPT Plus/Pro subscription, matches the no-key philosophy used by Claude/Gemini) and falls back to the REST API only when needed.
+
+```python
+class OpenAIProvider:
+    name = "openai"
+    supports_vision = True   # via at least one of the modes
+
+    async def __init_async__(self):
+        # Probe Codex CLI at init: check `codex --version`, then parse
+        # `codex --help` to detect the image attachment flag. Cache the
+        # resolved auth mode for the agent's lifetime.
+        if await _probe_codex_cli():
+            self._mode = "cli"
+            self._cli_image_flag = await _detect_codex_image_flag()  # "--image" / "--attach" / None
+        elif secrets.get_api_key("openai"):
+            self._mode = "api"
+        else:
+            self._mode = None  # is_available() returns False
+
+    async def run(self, prompt, *, system_prompt=None, attachments=None, timeout=90.0, model=None):
+        if self._mode == "cli":
+            # Vision capability depends on Codex CLI version. If attachments
+            # present and CLI doesn't support image flag → fall through to API
+            # mode for THIS request (requires API key configured as backup).
+            if attachments and self._cli_image_flag is None:
+                if not secrets.get_api_key("openai"):
+                    raise LLMError(
+                        "OpenAI Codex CLI does not support vision in your version. "
+                        "Either upgrade Codex CLI or configure an OpenAI API key in Settings."
+                    )
+                return await self._run_via_api(prompt, system_prompt, attachments, timeout, model)
+            return await self._run_via_cli(prompt, system_prompt, attachments, timeout, model)
+        return await self._run_via_api(prompt, system_prompt, attachments, timeout, model)
+```
+
+**CLI mode** (preferred): subprocess `codex exec --output-format json -p <prompt> [--image <path>]`. Same `--version` probe pattern as Claude/Gemini. JSON envelope parsing reuses the structure pioneered by `claude_cli.py`.
+
+**API mode** (fallback): httpx async client. `POST https://api.openai.com/v1/chat/completions`. Default model: `gpt-5` for text, auto-bump to `gpt-4o` (or whichever vision-capable variant is current) when `attachments` is non-empty. Vision payload shape:
 ```python
 content = [{"type": "text", "text": prompt}]
 for path in attachments:
@@ -230,7 +269,8 @@ class DeepSeekProvider:
 
 Each provider's `is_available()`:
 - Claude / Gemini: probe CLI binary with `--version` (5s timeout, cached)
-- OpenAI / Grok / DeepSeek: check `secrets.get_api_key(name)` is set + ping `/v1/models` with that key (cached 60s)
+- OpenAI: returns True if EITHER Codex CLI is installed + authenticated OR an API key is configured. CLI mode probe also caches the resolved image-attachment flag (or `None` if Codex CLI is text-only).
+- Grok / DeepSeek: check `secrets.get_api_key(name)` is set + ping `/v1/models` with that key (cached 60s)
 
 ### Step 4 — Backend: HTTP routes for provider config
 
@@ -303,13 +343,21 @@ Per-feature provider selection
 ─ Vision:      [Gemini ✓ ▼]
 ─ Planner:     [Claude ✓ ▼]
 
-API Keys
-─ Claude    ✓ Connected (CLI)        [Setup help →]
-─ Gemini    ⚠ CLI not found          [Setup help →]
-─ OpenAI    [sk-•••••••••••] [Test]  [Save]
+API Keys / Auth
+─ Claude    ✓ Connected (Claude CLI · OAuth)         [Setup help →]
+─ Gemini    ⚠ CLI not found                          [Setup help →]
+─ OpenAI    ✓ Connected (Codex CLI · ChatGPT OAuth)  [Setup help →]
+            [+ Add API key fallback for vision ▼]    ⓘ Codex CLI v0.x text-only;
+                                                        API key needed for Vision feature
 ─ Grok      [_____________] [Test]   [Save]
 ─ DeepSeek  [sk-•••••••••••] [Test]  [Save]   ⓘ Text only — Vision dropdown excludes
 ```
+
+OpenAI row dynamic states:
+- **Codex CLI installed + supports vision**: `✓ Connected (Codex CLI · ChatGPT OAuth)` — collapsed; API key field hidden
+- **Codex CLI installed but text-only** (current likely state): `✓ Connected (Codex CLI · ChatGPT OAuth)` + an inline note offering API key as a vision fallback
+- **No Codex CLI, only API key**: `✓ Connected (API key)` with masked key field
+- **Neither**: `⚠ Setup needed` + 2-tab modal (CLI install vs API key entry)
 
 Status icons:
 - `✓ ready` — provider available + configured
@@ -362,6 +410,9 @@ Frontend: type-check only (no test runner currently).
 | Test suite shape changes break CI | Migrate tests in one commit (mechanical), verify 224/224 still pass before any provider work lands. |
 | DeepSeek-VL released to public API mid-roadmap and breaks the "text-only" assumption | Vision capability is per-provider, not hardcoded. When DeepSeek-VL becomes available on `api.deepseek.com`, flip `supports_vision = True` in `deepseek.py`, add the base64 attachment branch, and the Vision dropdown picks it up automatically (`supportsVision` flows through to UI via `/api/llm/providers`). One-line change at the provider class plus a small attachment branch — frontend untouched. |
 | DeepSeek-reasoner (R1) is much slower than chat for Planner | Document in README. Users who hit timeouts can switch Planner provider in Settings. Optional follow-up: make per-feature model name configurable instead of hardcoded chat/reasoner mapping. |
+| Codex CLI vision support unverified at plan time | Provider class probes `codex --help` at init and parses for image-attachment flag. If found, Codex CLI handles vision; if not, OpenAIProvider falls back to API mode for vision dispatches only — text features stay on Codex CLI. Settings UI surfaces this clearly so users know they need an API key as backup *only if* their Codex version is text-only. The capability is detected, not assumed. |
+| Codex CLI flag for image attachment changes between versions | Same mitigation as Gemini CLI flag drift — probe `--help` at init, parse for `--image` / `--attach` / `--file`, cache the resolved flag. If no recognised flag, treat as text-only and route vision via API mode. |
+| Users without ChatGPT subscription can't use Codex CLI mode | Document clearly in Settings UI: "Codex CLI requires a ChatGPT Plus or Pro account". API key path remains available for users without a subscription. |
 
 ## Verification Steps
 
@@ -376,7 +427,9 @@ Frontend: type-check only (no test runner currently).
 9. **Vision parity** — set Vision provider to each of Claude / Gemini / OpenAI / Grok in turn (DeepSeek excluded — not in dropdown), upload the SAME test image each time. All 4 vision-capable providers should produce a non-empty 80-200 char factual brief. Confirms the hybrid attachment pipeline works for both CLI (`@<path>`, `--image <path>`) and API (base64 data URL) transports.
 10. **DeepSeek vision rejection** — manually craft a Vision dispatch with provider=deepseek (e.g. via `curl PUT /api/llm/config` to set vision:deepseek then upload an image). Backend returns `LLMError("DeepSeek doesn't support vision; reconfigure Vision provider")` immediately, never sends a request to deepseek.com.
 11. **DeepSeek text path** — set Auto-Prompt = DeepSeek, click Generate without typing a prompt. Synth call routes through DeepSeek (`deepseek-chat`); set Planner = DeepSeek, send a chat message → routes through `deepseek-reasoner`. Both produce expected outputs in same format as Claude.
-12. Reject a 6MB test image — provider returns `LLMError("attachment too large…")` consistently across all 4 vision-capable providers.
+12. **OpenAI Codex CLI mode** — install `npm install -g @openai/codex`, authenticate via `codex login` (ChatGPT account). Without setting any API key, set Auto-Prompt = OpenAI in Settings. Click Generate → synth routes through Codex CLI subprocess (verify in agent logs: `llm: provider=openai mode=cli feature=auto_prompt`). No API call to api.openai.com observed.
+13. **OpenAI Codex CLI vision fallback** — with Codex CLI authenticated but no API key configured, set Vision = OpenAI. Upload an image. If the resolved `_cli_image_flag` is None (text-only Codex CLI), dispatch fails with `LLMError("OpenAI Codex CLI does not support vision in your version. Either upgrade Codex CLI or configure an OpenAI API key in Settings.")`. After adding API key, the same Vision dispatch succeeds via API mode.
+14. Reject a 6MB test image — provider returns `LLMError("attachment too large…")` consistently across all vision-capable providers.
 
 ## File touch list
 
@@ -385,7 +438,7 @@ Frontend: type-check only (no test runner currently).
 - `agent/flowboard/services/llm/base.py`
 - `agent/flowboard/services/llm/claude.py`
 - `agent/flowboard/services/llm/gemini.py`
-- `agent/flowboard/services/llm/openai.py`
+- `agent/flowboard/services/llm/openai.py` — dual-mode (Codex CLI subprocess + httpx API fallback, with capability probe at init)
 - `agent/flowboard/services/llm/grok.py`
 - `agent/flowboard/services/llm/deepseek.py`
 - `agent/flowboard/services/llm/registry.py`
@@ -396,6 +449,7 @@ Frontend: type-check only (no test runner currently).
 - `agent/tests/test_llm_providers.py`
 - `agent/tests/test_llm_routes.py`
 - `agent/tests/test_llm_deepseek.py` — vision-rejection path + chat/reasoner model selection
+- `agent/tests/test_llm_openai_dual_mode.py` — Codex CLI probe with various `--help` outputs, mode selection, vision fallback to API mode when CLI is text-only, error path when neither CLI nor API key present
 
 **Backend (modified):**
 - `agent/flowboard/services/claude_cli.py` — thin re-export → deprecate
@@ -434,12 +488,13 @@ Frontend: type-check only (no test runner currently).
 
 | Phase | Days |
 |---|---|
-| Backend: abstraction + 2 CLI providers (Claude, Gemini) | 1 |
-| Backend: 3 API providers (OpenAI, Grok, DeepSeek) + secrets + routes | 1.75 |
+| Backend: abstraction + 2 pure CLI providers (Claude, Gemini) | 1 |
+| Backend: OpenAI provider (Codex CLI mode + API mode dual implementation, capability probe, mode-switching logic) | 1.25 |
+| Backend: 2 API-only providers (Grok, DeepSeek) + secrets + routes | 1 |
 | Backend: migrate 3 services + update existing tests | 0.5 |
-| Backend: write new tests (incl. DeepSeek vision-rejection + model-selection) | 1.25 |
-| Frontend: API client + Settings UI + status indicators (incl. DeepSeek "Text only" tag, Vision dropdown filter) | 1.5 |
+| Backend: write new tests (incl. DeepSeek vision-rejection, OpenAI dual-mode probe + fallback, Codex CLI image-flag detection) | 1.5 |
+| Frontend: API client + Settings UI + status indicators (incl. OpenAI smart row showing CLI vs API mode + optional API-key-as-vision-fallback affordance, DeepSeek "Text only" tag, Vision dropdown filter) | 1.75 |
 | Documentation + manual smoke testing | 0.5 |
-| **Total** | **~6.5 days** |
+| **Total** | **~7 days** |
 
 Suggested release: **v1.2.0** (this is feature-complete enough to bump minor version, not patch).
