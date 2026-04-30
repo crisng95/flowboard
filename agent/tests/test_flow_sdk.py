@@ -104,6 +104,7 @@ async def test_gen_image_body_shape_includes_captcha_and_context():
         prompt="a sleeping cat",
         project_id="proj-123",
         aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE",
+        paygate_tier="PAYGATE_TIER_ONE",
     )
 
     assert len(c.api_calls) == 1
@@ -139,24 +140,27 @@ async def test_gen_image_resolves_image_model_nickname_to_flow_id():
 
     # Banana 2 → NARWHAL
     await sdk.gen_image(
-        prompt="x", project_id="p", image_model="NANO_BANANA_2",
+        prompt="x", project_id="p", paygate_tier="PAYGATE_TIER_ONE",
+        image_model="NANO_BANANA_2",
     )
     assert c.api_calls[-1]["body"]["requests"][0]["imageModelName"] == "NARWHAL"
 
     # Pro explicit → GEM_PIX_2
     await sdk.gen_image(
-        prompt="x", project_id="p", image_model="NANO_BANANA_PRO",
+        prompt="x", project_id="p", paygate_tier="PAYGATE_TIER_ONE",
+        image_model="NANO_BANANA_PRO",
     )
     assert c.api_calls[-1]["body"]["requests"][0]["imageModelName"] == "GEM_PIX_2"
 
     # Unknown key → fallback to Pro (defends against stale frontend).
     await sdk.gen_image(
-        prompt="x", project_id="p", image_model="BOGUS_MODEL",
+        prompt="x", project_id="p", paygate_tier="PAYGATE_TIER_ONE",
+        image_model="BOGUS_MODEL",
     )
     assert c.api_calls[-1]["body"]["requests"][0]["imageModelName"] == "GEM_PIX_2"
 
-    # Default (no kwarg) → Pro.
-    await sdk.gen_image(prompt="x", project_id="p")
+    # Default image_model (no kwarg) → Pro.
+    await sdk.gen_image(prompt="x", project_id="p", paygate_tier="PAYGATE_TIER_ONE")
     assert c.api_calls[-1]["body"]["requests"][0]["imageModelName"] == "GEM_PIX_2"
 
 
@@ -171,11 +175,15 @@ def test_resolve_image_model_helper_accepts_known_keys_only():
     assert resolve_image_model(None) == "GEM_PIX_2"
 
 
-def test_client_context_normalises_unknown_paygate_tier():
-    """Defense-in-depth — a stale frontend passing a garbage tier
-    must not get that string echoed into Flow's API body. The
-    chokepoint normalises to TIER_ONE with a warning, so Flow only
-    ever sees one of the two known enum values."""
+def test_client_context_rejects_invalid_paygate_tier():
+    """Defense-in-depth — a stale frontend or buggy caller passing a
+    garbage tier MUST NOT silently coerce to TIER_ONE (the pre-v1.1.5
+    behaviour, which was the silent-Pro-downgrade footgun). Now the
+    chokepoint raises ValueError so a code regression fails loud
+    instead of serving Ultra users at the Pro checkpoint.
+    """
+    import pytest as _pytest
+
     from flowboard.services.flow_sdk import _client_context
 
     # Known good values pass through unchanged.
@@ -184,10 +192,10 @@ def test_client_context_normalises_unknown_paygate_tier():
     two = _client_context("p", "PAYGATE_TIER_TWO")
     assert two["userPaygateTier"] == "PAYGATE_TIER_TWO"
 
-    # Unknown / malformed values clamp to TIER_ONE.
-    assert _client_context("p", "PAYGATE_TIER_THREE")["userPaygateTier"] == "PAYGATE_TIER_ONE"
-    assert _client_context("p", "")["userPaygateTier"] == "PAYGATE_TIER_ONE"
-    assert _client_context("p", "<script>")["userPaygateTier"] == "PAYGATE_TIER_ONE"
+    # Unknown / malformed values raise loudly (not silent coerce).
+    for bad in ("PAYGATE_TIER_THREE", "", "<script>", "PAYGATE_TIER_FREE"):
+        with _pytest.raises(ValueError, match="invalid paygate_tier"):
+            _client_context("p", bad)
 
 
 def test_resolve_video_model_routes_by_tier_quality_aspect():
@@ -284,7 +292,7 @@ async def test_gen_image_empty_media_when_flow_returns_no_media():
     c = RecordingClient()
     c.api_response = {"status": 200, "data": {"other": "shape"}}
     sdk = FlowSDK(client=c)  # type: ignore[arg-type]
-    out = await sdk.gen_image(prompt="x", project_id="p")
+    out = await sdk.gen_image(prompt="x", project_id="p", paygate_tier="PAYGATE_TIER_ONE")
     assert out["media_ids"] == []
 
 
@@ -293,7 +301,7 @@ async def test_gen_image_propagates_extension_error():
     c = RecordingClient()
     c.api_response = {"error": "CAPTCHA_FAILED: no tab"}
     sdk = FlowSDK(client=c)  # type: ignore[arg-type]
-    out = await sdk.gen_image(prompt="x", project_id="p")
+    out = await sdk.gen_image(prompt="x", project_id="p", paygate_tier="PAYGATE_TIER_ONE")
     assert out["error"] == "CAPTCHA_FAILED: no tab"
 
 
@@ -338,7 +346,7 @@ async def test_gen_image_returns_media_entries_with_urls():
     c = RecordingClient()
     c.api_response = _make_gen_image_response(["m1", "m2"], with_urls=True)
     sdk = FlowSDK(client=c)  # type: ignore[arg-type]
-    out = await sdk.gen_image(prompt="x", project_id="p")
+    out = await sdk.gen_image(prompt="x", project_id="p", paygate_tier="PAYGATE_TIER_ONE")
     assert out["media_ids"] == ["m1", "m2"]
     assert len(out["media_entries"]) == 2
     assert out["media_entries"][0]["url"].startswith("https://flow-content.google/")
@@ -364,6 +372,7 @@ async def test_gen_video_body_shape_and_captcha():
         project_id="proj-1",
         start_media_id="img-abc",
         aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE",
+        paygate_tier="PAYGATE_TIER_ONE",
     )
     assert out["operation_names"] == ["projects/p/operations/op-xyz"]
 
@@ -401,6 +410,7 @@ async def test_gen_video_batch_with_multiple_start_media_ids():
         project_id="proj-1",
         start_media_ids=["src-1", "src-2", "src-3"],
         aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE",
+        paygate_tier="PAYGATE_TIER_ONE",
     )
     assert out["operation_names"] == ["op-1", "op-2", "op-3"]
 
@@ -424,7 +434,8 @@ async def test_gen_video_falls_back_to_single_start_media_id():
     }
     sdk = FlowSDK(client=c)  # type: ignore[arg-type]
     out = await sdk.gen_video(
-        prompt="x", project_id="p", start_media_id="solo-id"
+        prompt="x", project_id="p", start_media_id="solo-id",
+        paygate_tier="PAYGATE_TIER_ONE",
     )
     assert out["operation_names"] == ["op-only"]
     items = c.api_calls[0]["body"]["requests"]
@@ -436,7 +447,7 @@ async def test_gen_video_falls_back_to_single_start_media_id():
 async def test_gen_video_returns_error_when_no_source_provided():
     c = RecordingClient()
     sdk = FlowSDK(client=c)  # type: ignore[arg-type]
-    out = await sdk.gen_video(prompt="x", project_id="p")
+    out = await sdk.gen_video(prompt="x", project_id="p", paygate_tier="PAYGATE_TIER_ONE")
     assert out.get("error") == "missing_start_media_id"
 
 
@@ -449,6 +460,7 @@ async def test_gen_video_rejects_unknown_tier_aspect_combo():
         project_id="p",
         start_media_id="m",
         aspect_ratio="VIDEO_ASPECT_RATIO_WEIRD",
+        paygate_tier="PAYGATE_TIER_ONE",
     )
     assert out["error"].startswith("no_video_model_for_tier")
     # No HTTP call attempted.
@@ -461,7 +473,8 @@ async def test_gen_video_returns_error_on_no_operations():
     c.api_response = {"status": 200, "data": {"operations": []}}
     sdk = FlowSDK(client=c)  # type: ignore[arg-type]
     out = await sdk.gen_video(
-        prompt="x", project_id="p", start_media_id="m"
+        prompt="x", project_id="p", start_media_id="m",
+        paygate_tier="PAYGATE_TIER_ONE",
     )
     assert out["error"] == "no_operations_in_response"
 
@@ -679,7 +692,8 @@ async def test_gen_image_propagates_prominent_people_filter():
     }
     sdk = FlowSDK(client)
     out = await sdk.gen_image(
-        prompt="x", project_id="abcd1234", aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE"
+        prompt="x", project_id="abcd1234", aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE",
+        paygate_tier="PAYGATE_TIER_ONE",
     )
     assert "error" in out
     assert "PUBLIC_ERROR_PROMINENT_PEOPLE_FILTER_FAILED" in out["error"]

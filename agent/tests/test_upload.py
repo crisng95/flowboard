@@ -403,7 +403,10 @@ def test_gen_image_variant_count_replicates_request_items():
     import asyncio
 
     asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
-        sdk.gen_image(prompt="p", project_id="abcd1234", variant_count=3)
+        sdk.gen_image(
+            prompt="p", project_id="abcd1234", variant_count=3,
+            paygate_tier="PAYGATE_TIER_ONE",
+        )
     )
     items = captured_body["body"]["requests"]
     assert len(items) == 3
@@ -425,7 +428,10 @@ def test_gen_image_variant_count_clamps_to_4():
     import asyncio
 
     asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
-        sdk.gen_image(prompt="p", project_id="abcd1234", variant_count=99)
+        sdk.gen_image(
+            prompt="p", project_id="abcd1234", variant_count=99,
+            paygate_tier="PAYGATE_TIER_ONE",
+        )
     )
     assert len(captured_body["body"]["requests"]) == 4
 
@@ -491,6 +497,7 @@ def test_edit_image_uses_base_image_input_type():
             project_id="abcd1234",
             source_media_id="base-1",
             ref_media_ids=["ref-1"],
+            paygate_tier="PAYGATE_TIER_ONE",
         )
     )
     inputs = captured["body"]["requests"][0]["imageInputs"]

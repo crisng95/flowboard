@@ -198,20 +198,18 @@ _API_HEADERS = {
 }
 
 
-def _client_context(project_id: str, paygate_tier: str = "PAYGATE_TIER_ONE") -> dict:
+def _client_context(project_id: str, paygate_tier: str) -> dict:
     """Skeleton clientContext — extension fills in recaptchaContext.token.
 
-    `paygate_tier` is normalised against `_VALID_TIERS` here (the
-    chokepoint every gen entrypoint flows through), so a stale frontend
-    or buggy caller can't pass arbitrary strings into Flow's API body.
-    Unknown values fall back to TIER_ONE with a warning log instead of
-    being silently echoed.
+    `paygate_tier` is REQUIRED (no default). Pre-v1.1.5 the default was
+    `"PAYGATE_TIER_ONE"` which silently downgraded Ultra users when any
+    upstream code path forgot to pass tier. Now we raise loudly on
+    invalid / unknown values so a code regression can't quietly serve
+    Pro to an Ultra account.
     """
-    safe_tier = paygate_tier if paygate_tier in _VALID_TIERS else "PAYGATE_TIER_ONE"
-    if safe_tier != paygate_tier:
-        logger.warning(
-            "unknown paygate_tier %r; falling back to PAYGATE_TIER_ONE",
-            paygate_tier,
+    if paygate_tier not in _VALID_TIERS:
+        raise ValueError(
+            f"invalid paygate_tier {paygate_tier!r} — must be one of {sorted(_VALID_TIERS)}"
         )
     return {
         "projectId": str(project_id),
@@ -221,7 +219,7 @@ def _client_context(project_id: str, paygate_tier: str = "PAYGATE_TIER_ONE") -> 
         },
         "sessionId": f";{int(time.time() * 1000)}",
         "tool": "PINHOLE",
-        "userPaygateTier": safe_tier,
+        "userPaygateTier": paygate_tier,
     }
 
 
@@ -264,7 +262,7 @@ class FlowSDK:
         project_id: str,
         start_media_id: Optional[str] = None,
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
-        paygate_tier: str = "PAYGATE_TIER_ONE",
+        paygate_tier: Optional[str] = None,
         scene_id: Optional[str] = None,
         start_media_ids: Optional[list[str]] = None,
         video_quality: Optional[str] = None,
@@ -280,7 +278,14 @@ class FlowSDK:
 
         ``video_quality`` ("fast" / "lite") routes to a different Veo
         checkpoint. Defaults to "fast" — the existing `_s_fast` family.
+
+        ``paygate_tier`` is required. Pre-v1.1.5 it defaulted to
+        ``"PAYGATE_TIER_ONE"`` which silently downgraded Ultra users.
+        Raise loudly instead — the worker should always have a tier
+        from the live extension signal before reaching here.
         """
+        if paygate_tier is None:
+            raise ValueError("paygate_tier is required — see docs/migrations/clear-polluted-paygate-tier.sql")
         model_key = resolve_video_model(paygate_tier, aspect_ratio, video_quality)
         if not model_key:
             return {
@@ -371,7 +376,7 @@ class FlowSDK:
         prompt: str,
         project_id: str,
         aspect_ratio: str = "IMAGE_ASPECT_RATIO_LANDSCAPE",
-        paygate_tier: str = "PAYGATE_TIER_ONE",
+        paygate_tier: Optional[str] = None,
         ref_media_ids: Optional[list[str]] = None,
         variant_count: int = 1,
         character_media_ids: Optional[list[str]] = None,  # legacy alias
@@ -387,7 +392,11 @@ class FlowSDK:
         Multiple variants are produced by replicating the request item with
         distinct seeds — Flow returns one entry in ``data.media[]`` per
         request item.
+
+        ``paygate_tier`` is required. See ``gen_video`` for rationale.
         """
+        if paygate_tier is None:
+            raise ValueError("paygate_tier is required — caller must resolve before dispatch")
         n = max(1, min(int(variant_count), MAX_VARIANT_COUNT))
         ts = int(time.time() * 1000)
         ctx = _client_context(project_id, paygate_tier)
@@ -458,14 +467,18 @@ class FlowSDK:
         source_media_id: str,
         ref_media_ids: Optional[list[str]] = None,
         aspect_ratio: str = "IMAGE_ASPECT_RATIO_LANDSCAPE",
-        paygate_tier: str = "PAYGATE_TIER_ONE",
+        paygate_tier: Optional[str] = None,
         image_model: Optional[str] = None,
     ) -> dict[str, Any]:
         """Refine an existing image with an optional list of reference media.
 
         Order of ``imageInputs`` matters — flowkit puts BASE_IMAGE first so
         Flow knows which is the canonical source.
+
+        ``paygate_tier`` is required. See ``gen_video`` for rationale.
         """
+        if paygate_tier is None:
+            raise ValueError("paygate_tier is required — caller must resolve before dispatch")
         ts = int(time.time() * 1000)
         ctx = _client_context(project_id, paygate_tier)
         model_name = resolve_image_model(image_model)
