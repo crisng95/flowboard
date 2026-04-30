@@ -3690,9 +3690,8 @@ button:disabled {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px 38px 14px 14px; /* extra right padding leaves room for the radio */
-  min-height: 88px;
+  gap: 6px;
+  padding: 12px 36px 12px 12px; /* extra right padding leaves room for the radio */
   background: var(--panel-high);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -3718,8 +3717,9 @@ button:disabled {
   gap: 8px;
 }
 .provider-card__icon {
-  font-size: 18px;
+  font-size: 22px;
   flex-shrink: 0;
+  line-height: 1;
 }
 .provider-card__name-col {
   display: flex;
@@ -3771,10 +3771,10 @@ button:disabled {
 }
 .provider-card__radio {
   position: absolute;
-  top: 12px;
+  top: 14px;
   right: 12px;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   border: 2px solid var(--border);
   background: transparent;
@@ -3782,7 +3782,7 @@ button:disabled {
 .provider-card__radio--on {
   border-color: var(--accent);
   background: var(--accent);
-  box-shadow: inset 0 0 0 3px var(--panel);
+  box-shadow: inset 0 0 0 2px var(--panel);
 }
 
 /* Selection panel — appears below the cards once a card is selected.
@@ -4190,17 +4190,17 @@ button:disabled {
   z-index: 900;
 }
 .ai-provider-dialog {
-  width: 760px;
-  max-width: 92vw;
+  width: 720px;
+  max-width: min(720px, 92vw);
   max-height: calc(100vh - 120px);
   overflow-y: auto;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 20px;
+  padding: 20px 22px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
 .ai-provider-dialog__header {
