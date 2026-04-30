@@ -187,7 +187,8 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
             initial
           )}
         </div>
-        {!collapsed && (
+        {!collapsed && email && (
+          // Connected — show full identity (name + tier + email).
           <div className="account-panel__meta">
             <div className="account-panel__name-row">
               <span className="account-panel__name">{displayName}</span>
@@ -204,23 +205,27 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
                 </span>
               )}
             </div>
-            {email ? (
-              <span className="account-panel__email" title={email}>{email}</span>
-            ) : (
-              <button
-                type="button"
-                className="account-panel__scan-btn"
-                onClick={handleScan}
-                disabled={scanState === "scanning"}
-                title="Scan for an extension connection and re-fetch user info"
-              >
-                {scanState === "scanning"
-                  ? "Scanning…"
-                  : scanState === "no-extension"
-                    ? "⚠ Extension not found"
-                    : "🔍 Scan extension"}
-              </button>
-            )}
+            <span className="account-panel__email" title={email}>{email}</span>
+          </div>
+        )}
+        {!collapsed && !email && (
+          // Disconnected — skip the placeholder "Flow account" / "Connected
+          // via extension" copy entirely (clutter without info value), just
+          // surface the Scan CTA so the user has one obvious next action.
+          <div className="account-panel__meta account-panel__meta--disconnected">
+            <button
+              type="button"
+              className="account-panel__scan-btn"
+              onClick={handleScan}
+              disabled={scanState === "scanning"}
+              title="Scan for an extension connection and re-fetch user info"
+            >
+              {scanState === "scanning"
+                ? "Scanning…"
+                : scanState === "no-extension"
+                  ? "⚠ Extension not found"
+                  : "🔍 Scan extension"}
+            </button>
           </div>
         )}
         {email && !collapsed && (

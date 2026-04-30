@@ -435,6 +435,14 @@ button:disabled {
      cohesive unit instead of three stacked rows. */
 }
 
+/* Disconnected state — meta column holds only the Scan button, so
+ * center it vertically and let it shrink so the chip stays visually
+ * balanced without the "Flow account" placeholder text. */
+.account-panel__meta--disconnected {
+  justify-content: center;
+  align-items: flex-start;
+}
+
 .account-panel__name-row {
   display: flex;
   align-items: center;
