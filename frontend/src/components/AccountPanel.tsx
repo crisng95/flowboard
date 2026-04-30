@@ -43,8 +43,8 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
 
   // Poll /api/auth/me until BOTH email and paygate_tier are populated.
   // Email comes from Google's userinfo (fetched once per token rotation
-  // by the extension); tier is sniffed from outgoing Flow API request
-  // bodies and pushed via WS, which can take a few seconds longer.
+  // by the extension); tier is resolved by the agent against /v1/credits
+  // on token capture, which can take a beat longer than userinfo to land.
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -172,31 +172,38 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
   return (
     <>
       <div
-        className={`account-panel${collapsed ? " account-panel--collapsed" : ""}`}
+        className={`account-panel${collapsed ? " account-panel--collapsed" : ""}${
+          !email ? " account-panel--disconnected" : ""
+        }`}
         role="region"
         aria-label="Account"
       >
-        <div
-          className={`account-panel__avatar${picture ? " account-panel__avatar--photo" : ""}`}
-          title={collapsed ? `${displayName} · ${tierLabel}` : undefined}
-          aria-hidden="true"
-        >
-          {picture ? (
-            <img
-              src={picture}
-              alt=""
-              referrerPolicy="no-referrer"
-              onError={(e) => {
-                // Google avatar URL can 403 if the user signed out —
-                // hide the broken image and let the initial fallback
-                // shine through.
-                (e.currentTarget as HTMLImageElement).style.display = "none";
-              }}
-            />
-          ) : (
-            initial
-          )}
-        </div>
+        {/* Avatar + cog only render when an extension session is live —
+            without an email there's no profile to show and the settings
+            panel has no actionable controls (logout disabled). */}
+        {email && (
+          <div
+            className={`account-panel__avatar${picture ? " account-panel__avatar--photo" : ""}`}
+            title={collapsed ? `${displayName} · ${tierLabel}` : undefined}
+            aria-hidden="true"
+          >
+            {picture ? (
+              <img
+                src={picture}
+                alt=""
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  // Google avatar URL can 403 if the user signed out —
+                  // hide the broken image and let the initial fallback
+                  // shine through.
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+              />
+            ) : (
+              initial
+            )}
+          </div>
+        )}
         {!collapsed && email && (
           // Connected — three stacked rows: name, email, status (tier
           // + credits). Tier badge moved out of the name row so the
@@ -236,33 +243,53 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
         )}
         {!collapsed && !email && (
           // Disconnected — skip the placeholder "Flow account" / "Connected
-          // via extension" copy entirely (clutter without info value), just
-          // surface the Scan CTA so the user has one obvious next action.
+          // via extension" copy entirely. When the scan probe says no
+          // extension is reachable, swap the bare button for a short
+          // recovery hint so the user knows the concrete next steps
+          // (refresh the Flow tab, reload the extension) instead of
+          // bouncing off a generic "not found" warning.
           <div className="account-panel__meta account-panel__meta--disconnected">
-            <button
-              type="button"
-              className="account-panel__scan-btn"
-              onClick={handleScan}
-              disabled={scanState === "scanning"}
-              title="Scan for an extension connection and re-fetch user info"
-            >
-              {scanState === "scanning"
-                ? "Scanning…"
-                : scanState === "no-extension"
-                  ? "⚠ Extension not found"
-                  : "🔍 Scan extension"}
-            </button>
+            {scanState === "no-extension" ? (
+              <div className="account-panel__scan-hint" role="alert">
+                <span className="account-panel__scan-hint-title">
+                  ⚠ Extension not detected
+                </span>
+                <span className="account-panel__scan-hint-text">
+                  Refresh the Flow tab, then reload the Flowboard extension.
+                </span>
+                <button
+                  type="button"
+                  className="account-panel__scan-btn"
+                  onClick={handleScan}
+                  title="Scan again for an extension connection"
+                >
+                  Try again
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="account-panel__scan-btn"
+                onClick={handleScan}
+                disabled={scanState === "scanning"}
+                title="Scan for an extension connection and re-fetch user info"
+              >
+                {scanState === "scanning" ? "Scanning…" : "🔍 Scan extension"}
+              </button>
+            )}
           </div>
         )}
-        <button
-          type="button"
-          className="account-panel__cog"
-          onClick={() => setOpen((v) => !v)}
-          aria-label="Open settings"
-          title="Settings"
-        >
-          ⚙
-        </button>
+        {email && (
+          <button
+            type="button"
+            className="account-panel__cog"
+            onClick={() => setOpen((v) => !v)}
+            aria-label="Open settings"
+            title="Settings"
+          >
+            ⚙
+          </button>
+        )}
       </div>
       {!collapsed && (
         <div className="account-panel__version-row">

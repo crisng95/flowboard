@@ -466,12 +466,53 @@ button:disabled {
   font-variant-numeric: tabular-nums;
 }
 
-/* Disconnected state — meta column holds only the Scan button, so
- * center it vertically and let it shrink so the chip stays visually
- * balanced without the "Flow account" placeholder text. */
+/* Disconnected state — meta column holds only the Scan button (or
+ * recovery hint after a failed probe), so center it vertically and
+ * let it shrink so the chip stays visually balanced without the
+ * "Flow account" placeholder text. */
 .account-panel__meta--disconnected {
   justify-content: center;
   align-items: flex-start;
+}
+
+/* When the chip is in the disconnected state we also drop the avatar
+ * and cog buttons (see AccountPanel.tsx), so the meta column is the
+ * only child. Stretch it across the chip and pull the padding tighter
+ * so the bare Scan button doesn't sit lonely in a wide bar. */
+.account-panel--disconnected {
+  padding: 8px 10px;
+}
+.account-panel--disconnected .account-panel__meta--disconnected {
+  flex: 1;
+  align-items: stretch;
+}
+
+/* Recovery hint shown after a Scan probe finds no extension. Stacks a
+ * short title + actionable instruction + retry button so the user has
+ * a concrete next step instead of a dead "Not found" warning. */
+.account-panel__scan-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: rgba(255, 170, 0, 0.08);
+  border: 1px solid rgba(255, 170, 0, 0.35);
+  border-radius: 8px;
+}
+.account-panel__scan-hint-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #ffc266;
+  line-height: 1.2;
+}
+.account-panel__scan-hint-text {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+.account-panel__scan-hint .account-panel__scan-btn {
+  margin-top: 2px;
+  align-self: flex-start;
 }
 
 .account-panel__name {
