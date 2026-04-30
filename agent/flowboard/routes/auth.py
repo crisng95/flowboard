@@ -51,6 +51,11 @@ def get_me() -> dict:
         "picture": info.get("picture"),
         "verified_email": info.get("verified_email"),
         "paygate_tier": flow_client.paygate_tier,
+        # Resolved by `flow_client.fetch_paygate_tier()` against
+        # /v1/credits — same fetch that gives us the authoritative
+        # tier. Both null until the token-captured trigger fires.
+        "sku": flow_client.sku,
+        "credits": flow_client.credits,
     }
 
 
@@ -103,9 +108,17 @@ async def scan_extension() -> dict:
     nudged = False
     if flow_client.connected and flow_client.user_info is None:
         nudged = await flow_client.notify({"type": "please_resend_userinfo"})
+    # If tier is still null but we have a token, do an authoritative
+    # /v1/credits fetch right now. Synchronous (not fire-and-forget)
+    # so the response reflects the post-fetch state — UI gets a single
+    # round-trip instead of having to re-poll /me.
+    tier_fetched = False
+    if flow_client.paygate_tier is None:
+        tier_fetched = await flow_client.fetch_paygate_tier()
     return {
         "extension_connected": flow_client.connected,
         "has_user_info": flow_client.user_info is not None,
         "has_paygate_tier": flow_client.paygate_tier is not None,
         "userinfo_nudged": nudged,
+        "tier_fetched": tier_fetched,
     }

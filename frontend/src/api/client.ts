@@ -332,10 +332,17 @@ export interface AuthMe {
   name: string | null;
   picture: string | null;
   verified_email: boolean | null;
-  // Paygate tier sniffed from outgoing Flow API request bodies by the
-  // extension and pushed to the agent in real time. Null until the
-  // extension sees a request that carries `clientContext.userPaygateTier`.
+  // Paygate tier — primary source is the agent's own /v1/credits fetch
+  // triggered when the extension pushes a Bearer token. Falls back to
+  // the legacy passive sniff (extension reading userPaygateTier out of
+  // outgoing Flow request bodies) if the agent fetch fails.
   paygate_tier: "PAYGATE_TIER_ONE" | "PAYGATE_TIER_TWO" | null;
+  // Subscription SKU from /v1/credits — e.g. "WS_ULTRA" / "WS_PRO".
+  // Available alongside paygate_tier; null until the credits fetch lands.
+  sku: string | null;
+  // Subscription credits remaining — bonus info from /v1/credits.
+  // Frontend can display under the tier badge if desired.
+  credits: number | null;
 }
 
 export function getAuthMe() {
@@ -365,6 +372,10 @@ export interface AuthScanResult {
   // (i.e. WS open but cache empty). Backend sets this only in that
   // narrow case; otherwise false.
   userinfo_nudged: boolean;
+  // True when the agent successfully resolved tier from /v1/credits
+  // during this scan call. False if the call failed (token expired,
+  // network error, etc.) or if tier was already cached.
+  tier_fetched: boolean;
 }
 
 export function scanExtension() {

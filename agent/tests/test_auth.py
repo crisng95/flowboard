@@ -32,6 +32,8 @@ def test_me_returns_null_fields_when_no_data_yet(client):
         "picture": None,
         "verified_email": None,
         "paygate_tier": None,
+        "sku": None,
+        "credits": None,
     }
 
 
@@ -154,6 +156,125 @@ async def test_clear_extension_drops_cached_userinfo_and_tier():
     assert flow_client.paygate_tier is None
 
 
+@pytest.mark.asyncio
+async def test_fetch_paygate_tier_resolves_authoritatively(monkeypatch):
+    """Happy path — Bearer token cached, /v1/credits returns 200 with
+    a known tier. flow_client caches tier + sku + credits and the next
+    /api/auth/me sees them."""
+    import httpx
+    flow_client._flow_key = "ya29.fake-bearer-token"
+    flow_client._paygate_tier = None
+    flow_client._sku = None
+    flow_client._credits = None
+
+    captured: dict = {}
+
+    class _MockResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "credits": 24340,
+                "userPaygateTier": "PAYGATE_TIER_TWO",
+                "sku": "WS_ULTRA",
+                "serviceTier": "SERVICE_TIER_ADVANCED",
+                "subscriptionCredits": 24340,
+            }
+
+    class _MockClient:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, url, **kwargs):
+            captured["url"] = url
+            captured["params"] = kwargs.get("params")
+            captured["headers"] = kwargs.get("headers")
+            return _MockResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _MockClient)
+
+    ok = await flow_client.fetch_paygate_tier()
+    assert ok is True
+    assert flow_client.paygate_tier == "PAYGATE_TIER_TWO"
+    assert flow_client.sku == "WS_ULTRA"
+    assert flow_client.credits == 24340
+
+    # Verify the request shape — Flow's /v1/credits expects the public
+    # API key as a query param + Bearer auth + labs.google origin.
+    assert captured["url"] == "https://aisandbox-pa.googleapis.com/v1/credits"
+    assert captured["params"]["key"].startswith("AIza")  # public Flow key
+    assert captured["headers"]["authorization"] == "Bearer ya29.fake-bearer-token"
+    assert captured["headers"]["origin"] == "https://labs.google"
+
+
+@pytest.mark.asyncio
+async def test_fetch_paygate_tier_returns_false_without_token():
+    """No Bearer token cached → fetch is a no-op, returns False so
+    callers know the cache wasn't updated. Avoids hitting the network
+    with an empty Authorization header."""
+    flow_client._flow_key = None
+    flow_client._paygate_tier = None
+    ok = await flow_client.fetch_paygate_tier()
+    assert ok is False
+    assert flow_client.paygate_tier is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_paygate_tier_handles_expired_token(monkeypatch):
+    """HTTP 401 from /v1/credits = token expired/revoked. fetch
+    returns False, doesn't poison the cache, callers should treat as
+    'extension needs to re-capture token'."""
+    import httpx
+    flow_client._flow_key = "ya29.expired"
+    flow_client._paygate_tier = None
+
+    class _MockResponse:
+        status_code = 401
+        def json(self):
+            return {"error": "unauthenticated"}
+
+    class _MockClient:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, *args, **kwargs):
+            return _MockResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _MockClient)
+
+    ok = await flow_client.fetch_paygate_tier()
+    assert ok is False
+    assert flow_client.paygate_tier is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_paygate_tier_rejects_unknown_tier_value(monkeypatch):
+    """Defensive — Flow API contract change that returns an unknown
+    tier value (e.g. PAYGATE_TIER_THREE in the future) must NOT
+    silently set the cache to that string. Returns False, leaves
+    cache untouched."""
+    import httpx
+    flow_client._flow_key = "ya29.fake"
+    flow_client._paygate_tier = None
+
+    class _MockResponse:
+        status_code = 200
+        def json(self):
+            return {"userPaygateTier": "PAYGATE_TIER_FUTURE", "credits": 100}
+
+    class _MockClient:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, *args, **kwargs):
+            return _MockResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _MockClient)
+    ok = await flow_client.fetch_paygate_tier()
+    assert ok is False
+    assert flow_client.paygate_tier is None
+
+
 def test_logout_clears_cached_identity_and_tier(client):
     """POST /api/auth/logout drops the cached profile + tier so the
     next /me reflects the logged-out state immediately. extension_notified
@@ -208,6 +329,7 @@ def test_scan_reports_disconnected_state_when_no_extension(client):
         "has_user_info": False,
         "has_paygate_tier": False,
         "userinfo_nudged": False,
+        "tier_fetched": False,
     }
 
 

@@ -90,6 +90,8 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
         picture: null,
         verified_email: null,
         paygate_tier: null,
+        sku: null,
+        credits: null,
       });
       setStorePaygateTier({ paygateTier: null });
       setPollsWithoutTier(0);

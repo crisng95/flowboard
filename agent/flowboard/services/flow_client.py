@@ -25,7 +25,16 @@ import time
 import uuid
 from typing import Any, Optional
 
+import httpx
+
 logger = logging.getLogger(__name__)
+
+
+# Google Flow's public API key — appears verbatim in every aisandbox-pa
+# request URL Flow web emits. Not a secret; documented here so we don't
+# need to plumb it through from the extension on every call.
+_FLOW_API_KEY = "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY"
+_FLOW_CREDITS_URL = "https://aisandbox-pa.googleapis.com/v1/credits"
 
 
 class FlowClient:
@@ -40,15 +49,21 @@ class FlowClient:
 
         self._token_captured_at: Optional[float] = None
         self._flow_key_present: bool = False
+        # Cached Bearer token for server-side fetches against
+        # aisandbox-pa (e.g. /v1/credits for paygate tier resolution).
+        # In-memory only; cleared on extension disconnect. NOT logged
+        # anywhere — see fetch_paygate_tier() for the only consumer.
+        self._flow_key: Optional[str] = None
         # Profile pushed by the extension after it resolves the Bearer
         # token via Google's userinfo endpoint. Stays in-memory only —
         # if the agent restarts the extension will replay it on the
         # next WS reconnect.
         self._user_info: Optional[dict] = None
-        # Paygate tier sniffed from outgoing Flow API request bodies on
-        # the user's labs.google tab. Pushed via WS as soon as the
-        # extension sees one; replayed on reconnect.
+        # Paygate tier authoritative from /v1/credits + sku for display.
+        # Sniffer fallback (legacy passive path) writes the same field.
         self._paygate_tier: Optional[str] = None
+        self._sku: Optional[str] = None  # e.g. "WS_ULTRA" / "WS_PRO"
+        self._credits: Optional[int] = None
         self._request_count = 0
         self._success_count = 0
         self._failed_count = 0
@@ -69,9 +84,12 @@ class FlowClient:
     def clear_extension(self) -> None:
         self._ws = None
         self._flow_key_present = False
+        self._flow_key = None
         # Drop the cached identity + tier — next reconnect will replay.
         self._user_info = None
         self._paygate_tier = None
+        self._sku = None
+        self._credits = None
         for fut in self._pending.values():
             if not fut.done():
                 fut.set_exception(ConnectionError("extension_disconnected"))
@@ -85,6 +103,81 @@ class FlowClient:
     def paygate_tier(self) -> Optional[str]:
         return self._paygate_tier
 
+    @property
+    def sku(self) -> Optional[str]:
+        return self._sku
+
+    @property
+    def credits(self) -> Optional[int]:
+        return self._credits
+
+    async def fetch_paygate_tier(self) -> bool:
+        """Authoritative paygate tier resolution via the official Flow
+        /v1/credits endpoint. Replaces the passive request-body sniffer
+        as the primary path.
+
+        Triggered automatically when `handle_message` receives a
+        `token_captured` message (extension just captured a fresh
+        Bearer token), and on demand via /api/auth/scan when the
+        cache is cold but the WS is open.
+
+        Returns True on success (tier cached), False otherwise. Failure
+        modes:
+          - No Bearer token cached (extension hasn't pushed one yet)
+          - HTTP 4xx (token expired / revoked)
+          - HTTP 5xx / network (transient — caller can retry)
+          - Response missing `userPaygateTier` (Flow API contract change)
+
+        IMPORTANT: never log the Bearer token. The error path captures
+        only the HTTP status / response shape, never headers.
+        """
+        if not self._flow_key:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    _FLOW_CREDITS_URL,
+                    params={"key": _FLOW_API_KEY},
+                    headers={
+                        "authorization": f"Bearer {self._flow_key}",
+                        "origin": "https://labs.google",
+                        "referer": "https://labs.google/",
+                    },
+                )
+        except httpx.HTTPError as exc:
+            logger.warning("fetch_paygate_tier transport error: %s", exc)
+            return False
+        if resp.status_code != 200:
+            logger.warning(
+                "fetch_paygate_tier returned HTTP %s (token may be expired)",
+                resp.status_code,
+            )
+            return False
+        try:
+            data = resp.json()
+        except Exception:  # noqa: BLE001
+            logger.warning("fetch_paygate_tier: response was not JSON")
+            return False
+        tier = data.get("userPaygateTier")
+        if tier not in ("PAYGATE_TIER_ONE", "PAYGATE_TIER_TWO"):
+            logger.warning(
+                "fetch_paygate_tier: response missing userPaygateTier (got %r)",
+                tier,
+            )
+            return False
+        self._paygate_tier = tier
+        sku = data.get("sku")
+        if isinstance(sku, str):
+            self._sku = sku
+        credits_val = data.get("credits")
+        if isinstance(credits_val, int):
+            self._credits = credits_val
+        logger.info(
+            "fetch_paygate_tier resolved tier=%s sku=%s credits=%s",
+            tier, self._sku, self._credits,
+        )
+        return True
+
     # ── inbound handling ───────────────────────────────────────────────────
     async def handle_message(self, data: dict) -> None:
         t = data.get("type")
@@ -95,7 +188,16 @@ class FlowClient:
         if t == "token_captured":
             self._flow_key_present = True
             self._token_captured_at = time.time()
-            logger.info("token_captured (len=%d)", len(data.get("flowKey", "")))
+            flow_key = data.get("flowKey")
+            if isinstance(flow_key, str) and flow_key:
+                self._flow_key = flow_key
+                logger.info("token_captured (len=%d)", len(flow_key))
+                # Authoritative tier resolution — fetch /v1/credits in
+                # the background so the AccountPanel sees a real tier
+                # within an HTTP RTT instead of waiting for the user's
+                # Flow tab to emit a request the passive sniffer can
+                # see. Don't await: WS handler must stay responsive.
+                asyncio.create_task(self.fetch_paygate_tier())
             return
         if t == "user_info":
             info = data.get("userInfo")
