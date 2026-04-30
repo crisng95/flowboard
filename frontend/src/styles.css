@@ -4217,3 +4217,67 @@ button:disabled {
   line-height: 1;
 }
 .ai-provider-dialog__close:hover { color: var(--text); }
+
+/* CLI install reference footer — shown under the test checklist so
+ * users can copy the upgrade command + visit official docs without
+ * leaving the dialog. */
+.cli-reference {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cli-reference__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cli-reference__label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+.cli-reference__cmd {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-family: monospace;
+  font-size: 11px;
+  color: #c5b3ff;
+  overflow-x: auto;
+  white-space: nowrap;
+  user-select: text;
+}
+.cli-reference__copy-btn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+.cli-reference__copy-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.cli-reference__docs-link {
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: none;
+  align-self: flex-start;
+}
+.cli-reference__docs-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}

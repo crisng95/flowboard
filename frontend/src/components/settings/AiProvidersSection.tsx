@@ -39,6 +39,35 @@ const REFRESH_INTERVAL_MS = 30_000;
 // Gemini first (Google's most popular CLI), Claude middle, OpenAI Codex last.
 const SHOWN_PROVIDERS: LLMProviderName[] = ["gemini", "claude", "openai"];
 const FEATURES: LLMFeature[] = ["auto_prompt", "vision", "planner"];
+
+// CLI install reference — shown as a footer under the test checklist so
+// users know how to upgrade / reinstall the CLI without leaving the
+// dialog. Docs URL points at the official repo / quickstart for each.
+const CLI_REFERENCE: Record<
+  LLMProviderName,
+  { installCmd: string; docsUrl: string; docsLabel: string }
+> = {
+  claude: {
+    installCmd: "npm install -g @anthropic-ai/claude-code",
+    docsUrl: "https://docs.anthropic.com/en/docs/claude-code/quickstart",
+    docsLabel: "Anthropic docs",
+  },
+  gemini: {
+    installCmd: "npm install -g @google/gemini-cli",
+    docsUrl: "https://github.com/google-gemini/gemini-cli",
+    docsLabel: "Gemini CLI repo",
+  },
+  openai: {
+    installCmd: "npm install -g @openai/codex",
+    docsUrl: "https://github.com/openai/codex",
+    docsLabel: "Codex CLI repo",
+  },
+  grok: {
+    installCmd: "",
+    docsUrl: "https://docs.x.ai/api/quickstart",
+    docsLabel: "xAI API docs",
+  },
+};
 const FEATURE_LABEL: Record<LLMFeature, string> = {
   auto_prompt: "Auto-Prompt",
   vision: "Vision",
@@ -347,6 +376,8 @@ export function AiProvidersSection() {
                       : "Apply changes"}
                 </button>
               </div>
+
+              <CliReference provider={pending} />
             </>
           )}
         </div>
@@ -416,6 +447,58 @@ function FeatureTestRow({ feature, result, onTest }: FeatureTestRowProps) {
               ? "Retry"
               : "Test"}
       </button>
+    </div>
+  );
+}
+
+/**
+ * Footer shown below the test checklist with the install command + a
+ * link to the CLI's official docs. Lets the user copy the upgrade
+ * command without leaving the dialog and points them at the canonical
+ * source if they need deeper setup help.
+ */
+interface CliReferenceProps {
+  provider: LLMProviderName;
+}
+
+function CliReference({ provider }: CliReferenceProps) {
+  const ref = CLI_REFERENCE[provider];
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(ref.installCmd);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Silent — the command is selectable / readable as text fallback.
+    }
+  }
+
+  if (!ref.installCmd) return null; // Grok has no CLI; nothing to show
+
+  return (
+    <div className="cli-reference">
+      <div className="cli-reference__row">
+        <span className="cli-reference__label">Install / upgrade</span>
+        <code className="cli-reference__cmd">{ref.installCmd}</code>
+        <button
+          type="button"
+          className="cli-reference__copy-btn"
+          onClick={handleCopy}
+          aria-label="Copy install command"
+        >
+          {copied ? "✓ Copied" : "Copy"}
+        </button>
+      </div>
+      <a
+        className="cli-reference__docs-link"
+        href={ref.docsUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        Open {ref.docsLabel} ↗
+      </a>
     </div>
   );
 }
