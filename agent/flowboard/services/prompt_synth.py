@@ -1,9 +1,13 @@
 """Auto-prompt synthesizer.
 
 Given a target node, walks the immediate-upstream graph, collects
-``aiBrief`` text from each parent node, and asks Claude to compose a single
-image-generation prompt that combines them. Used when the user clicks
-Generate without typing a prompt.
+``aiBrief`` text from each parent node, and asks the configured
+Auto-Prompt provider to compose a single image-generation prompt that
+combines them. Used when the user clicks Generate without typing a
+prompt.
+
+Provider routing goes through ``run_llm("auto_prompt", ...)``. User picks
+which one in Settings → AI Providers; default is Claude.
 """
 from __future__ import annotations
 
@@ -14,7 +18,8 @@ from sqlmodel import select
 
 from flowboard.db import get_session
 from flowboard.db.models import Edge, Node
-from flowboard.services import claude_cli
+from flowboard.services.llm import run_llm
+from flowboard.services.llm.base import LLMError
 
 logger = logging.getLogger(__name__)
 
@@ -395,14 +400,14 @@ async def auto_prompt_batch(
     user_msg = _format_user_message(records, target)
 
     try:
-        text = await claude_cli.run_claude(
-            user_msg, system_prompt=system_prompt, timeout=45.0
+        text = await run_llm(
+            "auto_prompt", user_msg, system_prompt=system_prompt, timeout=45.0
         )
-    except claude_cli.ClaudeCliError as exc:
-        raise PromptSynthError(f"claude CLI failed: {exc}") from exc
+    except LLMError as exc:
+        raise PromptSynthError(f"auto-prompt provider failed: {exc}") from exc
 
     text = (text or "").strip()
-    # Strip markdown fences if Claude added them despite instructions.
+    # Strip markdown fences if the provider added them despite instructions.
     if text.startswith("```"):
         text = text.lstrip("`")
         # "json\n[...]\n```" → "[...]\n"
@@ -415,15 +420,15 @@ async def auto_prompt_batch(
         arr = json.loads(text)
     except json.JSONDecodeError as exc:
         raise PromptSynthError(
-            f"claude returned non-JSON for batch: {text[:200]!r}"
+            f"auto-prompt provider returned non-JSON for batch: {text[:200]!r}"
         ) from exc
     if not isinstance(arr, list):
-        raise PromptSynthError("claude batch response is not a JSON array")
+        raise PromptSynthError("auto-prompt batch response is not a JSON array")
     prompts = [str(p).strip() for p in arr if isinstance(p, str) and p.strip()]
     if not prompts:
-        raise PromptSynthError("claude batch returned no valid prompts")
-    # Pad / trim to requested count. If Claude returned fewer, repeat the
-    # last one — better to have N items than fail the dispatch.
+        raise PromptSynthError("auto-prompt batch returned no valid prompts")
+    # Pad / trim to requested count. If the provider returned fewer, repeat
+    # the last one — better to have N items than fail the dispatch.
     while len(prompts) < count:
         prompts.append(prompts[-1])
     prompts = prompts[:count]
@@ -431,7 +436,8 @@ async def auto_prompt_batch(
 
 
 async def auto_prompt(node_id: int, *, camera: Optional[str] = None) -> str:
-    """Compose a generation prompt by walking upstream + asking Claude.
+    """Compose a generation prompt by walking upstream + asking the
+    configured Auto-Prompt provider.
 
     Branch by target type:
     - ``image`` (or anything else default) → photorealistic composition prompt
@@ -454,17 +460,18 @@ async def auto_prompt(node_id: int, *, camera: Optional[str] = None) -> str:
     user_msg = _format_user_message(records, target)
 
     try:
-        text = await claude_cli.run_claude(
+        text = await run_llm(
+            "auto_prompt",
             user_msg,
             system_prompt=system_prompt,
             timeout=30.0,
         )
-    except claude_cli.ClaudeCliError as exc:
-        raise PromptSynthError(f"claude CLI failed: {exc}") from exc
+    except LLMError as exc:
+        raise PromptSynthError(f"auto-prompt provider failed: {exc}") from exc
 
     text = (text or "").strip().strip('"').strip("'")
     if not text:
-        raise PromptSynthError("empty response from claude")
+        raise PromptSynthError("empty response from auto-prompt provider")
     if len(text) > 500:
         text = text[:500].rstrip() + "…"
     return text

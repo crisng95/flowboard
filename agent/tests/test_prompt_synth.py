@@ -1,11 +1,18 @@
-"""Tests for prompt_synth service + /api/prompt/auto route."""
+"""Tests for prompt_synth service + /api/prompt/auto route.
+
+After the multi-LLM provider migration the service routes all dispatches
+through `run_llm("auto_prompt", ...)`. Tests patch `run_llm` at the
+import boundary in `prompt_synth` so the registry / provider stack is
+fully bypassed; coverage for routing lives in `test_llm_registry.py`.
+"""
 from __future__ import annotations
 
 import pytest
 
 from flowboard.db import get_session
 from flowboard.db.models import Edge, Node, Board
-from flowboard.services import claude_cli, prompt_synth
+from flowboard.services import prompt_synth
+from flowboard.services.llm.base import LLMError
 
 
 def _seed_board_with_chain(monkeypatch=None) -> dict:
@@ -58,16 +65,16 @@ def _seed_board_with_chain(monkeypatch=None) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_auto_prompt_calls_claude_with_upstream_briefs(client, monkeypatch):
+async def test_auto_prompt_calls_provider_with_upstream_briefs(client, monkeypatch):
     ids = _seed_board_with_chain()
     captured: dict = {}
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         captured["prompt"] = prompt
         captured["system_prompt"] = system_prompt
         return "Photoreal studio shot of a Korean woman wearing a white heart-logo t-shirt"
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
 
     out = await prompt_synth.auto_prompt(ids["target_id"])
     assert "Korean woman" in out
@@ -171,12 +178,12 @@ async def test_auto_prompt_multi_subject_detects_couple_via_image_siblings(
     ids = _seed_couple_via_image_siblings()
     captured: dict = {}
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         captured["prompt"] = prompt
         captured["system_prompt"] = system_prompt
         return f"Editorial couple shot of #{ids['char_m_short']} and #{ids['char_f_short']}"
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     out = await prompt_synth.auto_prompt(ids["target_id"])
     assert ids["char_m_short"] in out and ids["char_f_short"] in out
 
@@ -203,12 +210,12 @@ async def test_auto_prompt_single_subject_skips_multi_clause(client, monkeypatch
     ids = _seed_board_with_chain()
     captured: dict = {}
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         captured["system_prompt"] = system_prompt
         captured["prompt"] = prompt
         return "single subject prompt"
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     await prompt_synth.auto_prompt(ids["target_id"])
     sp = captured["system_prompt"] or ""
     assert "MULTI-SUBJECT MODE" not in sp
@@ -254,12 +261,12 @@ async def test_auto_prompt_multi_subject_via_two_character_upstream(
 
     captured: dict = {}
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         captured["system_prompt"] = system_prompt
         captured["prompt"] = prompt
         return "ok"
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     await prompt_synth.auto_prompt(tgt_id)
     assert "MULTI-SUBJECT MODE" in (captured["system_prompt"] or "")
     assert "DISTINCT SUBJECTS DETECTED: 2 people" in (captured["prompt"] or "")
@@ -321,13 +328,13 @@ async def test_auto_prompt_image_with_location_reference_keeps_setting(
 
     captured: dict = {}
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         captured["prompt"] = prompt
         captured["system_prompt"] = system_prompt
         return "Editorial photo of a model wearing a pink crewneck on a "\
                "sunlit jogging path in a public park"
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     await prompt_synth.auto_prompt(tgt_id)
 
     user = captured["prompt"] or ""
@@ -368,11 +375,11 @@ async def test_auto_prompt_image_role_hint_skipped_when_single_image_ref(
 
     captured: dict = {}
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         captured["prompt"] = prompt
         return "ok"
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     await prompt_synth.auto_prompt(ids["target_id"])
     # _seed_board_with_chain has 1 character + 1 visual_asset, no image
     # upstream → ROLE INFERENCE block must not appear.
@@ -429,11 +436,11 @@ async def test_auto_prompt_surfaces_prompt_nodes_as_direction(
 
     captured: dict = {}
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         captured["prompt"] = prompt
         return "Editorial portrait with Old Money mood and warm tone"
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     await prompt_synth.auto_prompt(tgt_id)
     user = captured["prompt"] or ""
 
@@ -480,12 +487,12 @@ async def test_auto_prompt_video_uses_motion_system_prompt(client, monkeypatch):
 
     captured: dict = {}
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         captured["prompt"] = prompt
         captured["system_prompt"] = system_prompt
         return "Slow camera dolly-in, gentle smile, fabric softly catching the light."
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     out = await prompt_synth.auto_prompt(vid_id)
     assert "dolly-in" in out
     assert "motion" in (captured["system_prompt"] or "").lower()
@@ -523,11 +530,11 @@ async def test_auto_prompt_video_static_camera_locks_system_prompt(client, monke
 
     captured: dict = {}
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         captured["system_prompt"] = system_prompt
         return "blink, faint smile, fabric breathing softly"
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     out = await prompt_synth.auto_prompt(vid_id, camera="static")
     assert "fabric" in out
     sp = (captured["system_prompt"] or "").lower()
@@ -576,11 +583,11 @@ async def test_auto_prompt_video_default_drops_canned_scene_vocab(client, monkey
 
     captured: dict = {}
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         captured["system_prompt"] = system_prompt
         return "out"
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     await prompt_synth.auto_prompt(vid_id)  # Dynamic
     sp = (captured["system_prompt"] or "").lower()
     # Anti-freeze + intent-first guidance still present.
@@ -624,11 +631,11 @@ async def test_auto_prompt_video_default_camera_allows_movement(client, monkeypa
 
     captured: dict = {}
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         captured["system_prompt"] = system_prompt
         return "subtle motion"
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     await prompt_synth.auto_prompt(vid_id)  # no camera arg
     sp = captured["system_prompt"] or ""
     # default variant should NOT enforce no-zoom/no-pan rule
@@ -685,12 +692,12 @@ async def test_auto_prompt_video_multi_subject_when_source_has_two_chars(
 
     captured: dict = {}
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         captured["system_prompt"] = system_prompt
         captured["prompt"] = prompt
         return "ok"
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     await prompt_synth.auto_prompt(vid_id)
     sp = captured["system_prompt"] or ""
     user = captured["prompt"] or ""
@@ -744,12 +751,12 @@ async def test_auto_prompt_video_solo_skips_multi_subject_clause(
 
     captured: dict = {}
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         captured["system_prompt"] = system_prompt
         captured["prompt"] = prompt
         return "ok"
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     await prompt_synth.auto_prompt(vid_id)
     sp = captured["system_prompt"] or ""
     assert "MULTI-SUBJECT MODE" not in sp
@@ -771,12 +778,12 @@ async def test_auto_prompt_with_no_upstream_falls_back_to_title(client, monkeypa
         s.add(n); s.commit(); s.refresh(n)
         nid = n.id
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         # Verify the prompt mentions the title even with no upstream.
         assert "red sneaker" in prompt.lower()
         return "studio photo of a red sneaker on white background"
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     out = await prompt_synth.auto_prompt(nid)
     assert "sneaker" in out
 
@@ -795,7 +802,7 @@ async def test_auto_prompt_caps_long_responses(client, monkeypatch):
     async def stub_run(*a, **k):
         return long_text
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     out = await prompt_synth.auto_prompt(ids["target_id"])
     assert len(out) <= 501
     assert out.endswith("…")
@@ -840,7 +847,7 @@ async def test_auto_prompt_batch_returns_distinct_prompts(client, monkeypatch):
     ids = _seed_board_with_chain()
     captured: dict = {}
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         captured["system_prompt"] = system_prompt
         return (
             '[\n'
@@ -851,7 +858,7 @@ async def test_auto_prompt_batch_returns_distinct_prompts(client, monkeypatch):
             ']'
         )
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     out = await prompt_synth.auto_prompt_batch(ids["target_id"], 4)
     assert isinstance(out, list)
     assert len(out) == 4
@@ -870,11 +877,11 @@ async def test_auto_prompt_batch_count_1_falls_through_to_single(client, monkeyp
     """count=1 should reuse the single-prompt path for efficiency."""
     ids = _seed_board_with_chain()
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         # Single auto_prompt path returns a plain string, not JSON
         return "single prompt result"
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     out = await prompt_synth.auto_prompt_batch(ids["target_id"], 1)
     assert out == ["single prompt result"]
 
@@ -884,10 +891,10 @@ async def test_auto_prompt_batch_strips_markdown_fences(client, monkeypatch):
     """Claude sometimes wraps JSON in ```json fences despite instructions."""
     ids = _seed_board_with_chain()
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         return '```json\n["a", "b"]\n```'
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     out = await prompt_synth.auto_prompt_batch(ids["target_id"], 2)
     assert out == ["a", "b"]
 
@@ -898,10 +905,10 @@ async def test_auto_prompt_batch_pads_short_response(client, monkeypatch):
     the last so the dispatch still has count items."""
     ids = _seed_board_with_chain()
 
-    async def stub_run(prompt, *, system_prompt=None, timeout=0):
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         return '["only-one"]'
 
-    monkeypatch.setattr(claude_cli, "run_claude", stub_run)
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     out = await prompt_synth.auto_prompt_batch(ids["target_id"], 3)
     assert out == ["only-one", "only-one", "only-one"]
 
@@ -936,7 +943,7 @@ def test_route_auto_batch_rejects_bad_count(client):
 
 def test_route_502_on_synth_failure(client, monkeypatch):
     async def stub(node_id, *, camera=None):
-        raise prompt_synth.PromptSynthError("claude CLI failed: timeout")
+        raise prompt_synth.PromptSynthError("auto-prompt provider failed: timeout")
 
     monkeypatch.setattr(prompt_synth, "auto_prompt", stub)
     r = client.post("/api/prompt/auto", json={"node_id": 1})
