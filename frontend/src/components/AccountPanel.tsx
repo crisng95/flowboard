@@ -223,9 +223,11 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
                   </span>
                 )}
                 {creditsLabel && (
-                  <span className="account-panel__credits-inline">
+                  <span
+                    className="account-panel__credits-inline"
+                    title={`${creditsLabel} credits remaining`}
+                  >
                     <span className="account-panel__credits-value">{creditsLabel}</span>
-                    {" credits"}
                   </span>
                 )}
               </div>
