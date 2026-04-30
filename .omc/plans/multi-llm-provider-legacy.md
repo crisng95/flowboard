@@ -15,31 +15,33 @@
 >
 > **Comparison vs the chosen 9Router plan:**
 >
-> | Metric | This (4-vendor) | 9Router |
+> | Metric | This (5-vendor) | 9Router |
 > |---|---|---|
-> | Effort | ~6 days | ~4 days |
-> | Provider classes to write | 4 | 2 |
-> | Models reachable | 4 | 100+ |
-> | API keys Flowboard manages | 4 | 1 |
+> | Effort | ~6.5 days | ~4 days |
+> | Provider classes to write | 5 | 2 |
+> | Models reachable | 5 | 100+ |
+> | API keys Flowboard manages | 3 (OpenAI / Grok / DeepSeek; Claude + Gemini use CLI auth) | 1 |
 > | CLI subscription benefit (no key) | Claude + Gemini | Claude direct, plus 9Router routes Claude Code OAuth, Codex OAuth, Cursor OAuth, GitHub Copilot OAuth, Kiro Free, OpenCode Free, Vertex Free |
 > | External dependency | None (uses each vendor's own CLI/API) | `9router` npm package |
 > | Token-saving (RTK 20-40%) | No | Yes |
 > | Built-in fallback chain | No | Yes (combos) |
+> | Cheapest text option | DeepSeek-chat ($0.14/M in) | DeepSeek-chat via 9Router (same vendor, +0% markup) |
 >
-> Last updated: 2026-04-30 (commit `c7c1647` — initial draft before pivot).
+> Last updated: 2026-04-30 (added DeepSeek as 5th provider; original draft commit `c7c1647` had 4).
 
 ---
 
-# Plan — Multi-LLM Provider support (Claude / Gemini / OpenAI / Grok)
+# Plan — Multi-LLM Provider support (Claude / Gemini / OpenAI / Grok / DeepSeek)
 
 ## Requirements Summary
 
 Replace the single Claude-CLI dependency with a swappable provider layer so users can pick which LLM powers each Flowboard feature. Provide:
-1. **Backend abstraction** with 4 providers (Claude, Gemini, OpenAI, Grok)
+1. **Backend abstraction** with 5 providers (Claude, Gemini, OpenAI, Grok, DeepSeek)
 2. **Per-feature provider routing** (Auto-Prompt / Vision / Planner can each use a different provider)
 3. **Settings UI** for picking providers + entering API keys + testing connections
 4. **Secret storage** that survives restart but stays local (no cloud, no PII to backend logs)
 5. **Backward-compatible** with existing `FLOWBOARD_PLANNER_BACKEND` env var; default = Claude (current behavior)
+6. **Vision-capability enforcement** — providers that don't support vision (e.g. DeepSeek text-only) cannot be set as the Vision provider; backend rejects with a clear error and the UI dropdown disables them.
 
 ## Decisions
 
@@ -47,7 +49,9 @@ Replace the single Claude-CLI dependency with a swappable provider layer so user
 |---|---|---|
 | Provider granularity | **Per-feature** (Auto-Prompt / Vision / Planner each pick) | Vision much cheaper on Gemini; planner JSON extraction more reliable on Claude. One global setting forces a bad compromise. |
 | Auth model — Claude / Gemini | **CLI auth** (existing `claude` + new `gemini` CLI subscription) | Matches Flowboard's "no API key, use your existing subscription" philosophy. Both vendors ship official CLIs (Anthropic Claude CLI, Google `gemini-cli` via npm). |
-| Auth model — OpenAI / Grok | **API key entry in UI** | Neither vendor has a stable end-user CLI with auth flow. Direct REST API + user-supplied key. |
+| Auth model — OpenAI / Grok / DeepSeek | **API key entry in UI** | None of these vendors have a stable end-user CLI with auth flow. Direct REST API + user-supplied key. DeepSeek's API is OpenAI-compatible (`https://api.deepseek.com/v1`), so the same `httpx` client shape works. |
+| DeepSeek vision | **Not supported — `supports_vision = False`** | DeepSeek's public API (`deepseek-chat` / `deepseek-reasoner`) is text-only as of 2026-04. Their vision models (`deepseek-vl2` family) aren't on the same endpoint. Picking DeepSeek as the Vision provider must be blocked at backend boundary + disabled in the UI dropdown. This is the first time the vision-capability check actually triggers — the other 4 providers all have vision. |
+| DeepSeek model selection | Default `deepseek-chat` for Auto-Prompt; `deepseek-reasoner` (R1) for Planner | Reasoner model is heavier but excels at structured-output / JSON-extraction tasks (the Planner flow). Auto-Prompt uses the cheaper / faster chat model. |
 | Secret storage | **Plain JSON at `~/.flowboard/secrets.json` with file mode 600** | Single-user local app, OS-level file permissions are sufficient. Encryption adds key-management surface area without real benefit. Gitignored by virtue of being outside the repo. |
 | API key transport | **Backend-only** — never expose keys to browser | Frontend POSTs the key to `PUT /api/llm/providers/openai` once; never reads it back. Status endpoint returns only `{configured: true}`. |
 | Per-feature config storage | **Same secrets.json** under separate top-level key (`activeProviders`) | One file, one source of truth. Hot-reloads on every dispatch (no caching pitfalls). |
@@ -59,17 +63,19 @@ Replace the single Claude-CLI dependency with a swappable provider layer so user
 
 ## Acceptance Criteria
 
-1. Settings panel has a new **AI Providers** section with three per-feature dropdowns: Auto-Prompt / Vision / Planner. Each dropdown lists Claude, Gemini, OpenAI, Grok with a status icon (`✓ ready`, `⚠ no key`, `✗ unavailable`).
+1. Settings panel has a new **AI Providers** section with three per-feature dropdowns: Auto-Prompt / Vision / Planner. Each dropdown lists Claude, Gemini, OpenAI, Grok, DeepSeek with a status icon (`✓ ready`, `⚠ no key`, `✗ unavailable`).
 2. **Claude / Gemini** rows show `✓ ready` only when their CLI is installed and authenticated. Click "Setup →" → opens a help dialog with `npm install -g …` + auth command.
-3. **OpenAI / Grok** rows show an input field for API key + a **Test** button. Test calls a tiny prompt and reports success/failure within 10s. Key is masked after save (`sk-…••••`).
+3. **OpenAI / Grok / DeepSeek** rows show an input field for API key + a **Test** button. Test calls a tiny prompt and reports success/failure within 10s. Key is masked after save (`sk-…••••`).
 4. Generating an image with **Auto-Prompt = Gemini** routes the synth call through Gemini CLI, not Claude. Verifiable by inspecting agent logs (`llm: provider=gemini feature=auto_prompt`).
 5. Uploading an image with **Vision = OpenAI** routes the describe call through OpenAI's vision endpoint. The aiBrief returned matches the same 200-char factual format as Claude.
-6. Provider config persists across agent restart — user picks Gemini, restarts agent, still on Gemini.
-7. API keys never appear in agent logs (filter at logger level), in HTTP responses (only `{configured: true}` returned), or in browser localStorage.
-8. Removing an API key (clear field + Save) sets the row back to `⚠ no key` and disables that provider in dropdowns until re-entered.
-9. If user picks a provider that's currently unavailable (CLI missing, no key) and dispatches, request fails with a clear error message naming the missing provider — NOT a silent fallback.
-10. All 30+ existing tests still pass after migration. No backend test should reach a real provider — the abstraction is mockable.
-11. New unit tests cover: provider registry routing, secret-file roundtrip, per-feature dispatch, vision-capability check.
+6. **DeepSeek is text-only** — the Vision dropdown shows DeepSeek with a "Text only" tag and the option is disabled. Backend rejects with `LLMError("DeepSeek doesn't support vision; reconfigure Vision provider")` if a stale frontend somehow dispatches a vision call routed to DeepSeek.
+7. Setting **Planner = DeepSeek** routes through `deepseek-reasoner` (R1 model). Setting **Auto-Prompt = DeepSeek** routes through `deepseek-chat` (faster / cheaper).
+8. Provider config persists across agent restart — user picks Gemini, restarts agent, still on Gemini.
+9. API keys never appear in agent logs (filter at logger level), in HTTP responses (only `{configured: true}` returned), or in browser localStorage.
+10. Removing an API key (clear field + Save) sets the row back to `⚠ no key` and disables that provider in dropdowns until re-entered.
+11. If user picks a provider that's currently unavailable (CLI missing, no key) and dispatches, request fails with a clear error message naming the missing provider — NOT a silent fallback.
+12. All 30+ existing tests still pass after migration. No backend test should reach a real provider — the abstraction is mockable.
+13. New unit tests cover: provider registry routing, secret-file roundtrip, per-feature dispatch, vision-capability check (including DeepSeek rejection path), DeepSeek model auto-selection (chat vs reasoner per feature).
 
 ## Implementation Steps
 
@@ -85,6 +91,7 @@ llm/
   gemini.py          # NEW — subprocess wrapper for `gemini` CLI
   openai.py          # NEW — httpx client → POST /v1/chat/completions
   grok.py            # NEW — httpx client → POST https://api.x.ai/v1/chat/completions
+  deepseek.py        # NEW — httpx client → POST https://api.deepseek.com/v1/chat/completions (text-only)
   registry.py        # Picks provider by feature + handles vision routing
   secrets.py         # Read/write ~/.flowboard/secrets.json with mode 600
 ```
@@ -137,7 +144,7 @@ _PATH = Path.home() / ".flowboard" / "secrets.json"
 
 # Schema:
 # {
-#   "apiKeys": {"openai": "sk-...", "grok": "xai-..."},
+#   "apiKeys": {"openai": "sk-...", "grok": "xai-...", "deepseek": "sk-..."},
 #   "activeProviders": {
 #     "auto_prompt": "claude",
 #     "vision": "gemini",
@@ -166,18 +173,19 @@ def read_active_providers() -> dict[str, str]: ...
 def set_feature_provider(feature: str, provider: str) -> None: ...
 ```
 
-### Step 3 — Backend: 4 provider implementations
+### Step 3 — Backend: 5 provider implementations
 
-**Vision attachment strategy** — caller signature is identical across all 4 providers (`attachments: list[str]` of file paths). Each provider converts internally based on its transport:
+**Vision attachment strategy** — caller signature is identical across providers (`attachments: list[str]` of file paths). Each vision-capable provider converts internally based on its transport. DeepSeek is text-only — its `run()` raises `LLMError` if attachments are non-empty, defending against any caller that bypasses the registry's capability check:
 
-| Provider | Transport | Attachment handling |
-|---|---|---|
-| Claude | CLI subprocess | Pass `@<absolute_path>` arg + `--add-dir <parent> --permission-mode bypassPermissions` (existing pattern) |
-| Gemini | CLI subprocess | Pass `--image <absolute_path>` per attachment (verify exact flag via `gemini --help`) |
-| OpenAI | REST API (httpx) | Read file bytes → `base64.b64encode` → embed as data URL in `messages[].content[].image_url.url`. Mime type detected via `mimetypes.guess_type(path)`. |
-| Grok | REST API (httpx) | Same base64 data-URL pattern as OpenAI (xAI uses OpenAI-compatible message schema) |
+| Provider | Vision | Transport | Attachment handling |
+|---|---|---|---|
+| Claude | ✓ | CLI subprocess | Pass `@<absolute_path>` arg + `--add-dir <parent> --permission-mode bypassPermissions` (existing pattern) |
+| Gemini | ✓ | CLI subprocess | Pass `--image <absolute_path>` per attachment (verify exact flag via `gemini --help`) |
+| OpenAI | ✓ | REST API (httpx) | Read file bytes → `base64.b64encode` → embed as data URL in `messages[].content[].image_url.url`. Mime type detected via `mimetypes.guess_type(path)`. |
+| Grok | ✓ | REST API (httpx) | Same base64 data-URL pattern as OpenAI (xAI uses OpenAI-compatible message schema) |
+| DeepSeek | ✗ | REST API (httpx) | Reject non-empty attachments at `Provider.run()` boundary. Registry is the primary guard, but defense in depth keeps DeepSeek from silently dropping image content if a stale code path bypasses the check. |
 
-**File-size guard** — provider modules reject attachments >5MB before sending (each provider has a different max but 5MB is comfortably under all of them; Flow image outputs are typically <2MB so non-issue in practice). Surfaced as `LLMError("attachment too large for {provider}: {size}MB > 5MB cap")`.
+**File-size guard** — vision-capable provider modules reject attachments >5MB before sending (each provider has a different max but 5MB is comfortably under all of them; Flow image outputs are typically <2MB so non-issue in practice). Surfaced as `LLMError("attachment too large for {provider}: {size}MB > 5MB cap")`.
 
 **Why hybrid not "base64 everywhere"** — pushing every provider through API + base64 would force API keys for Claude/Gemini, losing the existing-subscription benefit (matches Flowboard's local-only / no-key philosophy). The caller code stays clean either way; only the provider implementation differs.
 
@@ -199,9 +207,30 @@ JSON mode for planner: `response_format={"type":"json_object"}`. `supports_visio
 
 **`grok.py`**: httpx client. `POST https://api.x.ai/v1/chat/completions` (xAI's OpenAI-compatible endpoint). Default model: `grok-4`; auto-bump to `grok-2-vision-1212` when `attachments` is non-empty. Same base64 data-URL message shape as OpenAI. `supports_vision = True`.
 
+**`deepseek.py`**: httpx client. `POST https://api.deepseek.com/v1/chat/completions` (DeepSeek's OpenAI-compatible endpoint — same payload shape as OpenAI / Grok). Model selection by feature:
+- Auto-Prompt → `deepseek-chat` (cheaper, ~$0.14/M input)
+- Planner → `deepseek-reasoner` (R1 model — heavier but better at structured-output / JSON extraction)
+- Vision → never reached; `run()` short-circuits with `LLMError` if attachments present.
+
+JSON mode for planner: `response_format={"type":"json_object"}` (DeepSeek mirrors OpenAI's flag). `supports_vision = False`.
+
+```python
+# Sketch — deepseek.py
+class DeepSeekProvider:
+    name = "deepseek"
+    supports_vision = False
+
+    async def run(self, prompt, *, system_prompt=None, attachments=None, timeout=90.0, model=None):
+        if attachments:
+            raise LLMError("DeepSeek doesn't support vision; reconfigure Vision provider")
+        # Pick model: caller can override; otherwise default = deepseek-chat
+        chosen = model or "deepseek-chat"
+        # … standard OpenAI-shape POST to https://api.deepseek.com/v1/chat/completions
+```
+
 Each provider's `is_available()`:
 - Claude / Gemini: probe CLI binary with `--version` (5s timeout, cached)
-- OpenAI / Grok: check `secrets.get_api_key(name)` is set + ping `/v1/models` with that key (cached 60s)
+- OpenAI / Grok / DeepSeek: check `secrets.get_api_key(name)` is set + ping `/v1/models` with that key (cached 60s)
 
 ### Step 4 — Backend: HTTP routes for provider config
 
@@ -242,11 +271,11 @@ Existing `claude_cli.py` becomes a thin re-export of `llm.claude.ClaudeProvider`
 `frontend/src/api/client.ts` — add functions:
 ```ts
 export interface LLMProviderInfo {
-  name: "claude" | "gemini" | "openai" | "grok";
-  supportsVision: boolean;
+  name: "claude" | "gemini" | "openai" | "grok" | "deepseek";
+  supportsVision: boolean;   // false for deepseek
   available: boolean;        // CLI installed / key set
   configured: boolean;       // explicitly configured (key entered or CLI auth done)
-  requiresKey: boolean;      // false for claude/gemini, true for openai/grok
+  requiresKey: boolean;      // false for claude/gemini, true for openai/grok/deepseek
 }
 
 export interface LLMConfig {
@@ -275,10 +304,11 @@ Per-feature provider selection
 ─ Planner:     [Claude ✓ ▼]
 
 API Keys
-─ Claude   ✓ Connected (CLI)        [Setup help →]
-─ Gemini   ⚠ CLI not found          [Setup help →]
-─ OpenAI   [sk-•••••••••••] [Test]  [Save]
-─ Grok     [_____________] [Test]   [Save]
+─ Claude    ✓ Connected (CLI)        [Setup help →]
+─ Gemini    ⚠ CLI not found          [Setup help →]
+─ OpenAI    [sk-•••••••••••] [Test]  [Save]
+─ Grok      [_____________] [Test]   [Save]
+─ DeepSeek  [sk-•••••••••••] [Test]  [Save]   ⓘ Text only — Vision dropdown excludes
 ```
 
 Status icons:
@@ -291,6 +321,8 @@ Each row "Setup help →" opens a small inline modal with the install command (e
 Per-feature dropdowns disable providers that are not `available` and show the reason in a tooltip.
 
 ### Step 8 — Frontend: gracefully handle vision/provider mismatch
+
+The Vision dropdown filters out providers where `supportsVision === false` (DeepSeek today; could be more in the future). Those providers still appear in the Auto-Prompt and Planner dropdowns. The "AI Providers" section header notes "DeepSeek is text-only — won't appear in Vision dropdown."
 
 When user sets `Vision = Grok` and the selected Grok model is text-only (Grok-1), surface a warning inline next to the dropdown: "⚠ This provider has no vision support — image briefs will fail." (Pull `supportsVision` from the providers list.) This is a UX guardrail; the backend also enforces it at dispatch time.
 
@@ -328,6 +360,8 @@ Frontend: type-check only (no test runner currently).
 | Large image attachments timeout API providers (5MB+ base64 = 7MB+ wire) | Reject >5MB at provider boundary with a clear error. Flow's image outputs are typically <2MB so this is defensive. |
 | Gemini CLI flag for image attachment changes between versions | Detect at provider init: probe `gemini --help` and parse for `--image` vs `--input` vs whatever; cache the resolved flag. Falls back to error with install-version notice if no recognised flag found. |
 | Test suite shape changes break CI | Migrate tests in one commit (mechanical), verify 224/224 still pass before any provider work lands. |
+| DeepSeek-VL released to public API mid-roadmap and breaks the "text-only" assumption | Vision capability is per-provider, not hardcoded. When DeepSeek-VL becomes available on `api.deepseek.com`, flip `supports_vision = True` in `deepseek.py`, add the base64 attachment branch, and the Vision dropdown picks it up automatically (`supportsVision` flows through to UI via `/api/llm/providers`). One-line change at the provider class plus a small attachment branch — frontend untouched. |
+| DeepSeek-reasoner (R1) is much slower than chat for Planner | Document in README. Users who hit timeouts can switch Planner provider in Settings. Optional follow-up: make per-feature model name configurable instead of hardcoded chat/reasoner mapping. |
 
 ## Verification Steps
 
@@ -339,8 +373,10 @@ Frontend: type-check only (no test runner currently).
 6. Restart agent; settings persist.
 7. Clear OpenAI key in UI → row reverts to "needs setup", row disabled in dropdowns until re-entered.
 8. Verify `secrets.json` has mode `-rw-------` (600).
-9. **Vision parity** — set Vision provider to each of Claude / Gemini / OpenAI / Grok in turn, upload the SAME test image each time. All 4 should produce a non-empty 80-200 char factual brief. Confirms the hybrid attachment pipeline works for both CLI (`@<path>`, `--image <path>`) and API (base64 data URL) transports.
-10. Reject a 6MB test image — provider returns `LLMError("attachment too large…")` consistently across all 4 providers.
+9. **Vision parity** — set Vision provider to each of Claude / Gemini / OpenAI / Grok in turn (DeepSeek excluded — not in dropdown), upload the SAME test image each time. All 4 vision-capable providers should produce a non-empty 80-200 char factual brief. Confirms the hybrid attachment pipeline works for both CLI (`@<path>`, `--image <path>`) and API (base64 data URL) transports.
+10. **DeepSeek vision rejection** — manually craft a Vision dispatch with provider=deepseek (e.g. via `curl PUT /api/llm/config` to set vision:deepseek then upload an image). Backend returns `LLMError("DeepSeek doesn't support vision; reconfigure Vision provider")` immediately, never sends a request to deepseek.com.
+11. **DeepSeek text path** — set Auto-Prompt = DeepSeek, click Generate without typing a prompt. Synth call routes through DeepSeek (`deepseek-chat`); set Planner = DeepSeek, send a chat message → routes through `deepseek-reasoner`. Both produce expected outputs in same format as Claude.
+12. Reject a 6MB test image — provider returns `LLMError("attachment too large…")` consistently across all 4 vision-capable providers.
 
 ## File touch list
 
@@ -351,6 +387,7 @@ Frontend: type-check only (no test runner currently).
 - `agent/flowboard/services/llm/gemini.py`
 - `agent/flowboard/services/llm/openai.py`
 - `agent/flowboard/services/llm/grok.py`
+- `agent/flowboard/services/llm/deepseek.py`
 - `agent/flowboard/services/llm/registry.py`
 - `agent/flowboard/services/llm/secrets.py`
 - `agent/flowboard/routes/llm.py`
@@ -358,6 +395,7 @@ Frontend: type-check only (no test runner currently).
 - `agent/tests/test_llm_registry.py`
 - `agent/tests/test_llm_providers.py`
 - `agent/tests/test_llm_routes.py`
+- `agent/tests/test_llm_deepseek.py` — vision-rejection path + chat/reasoner model selection
 
 **Backend (modified):**
 - `agent/flowboard/services/claude_cli.py` — thin re-export → deprecate
@@ -397,11 +435,11 @@ Frontend: type-check only (no test runner currently).
 | Phase | Days |
 |---|---|
 | Backend: abstraction + 2 CLI providers (Claude, Gemini) | 1 |
-| Backend: 2 API providers (OpenAI, Grok) + secrets + routes | 1.5 |
+| Backend: 3 API providers (OpenAI, Grok, DeepSeek) + secrets + routes | 1.75 |
 | Backend: migrate 3 services + update existing tests | 0.5 |
-| Backend: write new tests | 1 |
-| Frontend: API client + Settings UI + status indicators | 1.5 |
+| Backend: write new tests (incl. DeepSeek vision-rejection + model-selection) | 1.25 |
+| Frontend: API client + Settings UI + status indicators (incl. DeepSeek "Text only" tag, Vision dropdown filter) | 1.5 |
 | Documentation + manual smoke testing | 0.5 |
-| **Total** | **~6 days** |
+| **Total** | **~6.5 days** |
 
 Suggested release: **v1.2.0** (this is feature-complete enough to bump minor version, not patch).
