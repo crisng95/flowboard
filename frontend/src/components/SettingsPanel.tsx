@@ -37,16 +37,26 @@ const IMAGE_MODELS: { key: ImageModelKey; label: string; hint: string }[] = [
   },
 ];
 
-const VIDEO_QUALITIES: { key: VideoQuality; label: string; hint: string }[] = [
-  {
-    key: "fast",
-    label: "Veo 3.1 Fast",
-    hint: "Higher fidelity, default quality. Applies to both 16:9 and 9:16.",
-  },
+// Order: lite → fast → quality, light to heavy. Lite and Quality are
+// Tier 2 (Ultra) exclusives — Tier 1 users see them locked.
+const VIDEO_QUALITIES: { key: VideoQuality; label: string; hint: string; ultraOnly: boolean }[] = [
   {
     key: "lite",
     label: "Veo 3.1 Lite",
-    hint: "Faster generation, lighter model. Applies to both 16:9 and 9:16.",
+    hint: "Fastest generation, lightest model. Applies to both 16:9 and 9:16.",
+    ultraOnly: true,
+  },
+  {
+    key: "fast",
+    label: "Veo 3.1 Fast",
+    hint: "Default — balanced fidelity and speed. Applies to both 16:9 and 9:16.",
+    ultraOnly: false,
+  },
+  {
+    key: "quality",
+    label: "Veo 3.1 Quality",
+    hint: "Highest fidelity, slowest. Best for hero shots. Applies to both 16:9 and 9:16.",
+    ultraOnly: true,
   },
 ];
 
@@ -139,24 +149,38 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
       <div className="settings-panel__section">
         <div className="settings-panel__label">Video model</div>
         <div className="settings-panel__radio-group">
-          {VIDEO_QUALITIES.map((q) => (
-            <label
-              key={q.key}
-              className={`settings-panel__radio${videoQuality === q.key ? " settings-panel__radio--active" : ""}`}
-            >
-              <input
-                type="radio"
-                name="video-quality"
-                value={q.key}
-                checked={videoQuality === q.key}
-                onChange={() => setVideoQuality(q.key)}
-              />
-              <div>
-                <div className="settings-panel__radio-label">{q.label}</div>
-                <div className="settings-panel__radio-hint">{q.hint}</div>
-              </div>
-            </label>
-          ))}
+          {VIDEO_QUALITIES.map((q) => {
+            // Lite and Quality are exclusive to Tier 2 (Ultra). Tier 1
+            // users who pick either would silently fall back to Fast on
+            // the backend — disable the option here so the UI never lies
+            // about which checkpoint is actually being dispatched.
+            const isUltraOnly = q.ultraOnly;
+            const locked = isUltraOnly && tier !== "PAYGATE_TIER_TWO";
+            return (
+              <label
+                key={q.key}
+                className={`settings-panel__radio${videoQuality === q.key ? " settings-panel__radio--active" : ""}${locked ? " settings-panel__radio--locked" : ""}`}
+              >
+                <input
+                  type="radio"
+                  name="video-quality"
+                  value={q.key}
+                  checked={videoQuality === q.key}
+                  disabled={locked}
+                  onChange={() => setVideoQuality(q.key)}
+                />
+                <div>
+                  <div className="settings-panel__radio-label">
+                    {q.label}
+                    {isUltraOnly && (
+                      <span className="model-badge">Ultra only</span>
+                    )}
+                  </div>
+                  <div className="settings-panel__radio-hint">{q.hint}</div>
+                </div>
+              </label>
+            );
+          })}
         </div>
       </div>
 

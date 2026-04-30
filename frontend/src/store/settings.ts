@@ -15,12 +15,14 @@ import { create } from "zustand";
  * tier (e.g. fast vs quality) we extend this store with `videoModelKey`.
  */
 export type ImageModelKey = "NANO_BANANA_PRO" | "NANO_BANANA_2";
-// Veo 3.1 ships in two flavours: Fast (current default — bigger model,
-// higher fidelity) and Lite (smaller checkpoint, much faster, lower
-// fidelity). Choice applies globally across both portrait and
-// landscape — backend resolves the actual model key at dispatch time
-// from [tier][quality][aspect].
-export type VideoQuality = "fast" | "lite";
+// Veo 3.1 ships in three flavours: Lite (smaller checkpoint, fastest,
+// lower fidelity — Tier 2 only), Fast (default — bigger model, balanced),
+// and Quality (highest fidelity, slowest — Tier 2 only). Choice applies
+// globally across both portrait and landscape; backend resolves the
+// actual model key at dispatch time from [tier][quality][aspect]. Tier 1
+// users only have Fast available — picking Lite or Quality silently
+// falls back to Fast on the backend.
+export type VideoQuality = "fast" | "lite" | "quality";
 
 interface SettingsState {
   imageModel: ImageModelKey;
