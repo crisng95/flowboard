@@ -60,7 +60,6 @@ class FlowClient:
         # next WS reconnect.
         self._user_info: Optional[dict] = None
         # Paygate tier authoritative from /v1/credits + sku for display.
-        # Sniffer fallback (legacy passive path) writes the same field.
         self._paygate_tier: Optional[str] = None
         self._sku: Optional[str] = None  # e.g. "WS_ULTRA" / "WS_PRO"
         self._credits: Optional[int] = None
@@ -214,12 +213,6 @@ class FlowClient:
                     "user_info captured for %s",
                     self._user_info.get("email") or "<no email>",
                 )
-            return
-        if t == "paygate_tier":
-            tier = data.get("paygateTier")
-            if tier in ("PAYGATE_TIER_ONE", "PAYGATE_TIER_TWO"):
-                self._paygate_tier = tier
-                logger.info("paygate_tier sniffed: %s", tier)
             return
         if t == "pong":
             return

@@ -82,8 +82,9 @@ async def _handle_gen_image(params: dict) -> tuple[dict, Optional[str]]:
         return {}, "invalid_project_id"
     aspect = params.get("aspect_ratio") or "IMAGE_ASPECT_RATIO_LANDSCAPE"
     # Tier resolution: caller-stamped value first (set at dispatch time),
-    # then live signal from extension WS sniff. NO silent default — if
-    # both are absent we fail loud with `paygate_tier_unknown`. The old
+    # then the live value from `flow_client` (resolved authoritatively
+    # via /v1/credits on token capture). NO silent default — if both
+    # are absent we fail loud with `paygate_tier_unknown`. The old
     # behaviour (default `PAYGATE_TIER_ONE`) silently downgraded Ultra
     # users to Pro and stamped the wrong tier into request.params, which
     # then fed back through `_last_observed_paygate_tier_from_db()` and

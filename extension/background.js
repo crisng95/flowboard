@@ -115,77 +115,6 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
   ['requestHeaders', 'extraHeaders'],
 );
 
-// Sniff `clientContext.userPaygateTier` from Flow API request bodies
-// the user's Flow tab makes. Authoritative + realtime — beats guessing.
-//
-// Skip our own service-worker fetches (tabId === -1) because those go
-// through the agent's flow_sdk, which sets `userPaygateTier` from
-// whatever the agent currently thinks the tier is. Sniffing those is
-// circular — we'd just read back our own default.
-let cachedPaygateTier = null;
-
-chrome.webRequest.onBeforeRequest.addListener(
-  (details) => {
-    if (details.tabId === -1) return;
-    const raw = details?.requestBody?.raw?.[0]?.bytes;
-    if (!raw) return;
-    let text;
-    try {
-      text = new TextDecoder('utf-8').decode(raw);
-    } catch {
-      return;
-    }
-    if (!text || text.indexOf('userPaygateTier') === -1) return;
-    let body;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      return;
-    }
-    const tier =
-      body?.clientContext?.userPaygateTier ||
-      body?.json?.clientContext?.userPaygateTier;
-    if (tier !== 'PAYGATE_TIER_ONE' && tier !== 'PAYGATE_TIER_TWO') return;
-    if (cachedPaygateTier === tier) return; // unchanged, skip the WS send
-    cachedPaygateTier = tier;
-    console.log('[Flowboard] paygate tier sniffed:', tier);
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'paygate_tier', paygateTier: tier }));
-    }
-  },
-  {
-    urls: [
-      'https://aisandbox-pa.googleapis.com/*',
-      'https://labs.google/fx/api/trpc/*',
-    ],
-  },
-  ['requestBody'],
-);
-
-// Nudge the Flow tab to send a real API request so the sniffer above
-// gets a tier within seconds of the extension loading. Without this
-// the panel says "Detecting…" indefinitely if the user just sits in
-// Flowboard without touching their Flow tab. Calling
-// `project.list` on TRPC is cheap, idempotent, and Flow web does it
-// already during normal use — we're just front-running the timing.
-async function nudgeFlowTab() {
-  try {
-    const tabs = await chrome.tabs.query({ url: flowUrls });
-    if (!tabs.length) return;
-    await chrome.scripting.executeScript({
-      target: { tabId: tabs[0].id },
-      func: () => {
-        // Trigger Flow web's own bootstrap fetch — it'll re-issue API
-        // calls including tier in their request bodies.
-        try { window.dispatchEvent(new Event('focus')); } catch {}
-        try { fetch('/fx/api/trpc/project.list', { credentials: 'include' }); } catch {}
-      },
-    });
-  } catch (e) {
-    console.warn('[Flowboard] tier nudge failed:', e?.message || e);
-  }
-}
-
 let cachedUserInfo = null;
 
 async function fetchAndPushUserInfo(token) {
@@ -255,15 +184,6 @@ function connectToAgent() {
     } else if (flowKey) {
       fetchAndPushUserInfo(flowKey);
     }
-    if (cachedPaygateTier) {
-      ws.send(JSON.stringify({ type: 'paygate_tier', paygateTier: cachedPaygateTier }));
-    } else if (flowKey) {
-      // No tier captured yet this session — nudge Flow web to send a
-      // request so the body sniffer above picks one up within a couple
-      // of seconds rather than waiting for the user to interact with
-      // their Flow tab.
-      nudgeFlowTab();
-    }
   };
 
   ws.onmessage = async ({ data }) => {
@@ -284,7 +204,6 @@ function connectToAgent() {
         // re-greet when the user logs back in.
         console.log('[Flowboard] logout requested by agent');
         cachedUserInfo = null;
-        cachedPaygateTier = null;
         flowKey = null;
       } else if (msg.type === 'please_resend_userinfo') {
         // Agent's /api/auth/scan asks us to re-fetch userinfo when
@@ -299,14 +218,6 @@ function connectToAgent() {
           fetchAndPushUserInfo(flowKey);
         } else {
           console.log('[Flowboard] please_resend_userinfo: no token captured yet');
-        }
-        // Also re-send tier if we have it cached, so dashboard fills in.
-        if (cachedPaygateTier && ws?.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'paygate_tier', paygateTier: cachedPaygateTier }));
-        } else if (flowKey) {
-          // Tier wasn't sniffed — nudge Flow tab so its bootstrap
-          // request body trips the sniffer.
-          nudgeFlowTab();
         }
       } else if (msg.method === 'api_request') {
         await handleApiRequest(msg);

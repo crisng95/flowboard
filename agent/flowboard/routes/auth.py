@@ -66,8 +66,8 @@ async def logout() -> dict:
     Clears the agent-side cached profile + tier so /api/auth/me
     returns null fields immediately. Sends a `logout` message to the
     extension over WS so it drops its own in-memory cachedUserInfo +
-    cachedPaygateTier + flowKey — the next time the user wants to
-    reconnect they pick up fresh credentials, not stale ones.
+    flowKey — the next time the user wants to reconnect they pick up
+    fresh credentials, not stale ones.
 
     The extension's WS connection itself stays open. We don't tear it
     down because the user might log back in with a different account
@@ -99,9 +99,10 @@ async def scan_extension() -> dict:
         nudge — the extension's handler will re-call its
         fetchAndPushUserInfo flow.
       - extension_connected=True + has_user_info=True + has_tier=False:
-        Userinfo arrived but the passive paygate-tier sniffer hasn't
-        seen a Flow request body yet. Frontend's existing "Open Flow ↗"
-        banner handles this — the scan endpoint just reports state.
+        Token captured but the authoritative /v1/credits fetch hasn't
+        landed yet (or it failed transiently). The scan handler retries
+        the fetch synchronously below so the response reflects the
+        post-fetch state.
       - All three present: nothing to do; frontend re-polls /me to
         refresh the AccountPanel.
     """

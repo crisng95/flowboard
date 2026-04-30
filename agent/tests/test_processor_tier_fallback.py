@@ -1,15 +1,14 @@
 """Tests for the worker processor's paygate_tier resolution chain.
 
-The handler reads tier from three sources in priority order:
+The handler reads tier from two sources in priority order:
   1. params["paygate_tier"] — stamped by the frontend at dispatch
-  2. flow_client.paygate_tier — live signal pushed by extension
-  3. "PAYGATE_TIER_ONE" — last-resort default
+  2. flow_client.paygate_tier — resolved authoritatively via
+     /v1/credits when the extension captures a Bearer token
 
-This was a behavior change made in response to the audit (#20): the
-handlers used to read only from params, which meant a stale frontend
-that fell back to TIER_ONE before the extension finished sniffing the
-real tier would dispatch every request at TIER_ONE forever — even
-after `flow_client.paygate_tier` was populated.
+If neither is set, the handler fails loud with `paygate_tier_unknown`
+rather than silently defaulting. The old default (PAYGATE_TIER_ONE)
+downgraded Ultra users to Pro and stamped the wrong tier into the DB,
+poisoning /api/auth/me for the rest of the session.
 """
 from __future__ import annotations
 

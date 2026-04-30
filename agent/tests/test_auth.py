@@ -66,30 +66,6 @@ def test_me_returns_cached_profile_after_user_info_message(client):
 
 
 @pytest.mark.asyncio
-async def test_handle_message_caches_paygate_tier():
-    """The paygate_tier WS frame from the extension populates
-    flow_client._paygate_tier and is then visible via the public
-    property + /api/auth/me."""
-    await flow_client.handle_message({
-        "type": "paygate_tier",
-        "paygateTier": "PAYGATE_TIER_TWO",
-    })
-    assert flow_client.paygate_tier == "PAYGATE_TIER_TWO"
-
-
-@pytest.mark.asyncio
-async def test_handle_message_rejects_garbage_tier():
-    """Defensive — a malformed tier value must not crash or set a
-    nonsense string the rest of the system would treat as a tier."""
-    flow_client._paygate_tier = "PAYGATE_TIER_ONE"
-    await flow_client.handle_message({
-        "type": "paygate_tier",
-        "paygateTier": "FREE_TRIAL",
-    })
-    assert flow_client.paygate_tier == "PAYGATE_TIER_ONE"
-
-
-@pytest.mark.asyncio
 async def test_handle_message_caches_user_info():
     """The user_info WS frame from the extension populates
     flow_client._user_info and is then visible via the public property."""
