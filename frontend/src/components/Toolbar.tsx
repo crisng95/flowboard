@@ -59,16 +59,6 @@ export function Toolbar() {
       )}
 
       <div className="toolbar-actions">
-        <button className="toolbar-icon-btn" aria-label="Undo" title="Undo" disabled>
-          ↶
-        </button>
-        <button className="toolbar-icon-btn" aria-label="Redo" title="Redo" disabled>
-          ↷
-        </button>
-        <button className="toolbar-icon-btn" aria-label="Settings" title="Settings" disabled>
-          ⚙
-        </button>
-        <span className="toolbar-actions__divider" aria-hidden="true" />
         <ActivityBell />
         <AiProviderBadge />
         <SponsorButton />
