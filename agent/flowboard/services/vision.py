@@ -1,19 +1,27 @@
 """AI-vision brief generation for cached media.
 
-Asks Claude (via the local CLI) to summarise an image into a short factual
-description ("aiBrief"). Used by:
+Asks the configured Vision provider (Claude / Gemini / OpenAI / Grok)
+to summarise an image into a short factual description ("aiBrief").
+Used by:
 - Visual asset / character nodes — annotate uploaded or generated images
 - Auto-prompt synthesizer — feed those briefs into a downstream prompt
 
-The CLI handles auth via the user's existing Claude subscription, so we don't
-need to manage API keys here. We always pass an ABSOLUTE path so the CLI's
-cwd doesn't matter.
+Provider routing goes through ``run_llm("vision", ...)``. The user picks
+which one in Settings → AI Providers; default is Claude. Since all 4
+providers in v1.2.0 support vision, the registry's vision-capability
+gate is currently a defensive no-op — it kicks in if a future text-only
+provider is added.
+
+We always pass an ABSOLUTE path so the underlying transport (CLI flag
+or HTTP base64) doesn't get tripped up by the agent's cwd.
 """
 from __future__ import annotations
 
 import logging
 
-from flowboard.services import claude_cli, media as media_service
+from flowboard.services import media as media_service
+from flowboard.services.llm import run_llm
+from flowboard.services.llm.base import LLMError
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +48,8 @@ async def describe_media(media_id: str) -> str:
     """Return a short factual description of the cached media.
 
     Raises ``VisionError`` if the media is not cached locally or if the
-    Claude CLI fails. Caller decides whether to retry or fall back.
+    configured Vision provider fails. Caller decides whether to retry
+    or fall back.
     """
     media_id = media_service.normalize_media_id(media_id)
     if not media_service.is_valid_media_id(media_id):
@@ -57,20 +66,21 @@ async def describe_media(media_id: str) -> str:
         cached = path
 
     try:
-        text = await claude_cli.run_claude(
+        text = await run_llm(
+            "vision",
             _VISION_USER_PROMPT,
             system_prompt=_VISION_SYSTEM,
             attachments=[str(cached.resolve())],
             timeout=45.0,
         )
-    except claude_cli.ClaudeCliError as exc:
-        raise VisionError(f"claude CLI failed: {exc}") from exc
+    except LLMError as exc:
+        raise VisionError(f"vision provider failed: {exc}") from exc
 
     # Trim and cap — defence-in-depth in case the model ignores the length
     # cap from the system prompt.
     text = (text or "").strip()
     if not text:
-        raise VisionError("empty response from claude")
+        raise VisionError("empty response from vision provider")
     if len(text) > 400:
         text = text[:400].rstrip() + "…"
     return text
