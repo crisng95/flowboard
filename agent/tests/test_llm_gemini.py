@@ -152,13 +152,16 @@ async def test_run_prepends_system_prompt_into_body(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_omits_m_flag_when_no_override(monkeypatch):
-    """Default — no FLOWBOARD_GEMINI_MODEL env var → no `-m` flag emitted.
-    Gemini CLI's own `/model` setting (its Auto mode) picks the model.
-    Direct `-m <name>` doesn't accept all of Auto-mode's internal names
-    (e.g. `gemini-3-flash` returns ModelNotFound on the CodeAssist
-    backend in CLI v0.38.2) so we leave model selection to the CLI by
-    default and only override when the operator opts in."""
+async def test_run_pins_stable_model_via_m_flag(monkeypatch):
+    """Default pins `gemini-2.5-flash` (stable tier) via `-m`. Avoids
+    Gemini CLI v0.38.2's Auto-mode default of `gemini-3-flash-preview`
+    which Google routinely 429s with MODEL_CAPACITY_EXHAUSTED — even
+    when the user's quota is fine — because preview models are
+    capacity-throttled server-side. The CLI then retries with backoff,
+    inflating per-call latency by 30+ seconds.
+
+    `gemini-3-flash` (without `-preview` suffix) returns ModelNotFound
+    on the CodeAssist backend, so we use `gemini-2.5-flash` instead."""
     p = GeminiProvider()
     captured: dict = {}
 
@@ -170,7 +173,10 @@ async def test_run_omits_m_flag_when_no_override(monkeypatch):
     monkeypatch.delenv("FLOWBOARD_GEMINI_MODEL", raising=False)
     await p.run("hi")
     args = list(captured["args"])
-    assert "-m" not in args
+    m_idx = args.index("-m")
+    assert args[m_idx + 1] == "gemini-2.5-flash"
+    # Regression guard — never default to a preview model.
+    assert "-preview" not in args[m_idx + 1]
 
 
 @pytest.mark.asyncio

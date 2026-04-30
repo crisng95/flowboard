@@ -31,21 +31,23 @@ _CLI_BIN = "gemini"
 _DEFAULT_TIMEOUT = 90.0
 _PROBE_TIMEOUT = 5.0
 
-# Optional model override. When unset, we DON'T pass `-m` at all and
-# let Gemini CLI use whatever its `/model` setting picks (Auto modes
-# internally rotate between `gemini-3.1-pro` / `gemini-3-flash` etc).
+# Pin a stable production model. Gemini CLI v0.38.2's default Auto
+# mode picks `gemini-3-flash-preview` (preview tier) which Google
+# returns 429 MODEL_CAPACITY_EXHAUSTED for routinely — even when the
+# user's per-model quota is fine — because preview models are
+# capacity-throttled server-side. The CLI then retries with backoff,
+# inflating per-call latency by 30+ seconds before the call eventually
+# lands.
 #
-# When the default Auto mode lands on a preview model that returns 429
-# MODEL_CAPACITY_EXHAUSTED, the CLI retry-with-backoff inflates per-call
-# latency by 5-15s. Operators with capacity-exhausted preview defaults
-# can pin a stable model via FLOWBOARD_GEMINI_MODEL=gemini-2.5-flash
-# (or whatever their plan supports).
+# `gemini-2.5-flash` is the stable Flash tier that the Auto (Gemini
+# 2.5) group routes to. Stable tier = real production capacity, no
+# preview throttling. Direct `-m gemini-2.5-flash` works on the
+# CodeAssist backend in CLI v0.38.2 (verified — unlike
+# `gemini-3-flash` which returns ModelNotFound).
 #
-# Direct `-m gemini-3-flash` doesn't work in CLI v0.38.2 — the CodeAssist
-# backend returns ModelNotFound; that name is only resolvable through
-# Auto mode. Stable alternatives that DO work as `-m` values today:
-#   `gemini-2.5-flash` · `gemini-2.5-pro`
-_DEFAULT_MODEL: str | None = None
+# Override via FLOWBOARD_GEMINI_MODEL if you want `gemini-2.5-pro`
+# (slower but better for Planner JSON quality) or any other variant.
+_DEFAULT_MODEL: str | None = "gemini-2.5-flash"
 
 
 class GeminiProvider:
