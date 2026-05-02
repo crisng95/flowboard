@@ -65,6 +65,66 @@ def _seed_board_with_chain(monkeypatch=None) -> dict:
 
 
 @pytest.mark.asyncio
+async def test_auto_prompt_multi_variant_node_still_gets_ref_image_label(
+    client, monkeypatch
+):
+    """When an upstream image node has 4 variants stored as `mediaIds`
+    (and `mediaId` may even be unset), the synthesiser must still treat
+    it as a ref source and emit a `ref_image_N` label. The frontend
+    expands the variants flat into `ref_media_ids`; this test guards
+    the backend's matching `has_media` check that drives `ref_index`
+    assignment in `_collect_upstream`."""
+    with get_session() as s:
+        b = Board(name="multi-variant")
+        s.add(b); s.commit(); s.refresh(b)
+        # Multi-variant source: only `mediaIds` populated (4 entries).
+        # `mediaId` intentionally omitted to prove the fallback path.
+        outfit = Node(
+            board_id=b.id, short_id="ofit", type="image",
+            x=0, y=0, w=240, h=180,
+            data={
+                "title": "Beige outfit (4 variants)",
+                "aiBrief": "young East Asian woman in beige oversized blazer, neutral expression",
+                "mediaIds": [
+                    "uuuuuuuu-ofit-0001-0001-000000000001",
+                    "uuuuuuuu-ofit-0002-0002-000000000002",
+                    "uuuuuuuu-ofit-0003-0003-000000000003",
+                    "uuuuuuuu-ofit-0004-0004-000000000004",
+                ],
+            },
+            status="done",
+        )
+        target = Node(
+            board_id=b.id, short_id="trgt", type="image",
+            x=0, y=0, w=240, h=180, data={"title": "Output"},
+            status="idle",
+        )
+        s.add_all([outfit, target]); s.commit()
+        for n in (outfit, target):
+            s.refresh(n)
+        s.add(Edge(board_id=b.id, source_id=outfit.id, target_id=target.id))
+        s.commit()
+        tgt_id = target.id
+
+    captured: dict = {}
+
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
+        captured["prompt"] = prompt
+        return "Editorial photo of model in beige blazer"
+
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
+    await prompt_synth.auto_prompt(tgt_id)
+
+    user = captured["prompt"] or ""
+    # Multi-variant node still earns its `ref_image_N` slot — without
+    # this the synthesiser would silently drop nodes that only have
+    # `mediaIds` (no `mediaId`), leaving the LLM with no reference
+    # label to bind to even though the wire payload includes 4 inputs.
+    assert "ref_image_1:" in user
+    assert "beige" in user.lower()
+
+
+@pytest.mark.asyncio
 async def test_auto_prompt_calls_provider_with_upstream_briefs(client, monkeypatch):
     ids = _seed_board_with_chain()
     captured: dict = {}
@@ -174,31 +234,43 @@ async def test_auto_prompt_multi_subject_detects_couple_via_image_siblings(
 ):
     """When target has 2 image upstream each wrapping a different character
     grandparent, synth must switch to multi-subject mode: the user message
-    surfaces both subjects and the system prompt enforces couple framing."""
+    surfaces both subjects (by `ref_image_N` position) and the system
+    prompt enforces couple framing.
+
+    Note: shortIds (`#abcd`) used to be embedded in the user message and
+    the system prompt told Claude to bind subjects "by `#shortId`". Flow
+    doesn't parse those — refs bind via the positional `imageInputs`
+    array, and the @-handle-looking tokens correlated with false-positive
+    `PUBLIC_ERROR_PROMINENT_PEOPLE_FILTER_FAILED` from Google's content
+    classifier. The synth now uses `ref_image_N` labels matching the
+    `ref_media_ids` slot order on the wire."""
     ids = _seed_couple_via_image_siblings()
     captured: dict = {}
 
     async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
         captured["prompt"] = prompt
         captured["system_prompt"] = system_prompt
-        return f"Editorial couple shot of #{ids['char_m_short']} and #{ids['char_f_short']}"
+        return "Editorial couple shot of ref_image_1 and ref_image_2"
 
     monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     out = await prompt_synth.auto_prompt(ids["target_id"])
-    assert ids["char_m_short"] in out and ids["char_f_short"] in out
+    assert "ref_image_1" in out and "ref_image_2" in out
 
-    # User message must declare both distinct subjects + annotate which
-    # image embodies which character.
+    # User message must declare 2 distinct subjects and address the two
+    # image refs by their positional ref_image_N labels.
     user = captured["prompt"]
     assert "DISTINCT SUBJECTS DETECTED: 2 people" in user
-    assert f"#{ids['char_m_short']}" in user
-    assert f"#{ids['char_f_short']}" in user
-    assert "embodies character" in user
+    assert "ref_image_1:" in user
+    assert "ref_image_2:" in user
+    # No upstream-node shortIds should leak into the LLM prompt body.
+    assert f"#{ids['char_m_short']}" not in user
+    assert f"#{ids['char_f_short']}" not in user
 
     # System prompt must include the multi-subject clause.
     sp = captured["system_prompt"] or ""
     assert "MULTI-SUBJECT MODE" in sp
-    assert "REFERENCE BY SHORTID" in sp
+    assert "REFERENCE BY POSITION" in sp
+    assert "ref_image_N" in sp
     assert "couple/group" in sp.lower() or "couple / group" in sp.lower()
     assert "complementary stance" in sp.lower()
 
@@ -343,7 +415,12 @@ async def test_auto_prompt_image_with_location_reference_keeps_setting(
     # Both briefs surface in the user message — context is intact.
     assert "pink crewneck" in user
     assert "jogging path" in user
-    assert "#zy6g" in user and "#vx3x" in user
+    # Refs are addressed by positional `ref_image_N` labels (matches the
+    # ref_media_ids slot Flow sees on the wire). Internal node shortIds
+    # MUST NOT leak into the LLM prompt body — they look like @-handles
+    # to Google's content classifier.
+    assert "ref_image_1:" in user and "ref_image_2:" in user
+    assert "#zy6g" not in user and "#vx3x" not in user
 
     # ROLE INFERENCE hint must be present whenever 2+ image refs feed in,
     # so Claude classifies which is subject vs setting from the briefs
@@ -448,7 +525,9 @@ async def test_auto_prompt_surfaces_prompt_nodes_as_direction(
     assert "Direction / style notes" in user
     assert "magazine editorial mood" in user
     assert "Old Money palette" in user
-    assert "#pfdr" in user
+    # Prompt nodes carry no image, so they get NO `ref_image_N` label —
+    # the LLM doesn't need to bind them positionally, just weave them in.
+    assert "#pfdr" not in user
 
     # Note node text must NOT leak into the synth context — the sticky is
     # human-only commentary and would just dilute the prompt.
@@ -497,6 +576,19 @@ async def test_auto_prompt_video_uses_motion_system_prompt(client, monkeypatch):
     assert "dolly-in" in out
     assert "motion" in (captured["system_prompt"] or "").lower()
     assert "Korean woman" in captured["prompt"]
+    # Audio guard — must direct silent / no-dialogue by default.
+    # Veo's audio path triggers PUBLIC_MIRROR_AUDIO_FILTER on portraits
+    # the moment speech is generated, killing the entire request, so
+    # the synth has to instruct silent unless the user explicitly
+    # asked for dialogue.
+    sp = captured["system_prompt"] or ""
+    assert "AUDIO" in sp
+    assert "SILENT BY DEFAULT" in sp
+    assert "PUBLIC_MIRROR_AUDIO_FILTER" in sp
+    # SFX + music guidance present so the user's clip isn't completely
+    # bare when default-silent fires.
+    assert "SFX" in sp
+    assert "MUSIC" in sp
 
 
 @pytest.mark.asyncio
@@ -706,10 +798,16 @@ async def test_auto_prompt_video_multi_subject_when_source_has_two_chars(
     assert "MULTI-SUBJECT MODE" in sp
     assert "PER SUBJECT" in sp
     assert "synchronized choreography" in sp
-    assert "REFERENCE BY SHORTID" in sp
-    # User message lists both grandparent characters as distinct subjects.
+    # Subjects are addressed positionally now (`ref_image_N`), not by
+    # internal shortId.
+    assert "REFERENCE BY POSITION" in sp
+    assert "ref_image_N" in sp
+    # User message reports the count detected; the `ref_image_N` labels
+    # already on the records above carry the binding.
     assert "DISTINCT SUBJECTS DETECTED: 2 people" in user
-    assert "#cvm1" in user and "#cvf1" in user
+    # Internal shortIds must NOT leak — they look like @-handles to
+    # Google's content classifier.
+    assert "#cvm1" not in user and "#cvf1" not in user
 
 
 @pytest.mark.asyncio
@@ -948,3 +1046,92 @@ def test_route_502_on_synth_failure(client, monkeypatch):
     monkeypatch.setattr(prompt_synth, "auto_prompt", stub)
     r = client.post("/api/prompt/auto", json={"node_id": 1})
     assert r.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_prompt_wins_over_aibrief(client, monkeypatch):
+    """Prompt-first rule: when an upstream node carries BOTH a typed
+    `prompt` and a vision-derived `aiBrief`, the synthesiser must use
+    `prompt`. Vision becomes redundant once the user (or auto-prompt)
+    has stamped a prompt onto the node — that text is the source of
+    truth for downstream synth, regardless of what vision wrote."""
+    with get_session() as s:
+        b = Board(name="prompt-wins")
+        s.add(b); s.commit(); s.refresh(b)
+        upstream = Node(
+            board_id=b.id, short_id="pwup", type="image",
+            x=0, y=0, w=240, h=180,
+            data={
+                "title": "Hero",
+                "prompt": "AUTHORITATIVE-PROMPT-TEXT detail walking on Tokyo street",
+                "aiBrief": "STALE-VISION-DESCRIPTION studio backdrop with cardboard",
+                "mediaId": "uuuuuuuu-pwup-1111-1111-111111111111",
+            },
+            status="done",
+        )
+        target = Node(
+            board_id=b.id, short_id="pwtg", type="video",
+            x=0, y=0, w=240, h=180, data={"title": "Motion"},
+            status="idle",
+        )
+        s.add_all([upstream, target]); s.commit()
+        s.refresh(upstream); s.refresh(target)
+        s.add(Edge(board_id=b.id, source_id=upstream.id, target_id=target.id))
+        s.commit()
+        tgt_id = target.id
+
+    captured: dict = {}
+
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
+        captured["prompt"] = prompt
+        return "Hold the gaze, slight weight shift"
+
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
+    await prompt_synth.auto_prompt(tgt_id)
+    user = captured["prompt"] or ""
+
+    assert "AUTHORITATIVE-PROMPT-TEXT" in user
+    assert "STALE-VISION-DESCRIPTION" not in user
+
+
+@pytest.mark.asyncio
+async def test_aibrief_used_when_no_prompt(client, monkeypatch):
+    """Upload-only fallback: a node that has media + aiBrief but NO
+    prompt (e.g. raw uploaded photo with vision auto-described it) must
+    still surface aiBrief into the synth context. Otherwise upload-only
+    nodes contribute nothing and downstream prompts go generic."""
+    with get_session() as s:
+        b = Board(name="brief-fallback")
+        s.add(b); s.commit(); s.refresh(b)
+        upstream = Node(
+            board_id=b.id, short_id="bfup", type="visual_asset",
+            x=0, y=0, w=240, h=180,
+            data={
+                "title": "Uploaded jacket",
+                "aiBrief": "BRIEF-FALLBACK navy tweed double-breasted blazer",
+                "mediaId": "uuuuuuuu-bfup-1111-1111-111111111111",
+            },
+            status="done",
+        )
+        target = Node(
+            board_id=b.id, short_id="bftg", type="image",
+            x=0, y=0, w=240, h=180, data={"title": "Hero shot"},
+            status="idle",
+        )
+        s.add_all([upstream, target]); s.commit()
+        s.refresh(upstream); s.refresh(target)
+        s.add(Edge(board_id=b.id, source_id=upstream.id, target_id=target.id))
+        s.commit()
+        tgt_id = target.id
+
+    captured: dict = {}
+
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
+        captured["prompt"] = prompt
+        return "Editorial portrait in navy blazer"
+
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
+    await prompt_synth.auto_prompt(tgt_id)
+    user = captured["prompt"] or ""
+
+    assert "BRIEF-FALLBACK" in user

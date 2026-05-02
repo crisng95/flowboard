@@ -4,13 +4,12 @@ Schema of ``~/.flowboard/secrets.json``:
 
 ```json
 {
-  "apiKeys": {"openai": "sk-...", "grok": "xai-..."},
+  "apiKeys": {"openai": "sk-..."},
   "activeProviders": {
     "auto_prompt": "claude",
     "vision": "gemini",
     "planner": "claude"
-  },
-  "visionEnabled": true
+  }
 }
 ```
 
@@ -102,23 +101,41 @@ def set_api_key(provider: str, key: Optional[str]) -> None:
 
 # ── Active-providers helpers ───────────────────────────────────────────
 
-# Default routing — used when the user hasn't configured anything yet.
-# Claude is the historical default for all three features.
-_DEFAULT_ACTIVE: dict[str, str] = {
-    "auto_prompt": "claude",
-    "vision": "claude",
-    "planner": "claude",
-}
+# Features the UI configures. Order matters only for display; iteration
+# order in this module is deterministic on Python 3.7+.
+_FEATURES: tuple[str, ...] = ("auto_prompt", "vision", "planner")
 
 
 def read_active_providers() -> dict[str, str]:
-    """Return ``{feature: provider_name}`` with defaults filled in for any
-    feature the user hasn't picked yet."""
+    """Return ``{feature: provider_name}`` for features the user has
+    explicitly picked. No defaults — missing keys are absent.
+
+    Callers must handle the missing case (a feature with no provider
+    pinned can't dispatch). The HTTP layer surfaces this via the
+    ``configured`` flag on ``GET /api/llm/config``; the dispatch layer
+    raises ``LLMError`` so the user sees a clear "open settings" message
+    instead of silently falling back to a provider they didn't pick.
+    """
     doc = read()
     saved = doc.get("activeProviders") or {}
     if not isinstance(saved, dict):
-        saved = {}
-    return {**_DEFAULT_ACTIVE, **{k: v for k, v in saved.items() if isinstance(v, str)}}
+        return {}
+    return {k: v for k, v in saved.items() if isinstance(v, str) and v}
+
+
+def is_active_providers_configured() -> bool:
+    """True when the user has completed the AI Provider setup flow.
+
+    Single-provider model: every feature must be pinned AND all three
+    must point at the same provider. Mixed config (legacy hand-edits
+    or older versions that allowed per-feature) returns False so the
+    forced-setup gate prompts the user to consolidate.
+    """
+    saved = read_active_providers()
+    if not all(f in saved for f in _FEATURES):
+        return False
+    values = {saved[f] for f in _FEATURES}
+    return len(values) == 1
 
 
 def set_feature_provider(feature: str, provider: str) -> None:
@@ -127,26 +144,4 @@ def set_feature_provider(feature: str, provider: str) -> None:
     saved = dict(doc.get("activeProviders") or {})
     saved[feature] = provider
     doc["activeProviders"] = saved
-    write(doc)
-
-
-# ── Vision toggle ──────────────────────────────────────────────────────
-
-# When False, the auto-prompt synthesiser falls back to each upstream
-# node's typed `prompt` instead of its vision-derived `aiBrief`. The
-# upload-triggered vision call is unaffected (the user explicitly
-# uploaded an image, so describing it is intentional). Default True
-# preserves existing behaviour for users who don't open the toggle.
-
-def read_vision_enabled() -> bool:
-    """True when vision-derived briefs should be used by the synth flow."""
-    doc = read()
-    val = doc.get("visionEnabled")
-    # Treat any non-False explicit setting (including missing) as enabled.
-    return val is not False
-
-
-def set_vision_enabled(enabled: bool) -> None:
-    doc = read()
-    doc["visionEnabled"] = bool(enabled)
     write(doc)

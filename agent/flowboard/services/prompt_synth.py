@@ -20,7 +20,7 @@ from sqlmodel import select
 from flowboard.db import get_session
 from flowboard.db.models import Edge, Node
 from flowboard.services.activity import record_activity
-from flowboard.services.llm import run_llm, secrets as llm_secrets
+from flowboard.services.llm import run_llm
 from flowboard.services.llm.base import LLMError
 
 logger = logging.getLogger(__name__)
@@ -81,13 +81,14 @@ _SYNTH_SYSTEM_IMAGE = (
 # prompt and Flow can only honour one of the N reference images.
 _MULTI_SUBJECT_CLAUSE = (
     "\n\nMULTI-SUBJECT MODE — CRITICAL: This shot contains MULTIPLE "
-    "distinct people. The upstream context lists every subject with their "
-    "#shortId. Compose ALL subjects into a single couple/group scene "
-    "where every person appears in frame:\n"
-    "  • REFERENCE BY SHORTID: name each subject by their #shortId in the "
-    "prompt (e.g. '#uv50 standing on the left, #zryx on the right') so "
-    "Flow knows which input image maps to which subject. NEVER replace "
-    "shortIds with generic descriptors like 'an East Asian man'.\n"
+    "distinct people. The upstream context lists every reference image "
+    "with a `ref_image_N` label. Compose ALL subjects into a single "
+    "couple/group scene where every person appears in frame:\n"
+    "  • REFERENCE BY POSITION: name each subject by their `ref_image_N` "
+    "label (e.g. 'ref_image_1 standing on the left, ref_image_2 on the "
+    "right') so Flow can bind each person to the correct input image. "
+    "NEVER replace `ref_image_N` with generic descriptors like 'an East "
+    "Asian man'.\n"
     "  • ARRANGEMENT: side-by-side, slightly turned toward each other, or "
     "natural couple/group composition. Every subject must be fully "
     "visible — no one cropped or hidden behind another.\n"
@@ -144,8 +145,26 @@ _SYNTH_VIDEO_CORE = (
     "fits — don't default to either.\n\n"
     "ALWAYS include: natural blinks throughout, soft fabric and hair "
     "drift. These ground the clip without adding theatrical motion.\n\n"
-    "No scene cuts, no dialogue, no text overlays. Max 400 chars. "
-    "Output the motion prompt only — no preamble."
+    "AUDIO — Veo generates sound, and that audio passes a content "
+    "filter (`PUBLIC_MIRROR_AUDIO_FILTER`) that REJECTS the entire "
+    "request when speech is generated over faces resembling real "
+    "people. Most Flowboard scenes are portraits, so default hard to "
+    "silent:\n"
+    "  • SILENT BY DEFAULT: no spoken dialogue, no voice-over, no "
+    "lip-sync, no singing, no humming, no whispering. Mouths stay "
+    "neutral closed-mouth.\n"
+    "  • SFX: only generic low-volume ambient cues that match the "
+    "setting (room tone, fabric rustle, light footsteps, soft "
+    "breeze). Keep it minimal — no effects-heavy soundscape.\n"
+    "  • MUSIC: optional soft restrained background — lo-fi, ambient "
+    "pad, gentle piano — at low volume. Never lyrical, never a "
+    "recognisable melody, never high-energy.\n"
+    "  • EXCEPTION: only when the user prompt EXPLICITLY asks for "
+    "dialogue or singing should the clip include speech, and even "
+    "then keep the audio direction generic (no specific accent / "
+    "voice characteristic / impersonation) to keep filter risk low.\n\n"
+    "No scene cuts, no text overlays. Max 400 chars. Output the "
+    "motion prompt only — no preamble."
 )
 
 # Appended to the video system prompt when the source frame contains
@@ -165,10 +184,10 @@ _MULTI_SUBJECT_VIDEO_CLAUSE = (
     "  • ANTI-FREEZE applies PER SUBJECT: at minimum a blink or subtle "
     "shift for every person between frame 0 and frame 8. No one frozen "
     "while another moves.\n"
-    "  • REFERENCE BY SHORTID: when directing actions, name each "
-    "subject by their #shortId (e.g. '#uv50 turns slightly toward "
-    "#zryx; #zryx holds her gaze on the lens'). Never replace shortIds "
-    "with generic descriptors.\n"
+    "  • REFERENCE BY POSITION: when directing actions, name each "
+    "subject by their `ref_image_N` label (e.g. 'ref_image_1 turns "
+    "slightly toward ref_image_2; ref_image_2 holds her gaze on the "
+    "lens'). Never replace `ref_image_N` with generic descriptors.\n"
     "  • Char limit bumps to 540 for multi-subject — each person needs "
     "their own direction."
 )
@@ -205,29 +224,55 @@ class PromptSynthError(RuntimeError):
     pass
 
 
+# Ref-source node types — the ones whose mediaId becomes a position
+# entry in the request's ``imageInputs`` array. MUST match the
+# frontend's ``REF_SOURCE_TYPES`` set in ``store/generation.ts`` so the
+# ``ref_image_N`` numbering we hand the LLM aligns with the actual
+# positional slot Flow sees on the wire.
+_REF_SOURCE_TYPES = {"character", "image", "visual_asset"}
+
+
 def _collect_upstream(node_id: int) -> tuple[list[dict], Optional[Node]]:
     """Return (upstream_brief_records, target_node).
 
-    Each record: {type, shortId, brief, prompt, title, has_media,
-    subject_chars}. ``subject_chars`` is the list of character shortIds
-    one hop further up — only populated for ``image`` records, since an
-    image upstream may "wrap" a character (character → image → image
-    chain). Multi-subject detection counts these grandparent characters
-    so a shot with 2 image siblings each wrapping a different person is
-    correctly identified as a couple/group scene.
+    Each record carries:
+      - ``type``         — node type (character / image / visual_asset / prompt / …)
+      - ``shortId``      — internal node identifier (used by multi-subject
+        detection; never surfaced to the LLM in the prompt body)
+      - ``ref_index``    — 1-based position in the dispatched
+        ``ref_media_ids`` array, or ``None`` when this record isn't a
+        ref-source (prompt / note nodes) or has no media. Drives the
+        ``ref_image_N`` labels in ``_format_user_message`` so the LLM
+        binds subjects to the correct input image positionally.
+      - ``brief / prompt / title / has_media`` — display fields
+      - ``subject_chars`` — shortIds of any character one hop further up
+        an ``image`` chain. Used to detect when two image siblings wrap
+        different people (couple/group scenes); translated to
+        ref_image labels at format time.
+
+    Ordering: records are produced in the same edge-iteration order the
+    frontend uses to build ``ref_media_ids``, so ``ref_index = 1``
+    points at the first item in that array.
     """
-    # Vision toggle: when OFF, the synthesiser should ignore the
-    # vision-derived `aiBrief` field on upstream nodes and fall back to
-    # the user's typed prompt. Read once outside the loop for cheapness.
-    vision_on = llm_secrets.read_vision_enabled()
+    # Source-of-truth rule: a node's `prompt` (typed by the user OR
+    # auto-generated by Claude) ALWAYS wins over its vision-derived
+    # `aiBrief`. Vision is only the fallback for upload-only nodes
+    # that have no prompt at all (e.g. user dropped a raw photo onto a
+    # visual_asset node and never typed anything).
 
     with get_session() as s:
         target = s.get(Node, node_id)
         if target is None:
             return [], None
-        edges = s.exec(select(Edge).where(Edge.target_id == node_id)).all()
+        # Order by Edge.id to match the frontend's natural insertion-
+        # order walk — without this the SQLite query plan could shuffle
+        # rows and break ref_index alignment with ref_media_ids.
+        edges = s.exec(
+            select(Edge).where(Edge.target_id == node_id).order_by(Edge.id)
+        ).all()
         upstream_ids = [e.source_id for e in edges]
         records: list[dict] = []
+        next_ref_index = 1  # 1-based to match user-facing "ref_image_1"
         for uid in upstream_ids:
             n = s.get(Node, uid)
             if n is None:
@@ -235,26 +280,44 @@ def _collect_upstream(node_id: int) -> tuple[list[dict], Optional[Node]]:
             data = n.data or {}
             ai_brief = data.get("aiBrief") if isinstance(data.get("aiBrief"), str) else None
             user_prompt = data.get("prompt") if isinstance(data.get("prompt"), str) else None
-            # When vision is OFF, the user's typed prompt stands in for
-            # the missing aiBrief. When vision is ON, aiBrief wins; the
-            # prompt is still kept on the record under its own key for
-            # the synth template (so prompt/note nodes still surface).
-            brief = ai_brief if vision_on and ai_brief else user_prompt or ai_brief
+            # Prompt-first resolution. If the node carries a prompt, that
+            # prompt is the description; aiBrief is ignored even when
+            # present. Only fall back to aiBrief for upload-only nodes
+            # that never received a prompt.
+            brief = user_prompt or ai_brief
             subject_chars: list[str] = []
             if n.type == "image":
-                gp_edges = s.exec(select(Edge).where(Edge.target_id == uid)).all()
+                gp_edges = s.exec(
+                    select(Edge).where(Edge.target_id == uid).order_by(Edge.id)
+                ).all()
                 for ge in gp_edges:
                     gp = s.get(Node, ge.source_id)
                     if gp is not None and gp.type == "character":
                         subject_chars.append(gp.short_id)
+            # Accept either the singular `mediaId` (single-variant node)
+            # or the variant list `mediaIds` (multi-variant). The
+            # frontend's `collectUpstreamRefMediaIds` already expands
+            # `mediaIds` into the wire payload — we mirror the same
+            # acceptance here so multi-variant nodes still get a
+            # `ref_image_N` label even if `mediaId` happens to be unset.
+            mids = data.get("mediaIds")
+            has_media = bool(
+                (isinstance(data.get("mediaId"), str) and data.get("mediaId"))
+                or (isinstance(mids, list) and any(isinstance(m, str) and m for m in mids))
+            )
+            ref_index: Optional[int] = None
+            if n.type in _REF_SOURCE_TYPES and has_media:
+                ref_index = next_ref_index
+                next_ref_index += 1
             records.append(
                 {
                     "type": n.type,
                     "shortId": n.short_id,
+                    "ref_index": ref_index,
                     "brief": brief if isinstance(brief, str) else None,
                     "prompt": user_prompt,
                     "title": data.get("title") if isinstance(data.get("title"), str) else None,
-                    "has_media": bool(isinstance(data.get("mediaId"), str) and data.get("mediaId")),
+                    "has_media": has_media,
                     "subject_chars": subject_chars,
                 }
             )
@@ -288,7 +351,8 @@ def _image_system_prompt(subject_count: int) -> str:
 
     1 subject → standard editorial single-model prompt.
     2+ subjects → append the multi-subject clause so Claude composes a
-    couple/group shot referencing every subject by shortId.
+    couple/group shot referencing every subject by their positional
+    `ref_image_N` label.
     """
     if subject_count >= 2:
         return _SYNTH_SYSTEM_IMAGE + _MULTI_SUBJECT_CLAUSE
@@ -296,20 +360,58 @@ def _image_system_prompt(subject_count: int) -> str:
 
 
 def _format_user_message(records: list[dict], target: Node) -> str:
-    """Render the upstream context into a compact prompt for the LLM."""
+    """Render the upstream context into a compact prompt for the LLM.
+
+    Reference images are labeled by their POSITIONAL slot
+    (``ref_image_1``, ``ref_image_2``, …) instead of by internal node
+    shortIds. The labels match the order of ``ref_media_ids`` Flow
+    receives on the wire, so when the LLM writes "ref_image_1 stands
+    on the left, ref_image_2 on the right" the model resolves each to
+    the correct input image. Earlier versions emitted ``#shortId``
+    tokens directly into the prompt — Flow doesn't parse them, and
+    they correlated with false-positive
+    ``PUBLIC_ERROR_PROMINENT_PEOPLE_FILTER_FAILED`` rejections from
+    Google's content classifier (the tokens look like @-handles).
+    """
+    # Translation map: shortId → "ref_image_N" label, for any node that
+    # has been assigned a ref position. Used to rewrite the
+    # `subject_chars` annotation on image records ("same subject as
+    # ref_image_1" instead of "embodies character: #abcd").
+    label_for_short_id: dict[str, str] = {}
+    for r in records:
+        if r.get("ref_index"):
+            label_for_short_id[r["shortId"]] = f"ref_image_{r['ref_index']}"
+
     by_type: dict[str, list[str]] = {}
     for r in records:
         # Prefer the AI-generated brief; fall back to the user-typed prompt
         # or title so a node with no brief still contributes something.
         text = r["brief"] or r["prompt"] or r["title"] or "(no description)"
+
+        # Cross-reference an image record to the character it embodies,
+        # if that character is also upstream as a ref. Translates each
+        # grandparent shortId to its ref_image label; characters not in
+        # the current ref set are silently dropped (they're context-only,
+        # not bindable).
         suffix = ""
-        # Annotate image upstream with the character it wraps so Claude
-        # can map "this image → person #foo" without re-deriving from
-        # potentially noisy prompt text.
         if r["type"] == "image" and r.get("subject_chars"):
-            chars = ", ".join(f"#{c}" for c in r["subject_chars"])
-            suffix = f"  [embodies character: {chars}]"
-        by_type.setdefault(r["type"], []).append(f"#{r['shortId']}: {text}{suffix}")
+            translated = [
+                label_for_short_id[c]
+                for c in r["subject_chars"]
+                if c in label_for_short_id
+            ]
+            if translated:
+                suffix = f"  [same subject as {', '.join(translated)}]"
+
+        ref_index = r.get("ref_index")
+        if ref_index is not None:
+            line = f"ref_image_{ref_index}: {text}{suffix}"
+        else:
+            # Non-ref records (prompt / note nodes — no media to bind).
+            # Render without a label since there's no positional slot
+            # for the LLM to reference.
+            line = f"- {text}"
+        by_type.setdefault(r["type"], []).append(line)
 
     parts: list[str] = []
     if by_type.get("character"):
@@ -348,14 +450,15 @@ def _format_user_message(records: list[dict], target: Node) -> str:
         )
 
     # Surface multi-subject scenes (couple, group) so Claude switches to
-    # the multi-subject system clause and composes a shared frame.
+    # the multi-subject system clause and composes a shared frame. The
+    # count matters; the LLM uses the `ref_image_N` labels already on
+    # the records above to bind each subject to its positional slot.
     subjects = _distinct_subjects(records)
     if len(subjects) >= 2:
         parts.append(
-            f"DISTINCT SUBJECTS DETECTED: {len(subjects)} people — "
-            + ", ".join(f"#{s}" for s in subjects)
-            + ". Treat as a single multi-subject scene; reference each by "
-            "their #shortId in the output."
+            f"DISTINCT SUBJECTS DETECTED: {len(subjects)} people. Treat "
+            "as a single multi-subject scene; describe each subject's "
+            "placement using the `ref_image_N` labels above."
         )
 
     target_data = target.data or {}

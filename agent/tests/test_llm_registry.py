@@ -69,7 +69,6 @@ def fake_providers(monkeypatch: pytest.MonkeyPatch):
         "claude": _FakeProvider("claude", supports_vision=True, available=True),
         "gemini": _FakeProvider("gemini", supports_vision=True, available=True),
         "openai": _FakeProvider("openai", supports_vision=True, available=True),
-        "grok":   _FakeProvider("grok",   supports_vision=True, available=True),
         # Sentinel for vision-gate tests — text-only future provider.
         "textonly": _FakeProvider("textonly", supports_vision=False, available=True),
     }
@@ -77,16 +76,22 @@ def fake_providers(monkeypatch: pytest.MonkeyPatch):
     return fakes
 
 
-# ── Default routing ────────────────────────────────────────────────────
+# ── No-default semantics ───────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_default_routes_to_claude(tmp_secrets_path, fake_providers):
-    """Brand-new install: secrets.json doesn't exist → every feature
-    defaults to claude."""
-    out = await registry.run_llm("auto_prompt", "hi")
-    assert out == "ok"
-    assert len(fake_providers["claude"].run_calls) == 1
-    assert fake_providers["gemini"].run_calls == []
+async def test_unconfigured_feature_raises_loud(tmp_secrets_path, fake_providers):
+    """Brand-new install: secrets.json doesn't exist → no provider
+    configured → registry must raise LLMError so the user sees a clear
+    "open AI Provider settings" message instead of silently routing to
+    a provider they didn't pick. The forced-setup dialog in the UI
+    intercepts before this dispatch path actually runs in practice."""
+    from flowboard.services.llm.base import LLMError
+
+    with pytest.raises(LLMError, match="No AI provider configured"):
+        await registry.run_llm("auto_prompt", "hi")
+    # No provider was invoked.
+    for fake in fake_providers.values():
+        assert fake.run_calls == []
 
 
 @pytest.mark.asyncio
@@ -100,17 +105,17 @@ async def test_user_picked_provider_is_used(tmp_secrets_path, fake_providers):
 
 @pytest.mark.asyncio
 async def test_features_route_independently(tmp_secrets_path, fake_providers):
-    """Auto-Prompt = gemini, Vision = openai, Planner = grok."""
+    """Auto-Prompt = gemini, Vision = openai, Planner = claude — verifies
+    each feature looks up its own provider rather than sharing one."""
     secrets.set_feature_provider("auto_prompt", "gemini")
     secrets.set_feature_provider("vision", "openai")
-    secrets.set_feature_provider("planner", "grok")
+    secrets.set_feature_provider("planner", "claude")
     await registry.run_llm("auto_prompt", "p1")
     await registry.run_llm("vision", "p2", attachments=["/tmp/x.jpg"])
     await registry.run_llm("planner", "p3")
     assert len(fake_providers["gemini"].run_calls) == 1
     assert len(fake_providers["openai"].run_calls) == 1
-    assert len(fake_providers["grok"].run_calls) == 1
-    assert fake_providers["claude"].run_calls == []
+    assert len(fake_providers["claude"].run_calls) == 1
 
 
 # ── Vision-capability gate ─────────────────────────────────────────────
@@ -147,13 +152,13 @@ async def test_no_attachments_through_text_only_provider_works(
 async def test_unavailable_provider_raises_before_dispatch(
     tmp_secrets_path, fake_providers
 ):
-    """User picked grok but no API key set → fail fast with a clear
+    """User picked openai but no key/CLI → fail fast with a clear
     error pointing them to Settings, NOT a longer HTTP timeout."""
-    fake_providers["grok"]._available = False
-    secrets.set_feature_provider("planner", "grok")
+    fake_providers["openai"]._available = False
+    secrets.set_feature_provider("planner", "openai")
     with pytest.raises(LLMError, match="not configured"):
         await registry.run_llm("planner", "x")
-    assert fake_providers["grok"].run_calls == []
+    assert fake_providers["openai"].run_calls == []
 
 
 # ── Unknown provider name ──────────────────────────────────────────────
@@ -172,6 +177,7 @@ async def test_unknown_provider_raises(tmp_secrets_path, fake_providers):
 @pytest.mark.asyncio
 async def test_run_forwards_all_kwargs(tmp_secrets_path, fake_providers):
     """system_prompt + attachments + timeout all reach the provider."""
+    secrets.set_feature_provider("auto_prompt", "claude")
     await registry.run_llm(
         "auto_prompt",
         "user prompt",

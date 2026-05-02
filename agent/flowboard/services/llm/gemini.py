@@ -51,13 +51,36 @@ _DEFAULT_MODEL: str | None = "gemini-2.5-flash"
 
 
 class GeminiProvider:
-    """Conforms to ``LLMProvider`` (structural typing)."""
+    """Conforms to ``LLMProvider`` (structural typing).
+
+    Concurrency note: Google's CodeAssist backend (the one the CLI talks
+    to) rate-limits **concurrent calls per user/session**. A second call
+    fired while the first is in flight comes back with HTTP 429
+    ``MODEL_CAPACITY_EXHAUSTED`` and the CLI then retries with backoff,
+    inflating the second call's wall time by 30+ seconds. This is NOT
+    user-quota or billing-tier related — Pro / Ultra plans hit it
+    identically. It's a per-call concurrency ceiling on the model's
+    shared capacity tier.
+
+    We serialize at the provider boundary (one ``asyncio.Semaphore(1)``
+    around the subprocess call) so every dispatch path — auto-prompt,
+    vision, planner, test endpoint — naturally queues into one in-flight
+    call at a time. Sequential calls land in ~7s each; we'd rather
+    queue cleanly than race and pay the 30s+ retry penalty.
+
+    Other providers (Claude, OpenAI Codex) don't need this — Anthropic's
+    and OpenAI's backends handle parallel calls fine.
+    """
 
     name: str = "gemini"
     supports_vision: bool = True  # Gemini Flash + Pro both have vision
 
     def __init__(self) -> None:
         self._available: Optional[bool] = None
+        # Module-level singleton in registry → one semaphore for the
+        # process lifetime. Lazy-allocated on first run() because asyncio
+        # Semaphore wants a running event loop in some Python versions.
+        self._call_lock: Optional[asyncio.Semaphore] = None
 
     # ── availability ──────────────────────────────────────────────────
 
@@ -114,6 +137,14 @@ class GeminiProvider:
 
         System prompt + image attachments are folded into the prompt body
         because the CLI doesn't expose them as flags — see module docstring.
+
+        The actual subprocess invocation is serialized through
+        ``self._call_lock`` (Semaphore(1)) — see class docstring for the
+        CodeAssist backend concurrency rationale. Time spent waiting in
+        the lock counts against the caller's ``timeout`` budget; if a
+        Vision call holds the lock for 7s and an Auto-Prompt is queued
+        behind it with a 90s timeout, Auto-Prompt has 83s of work time
+        once it acquires.
         """
         # Build the composite prompt: system block, user prompt, attachments.
         parts: list[str] = []
@@ -135,6 +166,22 @@ class GeminiProvider:
             args += ["-m", model]
         args += ["-p", full_prompt]
 
+        # Lazy-init the semaphore on the running loop. The wait + the
+        # subprocess + communicate all live inside the lock so a second
+        # caller can't slip in between proc spawn and proc.communicate.
+        if self._call_lock is None:
+            self._call_lock = asyncio.Semaphore(1)
+        async with self._call_lock:
+            return await self._invoke_locked(args, timeout=timeout)
+
+    async def _invoke_locked(
+        self, args: list[str], *, timeout: float
+    ) -> str:
+        """Subprocess + wait + decode, assumed to be holding ``_call_lock``.
+
+        Split out so tests can target the unlocked invocation path
+        directly when we want to assert subprocess args without
+        timing the semaphore."""
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,

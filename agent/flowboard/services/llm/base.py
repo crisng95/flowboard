@@ -1,6 +1,6 @@
 """Protocol + shared types for the multi-LLM provider layer.
 
-Every provider implementation (Claude / Gemini / OpenAI / Grok) conforms to
+Every provider implementation (Claude / Gemini / OpenAI Codex) conforms to
 ``LLMProvider``. The registry (``registry.py``) is the only thing that
 knows the concrete classes; everything else routes through ``run_llm``.
 

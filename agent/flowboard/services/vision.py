@@ -1,14 +1,15 @@
 """AI-vision brief generation for cached media.
 
-Asks the configured Vision provider (Claude / Gemini / OpenAI / Grok)
+Asks the configured Vision provider (Claude / Gemini / OpenAI Codex)
 to summarise an image into a short factual description ("aiBrief").
 Used by:
 - Visual asset / character nodes — annotate uploaded or generated images
 - Auto-prompt synthesizer — feed those briefs into a downstream prompt
 
 Provider routing goes through ``run_llm("vision", ...)``. The user picks
-which one in Settings → AI Providers; default is Claude. Since all 4
-providers in v1.2.0 support vision, the registry's vision-capability
+which one in Settings → AI Providers — there is no default; the forced
+setup gate ensures one is chosen before the app is usable. All three
+shipped providers support vision, so the registry's vision-capability
 gate is currently a defensive no-op — it kicks in if a future text-only
 provider is added.
 

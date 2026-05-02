@@ -382,6 +382,126 @@ async def test_worker_gen_video_bails_on_per_op_error(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_worker_gen_video_partial_batch_keeps_succeeded(
+    client, monkeypatch,
+):
+    """Real-world repro: a 4-variant i2v batch where Veo blocks 1 clip
+    with PUBLIC_ERROR_UNSAFE_GENERATION and the other 3 succeed. The
+    request as a whole must finish `done` so the user keeps the 3
+    rendered videos; the failed slot is preserved as a positional
+    `None` in `media_ids` and the per-op error is summarised in
+    `partial_error` so the UI can flag which variant got filtered."""
+    from flowboard.worker import processor as proc
+
+    monkeypatch.setattr(proc, "VIDEO_POLL_INTERVAL_S", 0.01)
+    monkeypatch.setattr(proc, "VIDEO_POLL_MAX_CYCLES", 50)
+
+    class _StubSdk:
+        async def gen_video(self, **kwargs):
+            # Order matters — the worker preserves dispatch order in
+            # `media_ids` so slot 1 (the second op) is the failure.
+            return {
+                "raw": {},
+                "operation_names": ["op-a", "op-b-bad", "op-c", "op-d"],
+            }
+
+        async def check_async(self, names):
+            return {
+                "raw": {},
+                "operations": [
+                    {
+                        "name": "op-a",
+                        "done": True,
+                        "media_entries": [
+                            {
+                                "media_id": "vid-a",
+                                "url": "https://flow-content.google/v/a",
+                                "mediaType": "video",
+                            }
+                        ],
+                    },
+                    {
+                        "name": "op-b-bad",
+                        "done": True,
+                        "media_entries": [],
+                        "error": "PUBLIC_ERROR_UNSAFE_GENERATION",
+                    },
+                    {
+                        "name": "op-c",
+                        "done": True,
+                        "media_entries": [
+                            {
+                                "media_id": "vid-c",
+                                "url": "https://flow-content.google/v/c",
+                                "mediaType": "video",
+                            }
+                        ],
+                    },
+                    {
+                        "name": "op-d",
+                        "done": True,
+                        "media_entries": [
+                            {
+                                "media_id": "vid-d",
+                                "url": "https://flow-content.google/v/d",
+                                "mediaType": "video",
+                            }
+                        ],
+                    },
+                ],
+            }
+
+    monkeypatch.setattr(proc, "get_flow_sdk", lambda: _StubSdk())
+
+    row = client.post(
+        "/api/requests",
+        json={
+            "type": "gen_video",
+            "params": {
+                "prompt": "x",
+                "project_id": "abcd1234",
+                "start_media_ids": ["src-a", "src-b", "src-c", "src-d"],
+            },
+        },
+    ).json()
+
+    w = WorkerController(handlers={"gen_video": proc._handle_gen_video})
+    task = asyncio.create_task(w.start())
+    try:
+        w.enqueue(row["id"])
+        for _ in range(200):
+            await asyncio.sleep(0.02)
+            current = client.get(f"/api/requests/{row['id']}").json()
+            if current["status"] not in ("queued", "running"):
+                break
+        # Whole request must succeed — losing 1 clip out of 4 doesn't
+        # invalidate the other 3.
+        assert current["status"] == "done", current
+        # Top-level error stays None — the partial info is in result.
+        assert current.get("error") in (None, "")
+        # Positional alignment: slot 1 (the blocked variant) is None.
+        assert current["result"]["media_ids"] == [
+            "vid-a", None, "vid-c", "vid-d",
+        ]
+        # Per-op error map names exactly the failed op.
+        assert current["result"]["op_errors"] == {
+            "op-b-bad": "PUBLIC_ERROR_UNSAFE_GENERATION",
+        }
+        # `slot_errors` mirrors `media_ids` indexing — None for the
+        # succeeded slots, the error code for the blocked slot. Lets
+        # the viewer render the exact filter reason per-tile.
+        assert current["result"]["slot_errors"] == [
+            None, "PUBLIC_ERROR_UNSAFE_GENERATION", None, None,
+        ]
+        partial = current["result"]["partial_error"]
+        assert "1/4 variants blocked" in partial
+        assert "PUBLIC_ERROR_UNSAFE_GENERATION" in partial
+    finally:
+        w.request_shutdown()
+        await asyncio.wait_for(task, timeout=2.0)
+
+
+@pytest.mark.asyncio
 async def test_worker_gen_video_dedupes_repeat_entries_across_polls(
     client, monkeypatch,
 ):

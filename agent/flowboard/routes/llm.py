@@ -40,19 +40,17 @@ class _ApiKeyBody(BaseModel):
 
 
 class _ConfigBody(BaseModel):
-    """PUT /api/llm/config: any subset of the three features + the
-    Vision-toggle flag."""
+    """PUT /api/llm/config: any subset of the three features."""
     auto_prompt: Optional[str] = None
     vision: Optional[str] = None
     planner: Optional[str] = None
-    visionEnabled: Optional[bool] = None
 
 
 # Whitelist for the writable feature → provider mapping. Hand-edited
 # secrets.json with garbage values is tolerated by `read_active_providers`,
 # but the HTTP surface must reject input that wouldn't route anywhere.
-_VALID_PROVIDER_NAMES = {"claude", "gemini", "openai", "grok"}
-_VALID_FEATURES = {"auto_prompt", "vision", "planner"}
+_VALID_PROVIDER_NAMES = {"claude", "gemini", "openai"}
+_VALID_FEATURES = ("auto_prompt", "vision", "planner")
 
 
 # ── GET /api/llm/providers ────────────────────────────────────────────
@@ -82,10 +80,6 @@ async def list_providers() -> list[dict]:
                 or getattr(provider, "_cli_available", False)
             )
             requires_key = False  # CLI path doesn't require it
-        elif provider.name == "grok":
-            mode = "api"
-            configured = bool(secrets.get_api_key("grok"))
-            requires_key = True
         else:
             mode = "cli"
             configured = available
@@ -109,13 +103,13 @@ async def list_providers() -> list[dict]:
 async def set_provider_key(name: str, body: _ApiKeyBody) -> dict:
     """Save (or clear, when `apiKey: null`) a provider's API key.
 
-    Only Grok and OpenAI accept keys. Setting a key on a CLI-only
-    provider is a 400 — the UI shouldn't reach this endpoint for them
-    in the first place, but defend in depth.
+    Only OpenAI's API mode accepts keys (its CLI path doesn't need one).
+    Setting a key on a CLI-only provider is a 400 — the UI shouldn't
+    reach this endpoint for them in the first place, but defend in depth.
     """
     if name not in _VALID_PROVIDER_NAMES:
         raise HTTPException(status_code=404, detail=f"unknown provider {name!r}")
-    if name not in {"openai", "grok"}:
+    if name != "openai":
         raise HTTPException(
             status_code=400,
             detail=f"{name} doesn't accept API keys; uses CLI auth instead",
@@ -177,10 +171,17 @@ async def test_provider(name: str) -> dict:
 
 @router.get("/config")
 def get_config() -> dict:
-    """Return the feature → provider mapping (defaults filled in) plus
-    feature toggles like `visionEnabled`."""
-    out = dict(secrets.read_active_providers())
-    out["visionEnabled"] = secrets.read_vision_enabled()
+    """Return the feature → provider mapping plus the ``configured`` flag.
+
+    Per-feature values are ``str | null`` — null means the user hasn't
+    pinned a provider for that feature yet. ``configured`` is True only
+    when all three features are pinned at the same provider (single-
+    provider UI invariant); the frontend uses this to gate the forced
+    AI Provider setup dialog on first run.
+    """
+    saved = secrets.read_active_providers()
+    out: dict = {f: saved.get(f) for f in _VALID_FEATURES}
+    out["configured"] = secrets.is_active_providers_configured()
     return out
 
 
@@ -201,10 +202,6 @@ def set_config(body: _ConfigBody) -> dict:
     if not updates:
         raise HTTPException(status_code=400, detail="no fields to update")
 
-    # Split feature-routing entries (feature → provider strings) from
-    # toggle flags so the validation below can be feature-specific.
-    vision_enabled = updates.pop("visionEnabled", None)
-
     for feature, provider_name in updates.items():
         if feature not in _VALID_FEATURES:
             raise HTTPException(status_code=400, detail=f"unknown feature {feature!r}")
@@ -214,10 +211,5 @@ def set_config(body: _ConfigBody) -> dict:
             )
     for feature, provider_name in updates.items():
         secrets.set_feature_provider(feature, provider_name)
-    if vision_enabled is not None:
-        secrets.set_vision_enabled(bool(vision_enabled))
-    logger.info(
-        "llm: config updated providers=%s vision_enabled=%s",
-        updates, vision_enabled,
-    )
+    logger.info("llm: config updated providers=%s", updates)
     return {"ok": True}

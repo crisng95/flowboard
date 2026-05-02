@@ -11,9 +11,8 @@ import type { LLMProviderInfo, LLMProviderName } from "../../api/client";
  *     pending selection, hollow when not
  *   - Active border when selected; muted border otherwise
  *   - Disabled visual (lower opacity, no pointer) when the provider
- *     can't be activated yet (CLI missing for OAuth, key missing for
- *     Grok) — clicking still selects so the panel below can guide
- *     the user through setup.
+ *     can't be activated yet (CLI missing for OAuth) — clicking still
+ *     selects so the panel below can guide the user through setup.
  */
 
 interface ProviderCardProps {
@@ -34,7 +33,6 @@ const PROVIDER_META: Record<
   claude:  { name: "Claude Code",   tagline: "Anthropic CLI · OAuth" },
   gemini:  { name: "Gemini CLI",    tagline: "Google CLI · OAuth" },
   openai:  { name: "OpenAI Codex",  tagline: "ChatGPT CLI · OAuth" },
-  grok:    { name: "Grok",          tagline: "xAI · API key" },
 };
 
 function statusLabel(p: LLMProviderInfo): string {

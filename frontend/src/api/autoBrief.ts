@@ -5,10 +5,22 @@ import { useBoardStore } from "../store/board";
 // silently no-ops on failure (vision is a quality-of-life feature, not a
 // blocker for the upload flow). Idempotent — won't re-call if a brief
 // already exists for the same mediaId.
+//
+// Prompt-first rule: when a node already carries a `prompt` (typed by the
+// user, or auto-generated for a generation result), that prompt is the
+// authoritative description for downstream synth — vision adds nothing
+// and would just burn an LLM call. We skip and leave aiBrief unset.
+// Vision only runs for upload-only nodes that never receive a prompt.
 export async function requestAutoBrief(rfId: string, mediaId: string): Promise<void> {
   const { nodes } = useBoardStore.getState();
   const node = nodes.find((n) => n.id === rfId);
   if (!node) return;
+  if (
+    typeof node.data.prompt === "string" &&
+    node.data.prompt.trim().length > 0
+  ) {
+    return;
+  }
   if (
     node.data.aiBrief &&
     typeof node.data.aiBrief === "string" &&

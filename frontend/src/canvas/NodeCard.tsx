@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { useBoardStore, type FlowboardNodeData, type FlowNode } from "../store/board";
 import { useGenerationStore } from "../store/generation";
-import { mediaUrl, patchNode, uploadImage, uploadImageFromUrl } from "../api/client";
+import { mediaUrl, patchEdge, patchNode, uploadImage, uploadImageFromUrl } from "../api/client";
 import { requestAutoBrief } from "../api/autoBrief";
 
 const ICON: Record<string, string> = {
@@ -249,12 +249,19 @@ function ImageTile({
   isProcessing,
   alt,
   onClick,
+  onUseAsRef,
 }: {
   rfId: string;
   mediaId: string | undefined;
   isProcessing: boolean;
   alt: string;
   onClick?: () => void;
+  /** When provided, render an overlay button on hover that pins this
+   * variant to a downstream edge and triggers Generate on the target.
+   * The parent only sets this when the node has multi-variant output
+   * AND has a downstream image/video target — keeps the affordance
+   * scoped to cases where it actually does something. */
+  onUseAsRef?: () => void;
 }) {
   const [attempt, setAttempt] = useState(0);
   const [loaded, setLoaded] = useState(false);
@@ -321,6 +328,148 @@ function ImageTile({
           }}
         />
       )}
+      {onUseAsRef && (
+        // Overlay action — visible on hover via CSS. Stops propagation
+        // so clicking the chip doesn't also trigger the tile's
+        // openResultViewer. Title doubles as accessible label.
+        <button
+          type="button"
+          className="thumbnail-tile__use-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            onUseAsRef();
+          }}
+          title="Use this variant as the reference for a downstream node"
+          aria-label="Use this variant as reference"
+        >
+          Use →
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Variant-click → bind upstream variant to a downstream edge ───────────
+//
+// Workflow: user clicks "Use →" on a specific variant tile of an
+// upstream multi-variant node. We find the downstream image/video
+// targets connected to it, pin the chosen variant index on the right
+// edge (PATCH /api/edges/{id}), refresh the local edge.data so the
+// `v{N+1}` chip surfaces immediately, and then dispatch Generate on
+// the target. One click → one pinned ref → one Flow API call.
+//
+// Multi-target case: when the upstream has 2+ outgoing edges to gen
+// targets, we surface a small picker so the user disambiguates which
+// downstream this variant should feed.
+
+interface VariantTarget {
+  edgeId: string;
+  targetRfId: string;
+  title: string;
+  kind: "image" | "video";
+  hasPrompt: boolean;
+}
+
+interface VariantPickerState {
+  variantIdx: number;
+  targets: VariantTarget[];
+}
+
+function collectGenTargets(srcRfId: string): VariantTarget[] {
+  const { nodes, edges } = useBoardStore.getState();
+  const out: VariantTarget[] = [];
+  for (const e of edges) {
+    if (e.source !== srcRfId) continue;
+    const t = nodes.find((n) => n.id === e.target);
+    if (!t) continue;
+    if (t.data.type !== "image" && t.data.type !== "video") continue;
+    out.push({
+      edgeId: e.id,
+      targetRfId: t.id,
+      title: t.data.title || `#${t.data.shortId}`,
+      kind: t.data.type as "image" | "video",
+      hasPrompt: typeof t.data.prompt === "string" && t.data.prompt.trim().length > 0,
+    });
+  }
+  return out;
+}
+
+async function applyVariantToTarget(variantIdx: number, target: VariantTarget) {
+  const edgeDbId = parseInt(target.edgeId, 10);
+  if (!isNaN(edgeDbId)) {
+    try {
+      const updated = await patchEdge(edgeDbId, {
+        source_variant_idx: variantIdx,
+      });
+      useBoardStore.getState().updateEdgeData(target.edgeId, {
+        sourceVariantIdx: updated.source_variant_idx,
+      });
+    } catch (err) {
+      useGenerationStore.setState({
+        error: `Couldn't pin variant: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return;
+    }
+  }
+  // If the target doesn't have a prompt yet, we open the GenerationDialog
+  // instead of dispatching blind — the dialog gives the user the
+  // auto-prompt path or a place to type. The pin we just persisted will
+  // apply to whichever Generate is fired from the dialog.
+  const targetNode = useBoardStore
+    .getState()
+    .nodes.find((n) => n.id === target.targetRfId);
+  if (!targetNode) return;
+  const prompt = (targetNode.data.prompt ?? "").trim();
+  if (!prompt) {
+    useGenerationStore.getState().openGenerationDialog(target.targetRfId, "");
+    return;
+  }
+  await useGenerationStore.getState().dispatchGeneration(target.targetRfId, {
+    prompt,
+    kind: target.kind,
+    aspectRatio: targetNode.data.aspectRatio,
+    variantCount: targetNode.data.variantCount,
+  });
+}
+
+function VariantPicker({
+  state,
+  onPick,
+  onCancel,
+}: {
+  state: VariantPickerState;
+  onPick(target: VariantTarget): void;
+  onCancel(): void;
+}) {
+  return (
+    <div className="variant-picker" role="dialog" aria-label="Pick downstream target">
+      <div className="variant-picker__heading">
+        Use variant v{state.variantIdx + 1} for:
+      </div>
+      <ul className="variant-picker__list">
+        {state.targets.map((t) => (
+          <li key={t.edgeId}>
+            <button
+              type="button"
+              className="variant-picker__btn"
+              onClick={() => onPick(t)}
+            >
+              {t.title}
+              <span className="variant-picker__kind">
+                {t.kind === "video" ? "video" : "image"}
+                {!t.hasPrompt ? " · empty" : ""}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        className="variant-picker__cancel"
+        onClick={onCancel}
+      >
+        Cancel
+      </button>
     </div>
   );
 }
@@ -334,6 +483,11 @@ function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  // Variant-picker state for the multi-downstream "Use →" flow. MUST be
+  // declared above the empty-state early-return below — Rules of Hooks
+  // require the same call order on every render, and the empty/filled
+  // branches change which JSX renders but not which hooks run.
+  const [picker, setPicker] = useState<VariantPickerState | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function persistMedia(newMediaId: string, aspectRatio?: string) {
@@ -470,12 +624,33 @@ function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
     );
   }
 
+  // Variant-click flow: when this node is multi-variant AND has a
+  // downstream image/video target, each tile gets a "Use →" overlay
+  // button. Clicking it pins this variant on the appropriate edge and
+  // dispatches Generate on the target. See `applyVariantToTarget` above.
+  const isMultiVariant = ids.length >= 2;
+
+  function onUseVariantClick(variantIdx: number) {
+    const targets = collectGenTargets(rfId);
+    if (targets.length === 0) {
+      useGenerationStore.setState({
+        error: "Connect this image to a downstream image/video target first.",
+      });
+      return;
+    }
+    if (targets.length === 1) {
+      void applyVariantToTarget(variantIdx, targets[0]);
+      return;
+    }
+    setPicker({ variantIdx, targets });
+  }
+
   const tiles: JSX.Element[] = [];
   for (let i = 0; i < tileCount; i++) {
-    const mid = ids[i];
-    // Click a tile → open viewer at that variant. There is no "active /
-    // selected variant" anymore — every variant is equally available
-    // downstream (image refs send all, video can multi-select).
+    const rawMid = ids[i];
+    const mid = typeof rawMid === "string" && rawMid ? rawMid : undefined;
+    // Click a tile → open viewer at that variant. The "Use →" overlay
+    // (when present) is a separate action handled by onUseAsRef.
     const onClick = mid
       ? () => useGenerationStore.getState().openResultViewer(rfId, i)
       : undefined;
@@ -487,6 +662,11 @@ function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
         isProcessing={isProcessing && !mid}
         alt={data.title}
         onClick={onClick}
+        onUseAsRef={
+          isMultiVariant && mid && !isProcessing
+            ? () => onUseVariantClick(i)
+            : undefined
+        }
       />
     );
   }
@@ -501,6 +681,16 @@ function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
       <div className={`thumbnail-grid thumbnail-grid--${tileCount}`}>
         {tiles}
       </div>
+      {picker && (
+        <VariantPicker
+          state={picker}
+          onPick={(target) => {
+            void applyVariantToTarget(picker.variantIdx, target);
+            setPicker(null);
+          }}
+          onCancel={() => setPicker(null)}
+        />
+      )}
       <BriefHint data={data} />
       {hiddenFileInput}
       {error && <p className="character-drop__error" role="alert">{error}</p>}
@@ -515,6 +705,7 @@ function VideoTile({
   posterMediaId,
   isProcessing,
   isError,
+  slotError,
   alt,
   onClick,
 }: {
@@ -527,6 +718,11 @@ function VideoTile({
   posterMediaId?: string | undefined;
   isProcessing: boolean;
   isError: boolean;
+  // Per-slot error code (e.g. "PUBLIC_ERROR_UNSAFE_GENERATION") when
+  // this specific variant got blocked by Veo's safety classifier. Only
+  // surfaced for the partial-batch case so the tile can render a
+  // distinctive ⚠ + tooltip instead of the generic empty placeholder.
+  slotError?: string | null;
   alt: string;
   onClick?: () => void;
 }) {
@@ -545,19 +741,55 @@ function VideoTile({
     };
   }, [mediaId]);
 
+  const blockedTitle = slotError
+    ? `Variant blocked: ${slotError} — click for details`
+    : undefined;
+
   const placeholder = (
     <div
-      className={`video-placeholder${isProcessing ? " video-placeholder--processing" : ""}${isError ? " video-placeholder--error" : ""}`}
+      className={`video-placeholder${isProcessing ? " video-placeholder--processing" : ""}${isError ? " video-placeholder--error" : ""}${slotError ? " video-placeholder--blocked" : ""}`}
       aria-hidden="true"
+      title={blockedTitle}
     >
-      <span className="video-play">▶</span>
-      <span className="video-duration">0:00</span>
+      {slotError ? (
+        <>
+          <span className="video-blocked-icon">⚠</span>
+          <span className="video-blocked-label">Blocked</span>
+        </>
+      ) : (
+        <>
+          <span className="video-play">▶</span>
+          <span className="video-duration">0:00</span>
+        </>
+      )}
     </div>
   );
 
   if (!mediaId) {
-    // Pending tile — just the placeholder (with shimmer when processing).
-    return <div className="video-tile">{placeholder}</div>;
+    // Pending / failed tile — just the placeholder. When `slotError` is
+    // set the placeholder swaps to the warning treatment above. We
+    // still attach onClick so the user can click through to the
+    // detail viewer to read the full error.
+    const cls = `video-tile${slotError ? " video-tile--blocked" : ""}${onClick ? " video-tile--clickable" : ""}`;
+    return (
+      <div
+        className={cls}
+        role={onClick ? "button" : undefined}
+        tabIndex={onClick ? 0 : undefined}
+        aria-label={blockedTitle ?? (onClick ? `Open variant ${alt}` : undefined)}
+        title={blockedTitle}
+        onClick={onClick}
+        onKeyDown={(e) => {
+          if (!onClick) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onClick();
+          }
+        }}
+      >
+        {placeholder}
+      </div>
+    );
   }
 
   const givenUp = attempt >= MAX_VIDEO_RETRIES;
@@ -635,6 +867,12 @@ function VideoBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
   const ids = data.mediaIds ?? (data.mediaId ? [data.mediaId] : []);
   const isProcessing = data.status === "queued" || data.status === "running";
   const isError = data.status === "error";
+  // Partial-batch case: status="done" + an error string means some
+  // variants succeeded and others got blocked (filter / timeout).
+  // Slot-level signal: `mediaIds[i] === null` is a positional
+  // placeholder for a blocked variant — render the tile as filtered
+  // rather than empty/processing.
+  const isPartial = data.status === "done" && Boolean(data.error);
 
   // Resolve the upstream image used as the i2v source — its variants
   // become the per-tile poster so the static preview shows the same
@@ -646,26 +884,37 @@ function VideoBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
   const upstreamNode = upstreamEdge
     ? nodes.find((n) => n.id === upstreamEdge.source)
     : undefined;
-  const posterIds: string[] =
+  const posterIds: (string | null)[] =
     upstreamNode?.data.mediaIds ??
     (upstreamNode?.data.mediaId ? [upstreamNode.data.mediaId] : []);
 
   const tiles: JSX.Element[] = [];
   for (let i = 0; i < tileCount; i++) {
-    const mid = ids[i];
-    const onClick = mid
-      ? () => useGenerationStore.getState().openResultViewer(rfId, i)
-      : undefined;
+    const rawMid = ids[i];
+    const mid = typeof rawMid === "string" && rawMid ? rawMid : undefined;
+    const slotError = data.slotErrors?.[i] ?? null;
+    const slotBlocked = isPartial && rawMid === null;
+    // Even blocked tiles get a click handler so the user can open the
+    // detail viewer and read the full filter reason — without it the
+    // tile is dead and the user has no way to understand why it's
+    // empty.
+    const onClick =
+      mid || slotBlocked
+        ? () => useGenerationStore.getState().openResultViewer(rfId, i)
+        : undefined;
     // Pick the i-th source variant if available; fall back to the
-    // first source for single-source i2v where every video shares it.
-    const poster = posterIds[i] ?? posterIds[0];
+    // first non-null source for single-source i2v where every video
+    // shares it.
+    const rawPoster = posterIds[i] ?? posterIds.find((p) => Boolean(p)) ?? null;
+    const poster = typeof rawPoster === "string" ? rawPoster : undefined;
     tiles.push(
       <VideoTile
         key={i}
         mediaId={mid}
         posterMediaId={poster}
         isProcessing={isProcessing && !mid}
-        isError={isError && !mid}
+        isError={(isError && !mid) || slotBlocked}
+        slotError={slotError}
         alt={data.title}
         onClick={onClick}
       />,
@@ -677,8 +926,13 @@ function VideoBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
       <div className={`video-grid video-grid--${tileCount}`}>
         {tiles}
       </div>
-      {isError && data.error && (
-        <p className="node-error" role="alert">{data.error}</p>
+      {(isError || isPartial) && data.error && (
+        <p
+          className={`node-error${isPartial ? " node-error--partial" : ""}`}
+          role={isError ? "alert" : "status"}
+        >
+          {data.error}
+        </p>
       )}
     </div>
   );
@@ -1096,13 +1350,15 @@ export function NodeCard(props: NodeProps<FlowNode>) {
     e.stopPropagation();
     // Download every variant, not just the first. `mediaIds` is the full
     // list — `mediaId` is just the active variant — so a 4-variant image
-    // node was previously losing 3 of its 4 outputs.
-    const ids =
+    // node was previously losing 3 of its 4 outputs. Filter out null
+    // placeholders that the partial-batch path may leave in `mediaIds`.
+    const rawIds =
       data.mediaIds && data.mediaIds.length > 0
         ? data.mediaIds
         : data.mediaId
           ? [data.mediaId]
           : [];
+    const ids = rawIds.filter((m): m is string => typeof m === "string" && m.length > 0);
     if (ids.length === 0) return;
     const safeTitle = (data.title || data.type).replace(/[^A-Za-z0-9_-]+/g, "_");
     const ext = downloadExt(data.type);

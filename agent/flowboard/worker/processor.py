@@ -205,14 +205,20 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
 
     poll_attempts = 0
     last_poll: dict = {}
-    all_entries: list[dict] = []
     done_by_name: dict[str, bool] = {name: False for name in op_names}
-    op_error: Optional[str] = None
+    entry_by_name: dict[str, dict] = {}
+    op_errors: dict[str, str] = {}
 
+    # Per-op resolution: each operation in the batch resolves
+    # independently (success, content-filter rejection, or timeout). We
+    # used to break the whole loop on the first per-op error, which
+    # collapsed a 4-variant gen into a hard failure even when 3/4 clips
+    # had already rendered. Now we let every op terminate on its own
+    # and aggregate the outcome at the end so partial batches still
+    # surface the variants that did succeed.
     while (
         poll_attempts < VIDEO_POLL_MAX_CYCLES
         and not all(done_by_name.values())
-        and op_error is None
     ):
         await asyncio.sleep(VIDEO_POLL_INTERVAL_S)
         poll_attempts += 1
@@ -223,60 +229,100 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
             if not isinstance(op, dict):
                 continue
             name = op.get("name")
-            # Per-operation terminal failure (e.g. content filter
-            # PUBLIC_ERROR_AUDIO_FILTERED). Bail immediately rather than
-            # polling for the full 7-min timeout — Flow won't change its mind.
+            if not isinstance(name, str) or done_by_name.get(name, False):
+                continue
+            # Per-op terminal failure (e.g. content filter
+            # PUBLIC_ERROR_UNSAFE_GENERATION / PUBLIC_ERROR_AUDIO_FILTERED).
+            # Mark this op resolved-with-error and keep polling the rest.
             err = op.get("error")
             if isinstance(err, str) and err:
-                op_error = err
-                break
-            # Only collect entries the FIRST time an op transitions to
-            # done — otherwise every subsequent poll re-appends them and
-            # we end up with duplicates in `media_ids` (saw 7 entries
-            # for a 4-variant gen because ops 1-3 finished early and
-            # got re-collected on each later poll).
-            if op.get("done") and not done_by_name.get(name, False):
                 done_by_name[name] = True
+                op_errors[name] = err
+                continue
+            if op.get("done"):
+                done_by_name[name] = True
+                # Each op is expected to yield exactly one media entry
+                # on success; capture the first valid one.
                 for e in op.get("media_entries") or []:
-                    all_entries.append(e)
+                    if isinstance(e, dict) and e.get("media_id"):
+                        entry_by_name[name] = e
+                        break
 
-    if op_error is not None:
+    # Slots still unresolved after the max cycles — record as timeout
+    # so the partial summary names them alongside any filter failures.
+    for name in op_names:
+        if not done_by_name.get(name) and name not in op_errors:
+            op_errors[name] = "timeout_waiting_video"
+
+    # Build positional outcome aligned to dispatch order. Slot i in
+    # `media_ids` corresponds to slot i in the original
+    # `start_media_ids` array, so the frontend can keep upstream-image
+    # variant ↔ video-variant alignment even when middle slots fail.
+    # `slot_errors` mirrors the same indexing — `None` for succeeded
+    # slots, error code for blocked ones — so the detail viewer can
+    # render the exact filter reason on the blocked tile without
+    # having to know the internal Flow op-name keys.
+    positional_ids: list[Optional[str]] = []
+    slot_errors: list[Optional[str]] = []
+    succeeded_entries: list[dict] = []
+    for name in op_names:
+        e = entry_by_name.get(name)
+        if isinstance(e, dict) and isinstance(e.get("media_id"), str):
+            positional_ids.append(e["media_id"])
+            succeeded_entries.append(e)
+            slot_errors.append(None)
+        else:
+            positional_ids.append(None)
+            slot_errors.append(op_errors.get(name))
+
+    success_count = sum(1 for x in positional_ids if x)
+    total = len(op_names)
+
+    if success_count == 0:
+        # No op produced a clip — surface the first error verbatim.
+        # When all errors are "timeout_waiting_video" this matches the
+        # legacy single-op timeout contract; tests rely on it.
+        first_err = next(iter(op_errors.values()), "timeout_waiting_video")
         return (
             {
                 "raw_dispatch": dispatch,
                 "last_poll": last_poll,
                 "operation_names": op_names,
                 "done": done_by_name,
+                "op_errors": op_errors,
             },
-            op_error,
+            first_err,
         )
 
-    if not all(done_by_name.values()):
-        return (
-            {
-                "raw_dispatch": dispatch,
-                "last_poll": last_poll,
-                "operation_names": op_names,
-                "done": done_by_name,
-            },
-            "timeout_waiting_video",
-        )
-
-    entries_with_urls = [e for e in all_entries if isinstance(e, dict) and e.get("url")]
+    # ≥1 op succeeded — ingest only the bytes we actually have.
+    entries_with_urls = [
+        e for e in succeeded_entries if isinstance(e, dict) and e.get("url")
+    ]
     if entries_with_urls:
         try:
             media_service.ingest_urls(entries_with_urls)
         except Exception:  # noqa: BLE001
             logger.exception("auto-ingest from gen_video response failed")
 
-    media_ids = [e["media_id"] for e in all_entries if isinstance(e, dict) and e.get("media_id")]
+    partial_error: Optional[str] = None
+    if op_errors:
+        # De-dup distinct error codes for a compact one-line summary
+        # (e.g. "1/4 variants blocked: PUBLIC_ERROR_UNSAFE_GENERATION").
+        unique_errs = sorted({err for err in op_errors.values()})
+        partial_error = (
+            f"{len(op_errors)}/{total} variants blocked: {', '.join(unique_errs)}"
+        )
+
     return (
         {
             "raw_dispatch": dispatch,
             "last_poll": last_poll,
             "operation_names": op_names,
-            "media_ids": media_ids,
-            "media_entries": all_entries,
+            "media_ids": positional_ids,
+            "media_entries": succeeded_entries,
+            "op_errors": op_errors,
+            "slot_errors": slot_errors,
+            "partial_error": partial_error,
         },
         None,
     )

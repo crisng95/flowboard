@@ -34,6 +34,18 @@ class Edge(SQLModel, table=True):
     source_id: int = Field(foreign_key="node.id")
     target_id: int = Field(foreign_key="node.id")
     kind: str = "ref"
+    # Per-edge variant pin: when the source node holds multiple variants
+    # (`data.mediaIds`), this index selects WHICH variant feeds the
+    # downstream as a reference. None = "fall back to the source's
+    # active mediaId" (the natural single-variant case).
+    #
+    # Why per-edge instead of expanding all variants on the wire: each
+    # variant of the same upstream produces a SEPARATE Flow API call
+    # (Flow doesn't bind output[i] to input[i] when both are
+    # multi-variant). Pinning lets the user say "use variant 2 for
+    # downstream A, variant 3 for downstream B" with two clicks; the
+    # edge UI surfaces the pinned index so the binding stays visible.
+    source_variant_idx: Optional[int] = None
 
 
 class Request(SQLModel, table=True):

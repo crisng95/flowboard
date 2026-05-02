@@ -139,6 +139,11 @@ export interface EdgeDTO {
   source_id: number;
   target_id: number;
   kind: string;
+  // null when the upstream is single-variant (or the edge hasn't been
+  // pinned yet — natural fallback to source.mediaId at dispatch time).
+  // 0-based index into the source node's `data.mediaIds[]` when the
+  // user has explicitly picked a variant.
+  source_variant_idx: number | null;
 }
 
 export interface BoardDetail {
@@ -237,10 +242,27 @@ export function createEdge(input: {
   source_id: number;
   target_id: number;
   kind?: string;
+  source_variant_idx?: number | null;
 }): Promise<EdgeDTO> {
   return api<EdgeDTO>("/api/edges", {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+/**
+ * Update an edge's variant pin without recreating it. Pass
+ * `source_variant_idx: null` explicitly to clear the pin (revert to
+ * the source's active mediaId at dispatch time). Omit the field to
+ * leave it untouched.
+ */
+export function patchEdge(
+  id: number,
+  patch: { source_variant_idx?: number | null },
+): Promise<EdgeDTO> {
+  return api<EdgeDTO>(`/api/edges/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
   });
 }
 
@@ -550,7 +572,7 @@ export async function uploadImageFromUrl(
 // See .omc/plans/multi-llm-provider-legacy.md → UI Specification → Frontend ↔
 // backend contract for the full shape.
 
-export type LLMProviderName = "claude" | "gemini" | "openai" | "grok";
+export type LLMProviderName = "claude" | "gemini" | "openai";
 export type LLMFeature = "auto_prompt" | "vision" | "planner";
 export type LLMProviderMode = "cli" | "api" | "none";
 export type LLMLastError =
@@ -572,15 +594,15 @@ export interface LLMProviderInfo {
 }
 
 export interface LLMConfig {
-  auto_prompt: LLMProviderName;
-  vision: LLMProviderName;
-  planner: LLMProviderName;
-  // When false, the auto-prompt synthesiser falls back to each upstream
-  // node's typed `prompt` instead of its vision-derived `aiBrief`.
-  // Upload-triggered vision still runs (the user explicitly uploaded
-  // an image, so describing it is intentional). Default true preserves
-  // existing behaviour for users who don't open the toggle.
-  visionEnabled: boolean;
+  // null when the user hasn't picked a provider for this feature yet.
+  // Backend no longer fabricates a default; the forced-setup gate uses
+  // `configured` (below) to keep the dialog open until the user chooses.
+  auto_prompt: LLMProviderName | null;
+  vision: LLMProviderName | null;
+  planner: LLMProviderName | null;
+  // True only when all 3 features are pinned at the same provider —
+  // the single-provider UI invariant. Drives the forced-setup dialog.
+  configured: boolean;
 }
 
 export async function getLlmProviders(): Promise<LLMProviderInfo[]> {

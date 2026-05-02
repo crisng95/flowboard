@@ -36,6 +36,20 @@ def init_db() -> None:
                 models.Asset.__table__.drop(conn, checkfirst=True)
                 conn.commit()
 
+        # Edge.source_variant_idx — added when per-edge variant pinning
+        # shipped. SQLite ALTER TABLE ADD COLUMN is non-destructive (and
+        # idempotent via the column-existence check), so existing DBs
+        # pick up the new column on first boot without losing data.
+        # `create_all` below won't help because it skips ALTERs on
+        # existing tables.
+        if insp.has_table("edge"):
+            edge_cols = {c["name"] for c in insp.get_columns("edge")}
+            if "source_variant_idx" not in edge_cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE edge ADD COLUMN source_variant_idx INTEGER"
+                )
+                conn.commit()
+
     SQLModel.metadata.create_all(engine)
 
 

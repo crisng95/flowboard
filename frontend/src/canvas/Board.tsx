@@ -17,6 +17,7 @@ import {
 
 import { useBoardStore, type FlowNode, type NodeType } from "../store/board";
 import { NodeCard } from "./NodeCard";
+import { VariantEdge } from "./VariantEdge";
 import { useGenerationStore } from "../store/generation";
 
 const nodeTypes = {
@@ -26,6 +27,13 @@ const nodeTypes = {
   prompt: NodeCard,
   note: NodeCard,
   visual_asset: NodeCard,
+};
+
+// Single edge type used for everything — VariantEdge renders the
+// default bezier line and additionally surfaces a `v{N}` chip when the
+// edge has a variant pin in `data.sourceVariantIdx`.
+const edgeTypes = {
+  default: VariantEdge,
 };
 
 const defaultEdgeOptions = {
@@ -268,6 +276,7 @@ export function Board() {
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeDragStop={onNodeDragStop}

@@ -122,22 +122,61 @@ export function ResultViewer() {
     return { label: "—", isBadge: false };
   })();
 
-  // Upstream nodes feeding this one as reference images (image/video target).
+  // Upstream refs feeding this target. Walk EDGES (not just nodes) so
+  // each entry resolves to the variant the edge is pinned to — same
+  // logic as `collectUpstreamRefMediaIds` at dispatch. The chip then
+  // shows the exact thumbnail Flow will receive instead of always
+  // defaulting to the source's "active" mediaId.
   const REF_TYPES = new Set(["character", "image", "visual_asset"]);
   const refSourceNodes = rfId
     ? edges
         .filter((e) => e.target === rfId)
-        .map((e) => nodes.find((n) => n.id === e.source))
-        .filter(
-          (n): n is NonNullable<typeof n> =>
-            !!n &&
-            REF_TYPES.has(n.data.type) &&
-            typeof n.data.mediaId === "string" &&
-            n.data.mediaId.length > 0,
-        )
+        .map((e) => {
+          const n = nodes.find((node) => node.id === e.source);
+          if (!n || !REF_TYPES.has(n.data.type)) return null;
+          const variants = Array.isArray(n.data.mediaIds) ? n.data.mediaIds : [];
+          const pin = (e.data?.sourceVariantIdx ?? null) as number | null;
+          let mediaId: string | undefined;
+          let variantIdx: number | null = null;
+          if (
+            pin !== null
+            && pin >= 0
+            && pin < variants.length
+            && typeof variants[pin] === "string"
+            && variants[pin]
+          ) {
+            mediaId = variants[pin] as string;
+            variantIdx = pin;
+          } else if (typeof n.data.mediaId === "string" && n.data.mediaId) {
+            mediaId = n.data.mediaId;
+          } else if (
+            variants.length > 0
+            && typeof variants[0] === "string"
+            && variants[0]
+          ) {
+            mediaId = variants[0] as string;
+          }
+          if (!mediaId) return null;
+          return { node: n, mediaId, variantIdx };
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     : [];
 
-  const currentMediaId = rfId && data ? (data.mediaIds?.[activeIdx] ?? data.mediaId ?? null) : null;
+  // Slot-aware mediaId resolution. When the node has a per-variant
+  // `mediaIds` array, slot index activeIdx is authoritative even if
+  // its value is `null` — the null means "this variant got blocked",
+  // which is semantically distinct from "no per-variant array exists,
+  // fall back to the legacy single mediaId". Using `??` chained the
+  // two together and made every blocked slot silently render the
+  // primary mediaId from slot 0 — i.e. clicking tile 4 played
+  // tile 1's video.
+  const slotMediaId = data?.mediaIds?.[activeIdx];
+  const currentMediaId = rfId && data
+    ? (data.mediaIds !== undefined
+        ? (typeof slotMediaId === "string" && slotMediaId ? slotMediaId : null)
+        : (data.mediaId ?? null))
+    : null;
+  const slotError = data?.slotErrors?.[activeIdx] ?? null;
 
   // Reset active variant index and media state when viewer opens for a different node
   useEffect(() => {
@@ -303,9 +342,11 @@ export function ResultViewer() {
         : undefined;
       // Prefer the full variant list so batch i2v re-runs all N sources;
       // fall back to the singular mediaId for legacy single-source nodes.
-      const sourceMediaIds: string[] =
+      // Skip null placeholders from partial-batch upstreams.
+      const sourceMediaIds: string[] = (
         upstreamNode?.data.mediaIds ??
-        (upstreamNode?.data.mediaId ? [upstreamNode.data.mediaId] : []);
+        (upstreamNode?.data.mediaId ? [upstreamNode.data.mediaId] : [])
+      ).filter((m): m is string => typeof m === "string" && m.length > 0);
       if (sourceMediaIds.length === 0) {
         useGenerationStore.setState({
           error: "Video re-gen needs an upstream image with rendered media.",
@@ -405,6 +446,22 @@ export function ResultViewer() {
                   </div>
                 )}
               </>
+            ) : slotError ? (
+              // Blocked variant — Veo's safety classifier rejected this
+              // specific clip while the rest of the batch rendered.
+              // Show the exact filter reason so the user can decide
+              // whether to retry, change inputs, or accept the loss.
+              <div className="media-placeholder__content media-placeholder__content--blocked">
+                <span className="media-placeholder__icon media-placeholder__icon--warn" aria-hidden="true">⚠</span>
+                <span className="media-placeholder__title">Variant blocked</span>
+                <span className="media-placeholder__error-code">{slotError}</span>
+                <span className="media-placeholder__error-hint">
+                  This variant was rejected by Google&apos;s safety filter. The
+                  other variants in this batch rendered normally — try
+                  re-running just this slot, or tweak the upstream image /
+                  prompt to avoid the trigger.
+                </span>
+              </div>
             ) : (
               <div className="media-placeholder__content">
                 <span className="media-placeholder__icon" aria-hidden="true">
@@ -426,20 +483,28 @@ export function ResultViewer() {
                 Refresh
               </button>
             )}
-            {/* Variant switcher */}
+            {/* Variant switcher — chips for each slot. Blocked slots
+                get a warning treatment + tooltip with the error code so
+                the user can scan the strip and see at a glance which
+                variants succeeded vs failed. */}
             {mediaIds.length > 0 && (
               <div className="variant-switcher" role="group" aria-label="Variant selection">
-                {mediaIds.map((_, idx) => (
-                  <button
-                    key={idx}
-                    className={`variant-switcher__chip${idx === activeIdx ? " variant-switcher__chip--active" : ""}`}
-                    onClick={() => setActiveIdx(idx)}
-                    aria-label={`Variant ${idx + 1}`}
-                    aria-pressed={idx === activeIdx}
-                  >
-                    {idx + 1}
-                  </button>
-                ))}
+                {mediaIds.map((_id, idx) => {
+                  const chipError = data?.slotErrors?.[idx] ?? null;
+                  const blocked = chipError !== null && chipError !== undefined;
+                  return (
+                    <button
+                      key={idx}
+                      className={`variant-switcher__chip${idx === activeIdx ? " variant-switcher__chip--active" : ""}${blocked ? " variant-switcher__chip--blocked" : ""}`}
+                      onClick={() => setActiveIdx(idx)}
+                      aria-label={blocked ? `Variant ${idx + 1} — blocked: ${chipError}` : `Variant ${idx + 1}`}
+                      title={blocked ? `Blocked: ${chipError}` : undefined}
+                      aria-pressed={idx === activeIdx}
+                    >
+                      {blocked ? "⚠" : idx + 1}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -474,14 +539,29 @@ export function ResultViewer() {
                 SOURCE REFERENCES ({refSourceNodes.length})
               </span>
               <div className="ref-source-row">
-                {refSourceNodes.map((n) => (
-                  <div key={n.id} className="ref-source-chip" title={n.data.title}>
+                {refSourceNodes.map((r) => (
+                  <div
+                    key={r.node.id}
+                    className="ref-source-chip"
+                    title={
+                      r.variantIdx !== null
+                        ? `${r.node.data.title} — variant ${r.variantIdx + 1}`
+                        : r.node.data.title
+                    }
+                  >
                     <img
                       className="ref-source-chip__img"
-                      src={mediaUrl(n.data.mediaId as string)}
-                      alt={n.data.title}
+                      src={mediaUrl(r.mediaId)}
+                      alt={r.node.data.title}
                     />
-                    <span className="ref-source-chip__id">#{n.data.shortId}</span>
+                    {r.variantIdx !== null && (
+                      <span className="ref-source-chip__variant">
+                        v{r.variantIdx + 1}
+                      </span>
+                    )}
+                    <span className="ref-source-chip__id">
+                      #{r.node.data.shortId}
+                    </span>
                   </div>
                 ))}
               </div>

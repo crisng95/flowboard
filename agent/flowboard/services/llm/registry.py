@@ -5,9 +5,9 @@ Looks up the configured provider for a feature, runs the capability gates
 (vision attachment vs. text-only provider), then delegates to the provider's
 ``run()``.
 
-The provider registry is currently populated with **only Claude** because
-later commits add Gemini / OpenAI / Grok one-by-one. Providers register
-themselves by being imported here; nothing else.
+Three CLI-backed providers are registered: Claude, Gemini, OpenAI Codex.
+xAI Grok was previously wired up but never shipped a usable end-user
+CLI, so it was dropped from both UI and registry.
 """
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from typing import Literal, Optional
 from .base import LLMError, LLMProvider
 from .claude import ClaudeProvider
 from .gemini import GeminiProvider
-from .grok import GrokProvider
 from .openai import OpenAIProvider
 from . import secrets
 
@@ -34,7 +33,6 @@ _PROVIDERS: dict[str, LLMProvider] = {
     "claude": ClaudeProvider(),
     "gemini": GeminiProvider(),
     "openai": OpenAIProvider(),
-    "grok": GrokProvider(),
 }
 
 
@@ -60,7 +58,9 @@ async def run_llm(
 
     Resolution chain:
       1. Look up the configured provider for ``feature`` in
-         ``~/.flowboard/secrets.json`` (defaults to ``claude``).
+         ``~/.flowboard/secrets.json``. No defaults — if the user hasn't
+         picked one yet, raise loud so the UI's forced-setup gate
+         intercepts before the call lands.
       2. Vision capability gate — if ``attachments`` is non-empty and the
          provider declares ``supports_vision = False``, raise immediately
          (no model call). Defense in depth alongside the per-provider
@@ -71,7 +71,12 @@ async def run_llm(
       4. Dispatch.
     """
     config = secrets.read_active_providers()
-    provider_name = config.get(feature, "claude")
+    provider_name = config.get(feature)
+    if provider_name is None:
+        raise LLMError(
+            f"No AI provider configured for {feature}; "
+            f"open the AI Provider settings to set one up."
+        )
     provider = _PROVIDERS.get(provider_name)
     if provider is None:
         raise LLMError(

@@ -7,7 +7,6 @@ import type { LLMProviderName } from "../../api/client";
  *   - Claude: install + auth + verify (CLI subscription)
  *   - Gemini: install + auth + verify (CLI subscription)
  *   - OpenAI: 2-tab layout — Codex CLI (preferred) / API key (fallback)
- *   - Grok:   API key only (no CLI ships from xAI yet)
  *
  * Backdrop click + ESC + Close button all dismiss. Focus trap is
  * provided by the Settings panel backdrop already (we render inside it).
@@ -92,10 +91,6 @@ export function ProviderSetupModal({ provider, open, onClose }: ProviderSetupMod
         {provider === "openai" && (
           <OpenAiContent tab={openaiTab} onTabChange={setOpenaiTab} />
         )}
-        {/* Grok is intentionally not surfaced — xAI hasn't shipped a CLI,
-            so it doesn't fit Flowboard's "use your existing subscription"
-            philosophy. Backend keeps the provider class registered for
-            power users who edit secrets.json directly. */}
 
         <div className="setup-modal__footer">
           <a
@@ -272,8 +267,6 @@ function titleFor(p: LLMProviderName): string {
       return "🤖 Gemini CLI Setup";
     case "openai":
       return "🤖 OpenAI Setup";
-    case "grok":
-      return "🤖 Grok API Key";
   }
 }
 
@@ -285,8 +278,6 @@ function labelFor(p: LLMProviderName): string {
       return "Google Gemini";
     case "openai":
       return "OpenAI";
-    case "grok":
-      return "xAI";
   }
 }
 
@@ -298,7 +289,5 @@ function docsLinkFor(p: LLMProviderName): string {
       return "https://github.com/google/gemini-cli";
     case "openai":
       return "https://platform.openai.com/docs/quickstart";
-    case "grok":
-      return "https://docs.x.ai/api/quickstart";
   }
 }

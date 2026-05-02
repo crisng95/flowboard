@@ -304,6 +304,49 @@ async def test_run_raises_on_missing_binary(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_serializes_concurrent_calls(monkeypatch):
+    """Two concurrent ``run()`` calls must NOT spawn subprocess at the
+    same time. Google's CodeAssist backend rate-limits concurrent calls
+    per user — racing produces MODEL_CAPACITY_EXHAUSTED 429s and 30s+
+    retry penalties. Verified live: 3 parallel ``gemini -p .`` calls
+    showed exactly this on a fresh terminal.
+
+    The semaphore is per-instance, so we call ``run()`` on the same
+    GeminiProvider — matches the registry's module-level singleton."""
+    import asyncio as _aio
+
+    p = GeminiProvider()
+    in_flight = 0
+    max_in_flight = 0
+    started = _aio.Event()
+
+    class _OverlapDetectingProc(_FakeProc):
+        async def communicate(self):
+            nonlocal in_flight, max_in_flight
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+            # Yield long enough that a second caller would observe the
+            # overlap if the lock wasn't holding it back.
+            started.set()
+            await _aio.sleep(0.05)
+            in_flight -= 1
+            return b"ok\n", b""
+
+    async def _spawn(*_a, **_kw):
+        return _OverlapDetectingProc(returncode=0)
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", _spawn)
+
+    # Fire two calls simultaneously. If serialization works,
+    # max_in_flight stays at 1 even though both tasks are scheduled
+    # concurrently.
+    await _aio.gather(p.run("a"), p.run("b"), p.run("c"))
+    assert max_in_flight == 1, (
+        f"expected serialized calls, saw {max_in_flight} concurrent invocations"
+    )
+
+
+@pytest.mark.asyncio
 async def test_run_raises_on_timeout(monkeypatch):
     p = GeminiProvider()
 

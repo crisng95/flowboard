@@ -5,6 +5,7 @@ import {
   autoPrompt as autoPromptApi,
   autoPromptBatch as autoPromptBatchApi,
   mediaUrl,
+  patchEdge,
   patchNode,
 } from "../api/client";
 import {
@@ -169,6 +170,11 @@ export function GenerationDialog() {
   // Stored as a Set of indices so the UI can toggle individual variants
   // and "All / None" without juggling parallel arrays.
   const [selectedSourceIdx, setSelectedSourceIdx] = useState<Set<number>>(new Set());
+  // Tracks which Source-Reference chip's variant picker is currently
+  // open. Holds the edge id the picker is anchored to (one open at a
+  // time). Click another chip → swap; click the same chip → close;
+  // click outside (handled inline) → close.
+  const [openVariantPicker, setOpenVariantPicker] = useState<string | null>(null);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLTextAreaElement>(null);
@@ -191,23 +197,62 @@ export function GenerationDialog() {
   const sourceEdge = isVideo ? edges.find((e) => e.target === rfId) : undefined;
   const sourceNode = sourceEdge ? nodes.find((n) => n.id === sourceEdge.source) : undefined;
   const sourceMediaId = sourceNode?.data.mediaId ?? null;
+  // Drop null placeholders from the upstream variant list — partial-
+  // batch results may carry them, but downstream dispatch needs a
+  // dense array of valid mediaIds to feed into Flow.
   const sourceMediaIds: string[] = isVideo
-    ? sourceNode?.data.mediaIds ?? (sourceMediaId ? [sourceMediaId] : [])
+    ? (sourceNode?.data.mediaIds ?? (sourceMediaId ? [sourceMediaId] : []))
+        .filter((m): m is string => typeof m === "string" && m.length > 0)
     : [];
 
-  // Image nodes: list every upstream node feeding this one as a reference
-  // image (character / image / visual_asset that has a mediaId).
+  // Image nodes: list every upstream ref edge feeding this target. We
+  // walk edges (not just nodes) so we can read each edge's variant pin
+  // and show the EXACT thumbnail Flow will receive — when an edge is
+  // pinned to variant 2 of a 4-variant source, the chip shows variant 2,
+  // not the source's "active" mediaId. Mirrors the resolution used by
+  // `collectUpstreamRefMediaIds` at dispatch time so the preview can't
+  // diverge from the actual API call.
+  //
+  // We also surface the full `allVariants` list + the edge id so the
+  // chip can offer a per-source variant picker without re-querying
+  // the store on click.
   const refSourceNodes = !isVideo && rfId
     ? edges
         .filter((e) => e.target === rfId)
-        .map((e) => nodes.find((n) => n.id === e.source))
-        .filter(
-          (n): n is NonNullable<typeof n> =>
-            !!n &&
-            REF_SOURCE_TYPES.has(n.data.type) &&
-            typeof n.data.mediaId === "string" &&
-            n.data.mediaId.length > 0,
-        )
+        .map((e) => {
+          const n = nodes.find((node) => node.id === e.source);
+          if (!n || !REF_SOURCE_TYPES.has(n.data.type)) return null;
+          const variants = (Array.isArray(n.data.mediaIds) ? n.data.mediaIds : [])
+            .filter((m): m is string => typeof m === "string" && m.length > 0);
+          const pin = (e.data?.sourceVariantIdx ?? null) as number | null;
+          let mediaId: string | undefined;
+          let variantIdx: number | null = null;
+          if (pin !== null && pin >= 0 && pin < variants.length) {
+            mediaId = variants[pin];
+            variantIdx = pin;
+          } else if (typeof n.data.mediaId === "string" && n.data.mediaId) {
+            mediaId = n.data.mediaId;
+            // When dispatch falls back to source.mediaId, that's
+            // typically variants[0] (gen-result writes mediaId =
+            // mediaIds[0]). Surface that as the displayed variantIdx
+            // so the chip's badge matches what Flow will receive,
+            // even before the user clicks to pin explicitly.
+            const idx = variants.indexOf(n.data.mediaId);
+            variantIdx = idx >= 0 ? idx : null;
+          } else if (variants.length > 0) {
+            mediaId = variants[0];
+            variantIdx = 0;
+          }
+          if (!mediaId) return null;
+          return {
+            edgeId: e.id,
+            node: n,
+            mediaId,
+            variantIdx,
+            allVariants: variants,
+          };
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     : [];
 
   // Reset form when dialog opens for a different node
@@ -276,6 +321,14 @@ export function GenerationDialog() {
     if (rfId === null) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // ESC closes the variant picker first if open, otherwise the
+        // dialog. Lets the user back out of a stray picker click
+        // without losing their prompt + form state.
+        if (openVariantPicker !== null) {
+          e.preventDefault();
+          setOpenVariantPicker(null);
+          return;
+        }
         e.preventDefault();
         closeGenerationDialog();
       }
@@ -287,6 +340,22 @@ export function GenerationDialog() {
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   });
+
+  // Click-outside to close the variant picker. We listen on
+  // `mousedown` instead of `click` so the close fires BEFORE the chip's
+  // `onClick` toggle would otherwise re-open it on the same gesture.
+  // A click that lands inside any `.ref-source-chip-wrap` is ignored —
+  // chip-internal handlers (toggle / swap / pick) own those.
+  useEffect(() => {
+    if (openVariantPicker === null) return;
+    const onPointerDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(".ref-source-chip-wrap")) return;
+      setOpenVariantPicker(null);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [openVariantPicker]);
 
   // Focus trap
   useEffect(() => {
@@ -318,6 +387,29 @@ export function GenerationDialog() {
   }, [rfId]);
 
   if (rfId === null) return null;
+
+  /** Pick a different variant on a Source Reference chip. PATCHes the
+   * edge so the dispatch path picks the new variant, then mirrors the
+   * change into the local store so the chip thumbnail updates without
+   * waiting for a board refresh. The pick also surfaces on the canvas
+   * via the `v{N}` chip on the edge. */
+  async function pickVariantForEdge(edgeId: string, variantIdx: number) {
+    setOpenVariantPicker(null);
+    const edgeDbId = parseInt(edgeId, 10);
+    if (isNaN(edgeDbId)) return;
+    try {
+      const updated = await patchEdge(edgeDbId, {
+        source_variant_idx: variantIdx,
+      });
+      useBoardStore.getState().updateEdgeData(edgeId, {
+        sourceVariantIdx: updated.source_variant_idx,
+      });
+    } catch (err) {
+      useGenerationStore.setState({
+        error: `Couldn't pin variant: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
 
   async function handleSubmit() {
     if (!rfId) return;
@@ -710,18 +802,84 @@ export function GenerationDialog() {
               Source references ({refSourceNodes.length})
             </span>
             <div className="ref-source-row">
-              {refSourceNodes.map((n) => (
-                <div key={n.id} className="ref-source-chip" title={n.data.title}>
-                  <img
-                    className="ref-source-chip__img"
-                    src={mediaUrl(n.data.mediaId as string)}
-                    alt={n.data.title}
-                  />
-                  <span className="ref-source-chip__id">
-                    #{n.data.shortId}
-                  </span>
-                </div>
-              ))}
+              {refSourceNodes.map((r) => {
+                const isMulti = r.allVariants.length >= 2;
+                const isPickerOpen = openVariantPicker === r.edgeId;
+                const tooltip = isMulti
+                  ? `${r.node.data.title} — variant ${(r.variantIdx ?? 0) + 1} · click to switch`
+                  : r.node.data.title;
+                return (
+                  <div key={r.edgeId} className="ref-source-chip-wrap">
+                    {isMulti ? (
+                      <button
+                        type="button"
+                        className={`ref-source-chip ref-source-chip--switchable${
+                          isPickerOpen ? " ref-source-chip--active" : ""
+                        }`}
+                        title={tooltip}
+                        onClick={() =>
+                          setOpenVariantPicker(isPickerOpen ? null : r.edgeId)
+                        }
+                      >
+                        <img
+                          className="ref-source-chip__img"
+                          src={mediaUrl(r.mediaId)}
+                          alt={r.node.data.title}
+                        />
+                        <span className="ref-source-chip__variant">
+                          v{(r.variantIdx ?? 0) + 1}
+                        </span>
+                        <span className="ref-source-chip__id">
+                          #{r.node.data.shortId}
+                        </span>
+                      </button>
+                    ) : (
+                      <div className="ref-source-chip" title={tooltip}>
+                        <img
+                          className="ref-source-chip__img"
+                          src={mediaUrl(r.mediaId)}
+                          alt={r.node.data.title}
+                        />
+                        <span className="ref-source-chip__id">
+                          #{r.node.data.shortId}
+                        </span>
+                      </div>
+                    )}
+                    {isMulti && isPickerOpen && (
+                      <div
+                        className="ref-source-chip__picker"
+                        role="dialog"
+                        aria-label={`Pick variant for ${r.node.data.title}`}
+                      >
+                        {r.allVariants.map((mid, i) => {
+                          const isCurrent = i === (r.variantIdx ?? 0);
+                          return (
+                            <button
+                              key={mid}
+                              type="button"
+                              className={`ref-source-chip__picker-item${
+                                isCurrent ? " ref-source-chip__picker-item--current" : ""
+                              }`}
+                              onClick={() => void pickVariantForEdge(r.edgeId, i)}
+                              title={`Variant ${i + 1}`}
+                              aria-current={isCurrent ? "true" : undefined}
+                            >
+                              <img
+                                className="ref-source-chip__picker-img"
+                                src={mediaUrl(mid)}
+                                alt={`Variant ${i + 1}`}
+                              />
+                              <span className="ref-source-chip__picker-label">
+                                v{i + 1}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

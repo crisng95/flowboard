@@ -27,7 +27,18 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   prompt?: string;
   thumbnailUrl?: string;
   mediaId?: string;
-  mediaIds?: string[];
+  // Per-variant media ids in dispatch order. `null` entries are
+  // positional placeholders for variants that failed (e.g. Veo content
+  // filter blocked one of the 4 i2v clips while the other 3 succeeded);
+  // keeping the slot preserves alignment with the upstream image's
+  // variants for poster/edge-pin lookups.
+  mediaIds?: (string | null)[];
+  // Per-slot error code, aligned to `mediaIds` indexing. `null` for
+  // succeeded slots, an error string (e.g. "PUBLIC_ERROR_UNSAFE_GENERATION")
+  // for blocked ones. ResultViewer reads this to render the exact
+  // filter reason on the blocked tile instead of falling through to
+  // the previous variant.
+  slotErrors?: (string | null)[];
   variantCount?: number;
   // The aspect-ratio enum the asset was generated / uploaded at — used to
   // default-match downstream gen dialogs (e.g. a 9:16 visual_asset feeds
@@ -70,6 +81,29 @@ export interface FlowboardNodeData extends Record<string, unknown> {
 }
 
 export type FlowNode = Node<FlowboardNodeData>;
+
+// Per-edge data we attach to ReactFlow's `Edge.data` so dispatch and
+// edge-rendering paths can read it without a round-trip through the
+// backend. `sourceVariantIdx` mirrors `EdgeDTO.source_variant_idx`.
+export interface FlowboardEdgeData extends Record<string, unknown> {
+  sourceVariantIdx?: number | null;
+}
+
+/** Map an EdgeDTO from the backend into ReactFlow's Edge shape, carrying
+ * the variant pin through `data` so dispatch + edge UI can read it. */
+function edgeFromDto(dto: {
+  id: number;
+  source_id: number;
+  target_id: number;
+  source_variant_idx?: number | null;
+}): Edge<FlowboardEdgeData> {
+  return {
+    id: String(dto.id),
+    source: String(dto.source_id),
+    target: String(dto.target_id),
+    data: { sourceVariantIdx: dto.source_variant_idx ?? null },
+  };
+}
 
 // ── Tiny per-node debounce (no external deps) ─────────────────────────────
 const positionTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -159,6 +193,10 @@ interface BoardState {
   cloneNodeWithUpstream(rfId: string): Promise<string | null>;
 
   updateNodeData(rfId: string, partial: Partial<FlowboardNodeData>): void;
+  /** Merge `partial` into edge.data — used to refresh the local cache
+   * after a PATCH /api/edges/{id} so the badge updates without waiting
+   * for a full board refresh. */
+  updateEdgeData(edgeId: string, partial: Partial<FlowboardEdgeData>): void;
   setNodes(nodes: FlowNode[]): void;
   setEdges(edges: Edge[]): void;
   clearError(): void;
@@ -202,7 +240,8 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           prompt: n.data["prompt"] as string | undefined,
           thumbnailUrl: n.data["thumbnailUrl"] as string | undefined,
           mediaId: n.data["mediaId"] as string | undefined,
-          mediaIds: n.data["mediaIds"] as string[] | undefined,
+          mediaIds: n.data["mediaIds"] as (string | null)[] | undefined,
+          slotErrors: n.data["slotErrors"] as (string | null)[] | undefined,
           variantCount: n.data["variantCount"] as number | undefined,
           aspectRatio: n.data["aspectRatio"] as string | undefined,
           aiBrief: n.data["aiBrief"] as string | undefined,
@@ -214,11 +253,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         },
       }));
 
-      const edges: Edge[] = detail.edges.map((e) => ({
-        id: String(e.id),
-        source: String(e.source_id),
-        target: String(e.target_id),
-      }));
+      const edges: Edge[] = detail.edges.map(edgeFromDto);
 
       set({
         boardId: detail.board.id,
@@ -260,7 +295,8 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           prompt: n.data["prompt"] as string | undefined,
           thumbnailUrl: n.data["thumbnailUrl"] as string | undefined,
           mediaId: n.data["mediaId"] as string | undefined,
-          mediaIds: n.data["mediaIds"] as string[] | undefined,
+          mediaIds: n.data["mediaIds"] as (string | null)[] | undefined,
+          slotErrors: n.data["slotErrors"] as (string | null)[] | undefined,
           variantCount: n.data["variantCount"] as number | undefined,
           aspectRatio: n.data["aspectRatio"] as string | undefined,
           aiBrief: n.data["aiBrief"] as string | undefined,
@@ -271,11 +307,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           charGender: n.data["charGender"] as string | undefined,
         },
       }));
-      const edges: Edge[] = detail.edges.map((e) => ({
-        id: String(e.id),
-        source: String(e.source_id),
-        target: String(e.target_id),
-      }));
+      const edges: Edge[] = detail.edges.map(edgeFromDto);
       set({
         boardId: detail.board.id,
         boardName: detail.board.name,
@@ -346,7 +378,8 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           prompt: n.data["prompt"] as string | undefined,
           thumbnailUrl: n.data["thumbnailUrl"] as string | undefined,
           mediaId: n.data["mediaId"] as string | undefined,
-          mediaIds: n.data["mediaIds"] as string[] | undefined,
+          mediaIds: n.data["mediaIds"] as (string | null)[] | undefined,
+          slotErrors: n.data["slotErrors"] as (string | null)[] | undefined,
           variantCount: n.data["variantCount"] as number | undefined,
           aiBrief: n.data["aiBrief"] as string | undefined,
           imageModel: n.data["imageModel"] as string | undefined,
@@ -357,11 +390,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           error: n.data["error"] as string | undefined,
         },
       }));
-      const edges: Edge[] = detail.edges.map((e) => ({
-        id: String(e.id),
-        source: String(e.source_id),
-        target: String(e.target_id),
-      }));
+      const edges: Edge[] = detail.edges.map(edgeFromDto);
       set({ nodes, edges });
     } catch {
       // ignore — leave state alone, next poll will retry
@@ -464,12 +493,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     if (isNaN(sourceId) || isNaN(targetId)) return;
     try {
       const dto = await createEdge({ board_id: boardId, source_id: sourceId, target_id: targetId });
-      const edge: Edge = {
-        id: String(dto.id),
-        source: String(dto.source_id),
-        target: String(dto.target_id),
-      };
-      set((s) => ({ edges: [...s.edges, edge] }));
+      set((s) => ({ edges: [...s.edges, edgeFromDto(dto)] }));
     } catch {
       // ignore
     }
@@ -561,6 +585,14 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     set((s) => ({
       nodes: s.nodes.map((n) =>
         n.id === rfId ? { ...n, data: { ...n.data, ...partial } } : n,
+      ),
+    })),
+  updateEdgeData: (edgeId, partial) =>
+    set((s) => ({
+      edges: s.edges.map((e) =>
+        e.id === edgeId
+          ? { ...e, data: { ...(e.data ?? {}), ...partial } }
+          : e,
       ),
     })),
   setNodes: (nodes) => set({ nodes }),

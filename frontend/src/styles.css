@@ -1329,6 +1329,25 @@ button:disabled {
   filter: drop-shadow(0 0 4px rgba(124, 92, 255, 0.5));
 }
 
+/* Variant-pin chip — sits at the edge midpoint when the edge has a
+   sourceVariantIdx. pointer-events: none so the underlying edge hit
+   area still wins for selection / delete. */
+.variant-edge-pin {
+  position: absolute;
+  pointer-events: none;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(124, 92, 255, 0.18);
+  color: #c5b3ff;
+  border: 1px solid rgba(124, 92, 255, 0.45);
+  white-space: nowrap;
+  user-select: none;
+  z-index: 1;
+}
+
 /* Body slots */
 
 .node-body {
@@ -1592,6 +1611,99 @@ button:disabled {
   display: block;
 }
 
+/* "Use →" overlay — variant-click flow. Hidden by default; surfaces
+   on tile hover/focus so it doesn't compete with the underlying image
+   the rest of the time. Click pins this variant on the downstream
+   edge and dispatches Generate (see NodeCard.applyVariantToTarget). */
+.thumbnail-tile__use-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(124, 92, 255, 0.85);
+  color: #fff;
+  border: none;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 100ms linear, transform 100ms linear, background 100ms linear;
+  z-index: 2;
+}
+.thumbnail-tile:hover .thumbnail-tile__use-btn,
+.thumbnail-tile:focus-within .thumbnail-tile__use-btn,
+.thumbnail-tile__use-btn:focus-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.thumbnail-tile__use-btn:hover {
+  background: var(--accent);
+}
+
+/* Inline picker — shown below the tile grid when the upstream has 2+
+   downstream targets and the user clicks "Use →" on a variant. Lists
+   each target so the user picks which downstream this variant feeds. */
+.variant-picker {
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  background: var(--panel-high);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.variant-picker__heading {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.variant-picker__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.variant-picker__btn {
+  width: 100%;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.variant-picker__btn:hover {
+  border-color: var(--accent);
+}
+.variant-picker__kind {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.variant-picker__cancel {
+  align-self: flex-end;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.variant-picker__cancel:hover { color: var(--text); }
+
 /* Single-tile preview shows the full image at native ratio. Drop the fixed
    96px tile height and let the image's intrinsic aspect drive the layout once
    it loads. While there's no media yet, fall back to a 16:9 placeholder box
@@ -1655,11 +1767,45 @@ button:disabled {
   border-color: #ef4444;
 }
 
+/* Blocked tile — the variant got rejected by Veo's safety filter while
+ * the rest of the batch rendered. Distinct from the generic empty
+ * placeholder so the user immediately sees which slot lost a video.
+ * Amber matches the node-level partial warning. */
+.video-placeholder--blocked {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  color: #f59e0b;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.video-blocked-icon {
+  font-size: 24px;
+  line-height: 1;
+}
+.video-blocked-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.video-tile--blocked {
+  cursor: pointer;
+}
+
 .node-error {
   margin: 4px 0 0 0;
   font-size: 11px;
   color: #ef4444;
   word-break: break-word;
+}
+/* Partial-batch warning (e.g. 1/4 video variants got blocked while the
+ * other 3 succeeded). Amber instead of red — the node is still usable,
+ * we're just flagging which slot lost a variant. */
+.node-error--partial {
+  color: #f59e0b;
 }
 
 .video-placeholder--processing::after {
@@ -3130,6 +3276,32 @@ button:disabled {
   opacity: 0.7;
 }
 
+/* Blocked variant — content-filter rejection on this specific slot.
+ * Amber treatment matches the canvas-side blocked tile + the partial
+ * warning under the video grid. */
+.media-placeholder__content--blocked {
+  max-width: 360px;
+  text-align: center;
+  gap: 8px;
+}
+.media-placeholder__icon--warn {
+  color: #f59e0b;
+  opacity: 1;
+}
+.media-placeholder__error-code {
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  color: #f59e0b;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  word-break: break-word;
+}
+.media-placeholder__error-hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 /* Variant switcher */
 
 .variant-switcher {
@@ -3156,6 +3328,20 @@ button:disabled {
   background: color-mix(in srgb, var(--accent) 20%, var(--panel-high));
   color: var(--text);
   border-color: var(--accent);
+}
+
+/* Blocked slot in the variant strip — distinct from active so the user
+ * can tell at a glance which slots got filtered. Layered with --active
+ * when the user clicks through to inspect the blocked variant. */
+.variant-switcher__chip--blocked {
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.08);
+  font-weight: 700;
+}
+.variant-switcher__chip--blocked.variant-switcher__chip--active {
+  background: rgba(245, 158, 11, 0.22);
+  border-color: #f59e0b;
 }
 
 /* Right panel */
@@ -3514,6 +3700,7 @@ button:disabled {
   font-size: 11px;
   color: var(--muted);
   width: 72px;
+  position: relative;
 }
 
 .ref-source-chip__img {
@@ -3523,6 +3710,104 @@ button:disabled {
   border-radius: 4px;
   display: block;
   background: var(--panel);
+}
+
+/* Variant pin badge — surfaces which variant of a multi-variant
+   source is bound to this edge, so the dialog/viewer preview shows
+   the EXACT thumbnail Flow will receive at dispatch. */
+.ref-source-chip__variant {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(124, 92, 255, 0.85);
+  color: #fff;
+  pointer-events: none;
+}
+
+/* Wrapper allows the per-source variant picker to absolute-position
+   relative to its chip without escaping the chip's tile. */
+.ref-source-chip-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+/* Switchable variant: chip becomes a button. Hover hint + active
+   ring when the picker is open so the user can see which chip the
+   picker grid below is anchored to. */
+.ref-source-chip--switchable {
+  cursor: pointer;
+  transition: border-color 80ms linear, transform 80ms linear;
+}
+.ref-source-chip--switchable:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.ref-source-chip--active {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.35);
+}
+
+/* Inline variant picker for a Source Reference chip — opens below
+   the chip when the user clicks a multi-variant chip. Lists every
+   variant of that source so the user can repin without leaving the
+   GenerationDialog. */
+.ref-source-chip__picker {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  background: var(--panel-high);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  display: grid;
+  grid-template-columns: repeat(2, 56px);
+  gap: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.ref-source-chip__picker-item {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--panel);
+  cursor: pointer;
+  overflow: hidden;
+  display: block;
+  transition: border-color 80ms linear, transform 80ms linear;
+}
+.ref-source-chip__picker-item:hover {
+  border-color: var(--accent);
+  transform: scale(1.03);
+}
+.ref-source-chip__picker-item--current {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.6);
+}
+.ref-source-chip__picker-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ref-source-chip__picker-label {
+  position: absolute;
+  bottom: 2px;
+  left: 2px;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  pointer-events: none;
 }
 
 .ref-source-chip__id {
@@ -4155,6 +4440,26 @@ button:disabled {
   background: rgba(255, 170, 0, 0.18);
   border-color: rgba(255, 170, 0, 0.55);
 }
+/* Setup-needed state: prominent CTA in warning palette but slightly
+ * stronger than --warn so the user notices on a fresh install. */
+.ai-provider-badge--setup {
+  background: rgba(255, 110, 90, 0.14);
+  border-color: rgba(255, 110, 90, 0.45);
+  color: #ffb29c;
+  animation: ai-provider-badge-pulse 2.4s ease-in-out infinite;
+}
+.ai-provider-badge--setup:hover {
+  background: rgba(255, 110, 90, 0.22);
+  border-color: rgba(255, 110, 90, 0.65);
+}
+.ai-provider-badge--loading {
+  opacity: 0.55;
+  cursor: default;
+}
+@keyframes ai-provider-badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 110, 90, 0.0); }
+  50%      { box-shadow: 0 0 0 4px rgba(255, 110, 90, 0.18); }
+}
 .ai-provider-badge__icon {
   font-size: 12px;
   line-height: 1;
@@ -4217,6 +4522,21 @@ button:disabled {
   line-height: 1;
 }
 .ai-provider-dialog__close:hover { color: var(--text); }
+/* Forced-setup mode: deeper backdrop + banner cue so the user knows
+ * this dialog isn't dismissable until they finish setup. */
+.ai-provider-dialog-backdrop--force {
+  background: rgba(0, 0, 0, 0.78);
+  z-index: 1100;  /* sit above other dialogs (Settings, ResultViewer) */
+}
+.ai-provider-dialog__force-banner {
+  background: rgba(255, 110, 90, 0.10);
+  border: 1px solid rgba(255, 110, 90, 0.35);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #ffd0bf;
+}
 
 /* CLI install reference footer — shown under the test checklist so
  * users can copy the upgrade command + visit official docs without
@@ -4793,78 +5113,3 @@ button:disabled {
   word-break: break-word;
 }
 
-/* Vision toggle — sits inside the selection panel above the test
- * checklist. Custom switch + label so it reads as a setting, not a
- * disabled-by-default checkbox. */
-.vision-toggle {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  cursor: pointer;
-  transition: border-color 0.12s, background 0.12s;
-}
-.vision-toggle:hover {
-  border-color: rgba(124, 92, 255, 0.35);
-}
-.vision-toggle--off {
-  border-color: rgba(255, 170, 0, 0.4);
-  background: rgba(255, 170, 0, 0.04);
-}
-.vision-toggle__input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-.vision-toggle__switch {
-  flex-shrink: 0;
-  position: relative;
-  width: 28px;
-  height: 16px;
-  border-radius: 999px;
-  background: var(--panel-high);
-  border: 1px solid var(--border);
-  transition: background 0.12s, border-color 0.12s;
-  margin-top: 1px;
-}
-.vision-toggle__input:checked + .vision-toggle__switch {
-  background: rgba(255, 170, 0, 0.5);
-  border-color: rgba(255, 170, 0, 0.6);
-}
-.vision-toggle__knob {
-  position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--text);
-  transition: transform 0.18s ease, background 0.12s;
-}
-.vision-toggle__input:checked + .vision-toggle__switch .vision-toggle__knob {
-  transform: translateX(12px);
-  background: #fff;
-}
-.vision-toggle__input:focus-visible + .vision-toggle__switch {
-  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.4);
-}
-.vision-toggle__body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-}
-.vision-toggle__title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-}
-.vision-toggle__hint {
-  font-size: 11px;
-  color: var(--muted);
-  line-height: 1.45;
-}

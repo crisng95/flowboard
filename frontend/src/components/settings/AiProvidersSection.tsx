@@ -5,29 +5,34 @@ import {
   setLlmConfig,
   testLlmProvider,
   type LLMConfig,
-  type LLMFeature,
   type LLMProviderInfo,
   type LLMProviderName,
 } from "../../api/client";
-import { useGenerationStore } from "../../store/generation";
 import { ProviderCard } from "./ProviderCard";
 import { ProviderSetupModal } from "./ProviderSetupModal";
 
 /**
  * Single-provider model — one AI provider serves all 3 features
- * (Auto-Prompt / Vision / Planner). User picks one card, runs the
- * 3 feature tests, then Apply commits the change.
+ * (Auto-Prompt / Vision / Planner). User picks one card, runs ONE
+ * connection test, then Apply commits the change to all 3 features.
+ *
+ * Why one test instead of three: in single-provider mode, the 3 tests
+ * were 3 identical pings against the same endpoint with the same
+ * prompt. Running them in parallel triggered Google's per-user
+ * MODEL_CAPACITY_EXHAUSTED 429s on Gemini (the first call wins, the
+ * other two retry-wait and often time out at 120s). Running them in
+ * series is wasteful and slow. One ping is sufficient — if the provider
+ * answers `.` once, all 3 dispatch paths can use it.
  *
  * CLI-only philosophy: only OAuth-CLI providers are surfaced
- * (Claude / Gemini / OpenAI Codex). Grok was considered but xAI hasn't
- * shipped an end-user CLI, so it doesn't fit. The backend still has
- * Grok wired up — only the UI excludes it.
+ * (Claude / Gemini / OpenAI Codex). xAI Grok was considered but never
+ * shipped an end-user CLI, so it was dropped from both UI and backend.
  *
  * Layout:
  *   1. Cards row — 3 OAuth provider cards
  *   2. Selection panel (visible only after a card is selected) —
  *      either inline setup (Setup help link) when the provider isn't
- *      ready, OR the 3-feature test list + Apply button when ready.
+ *      ready, OR the connection test + Apply button when ready.
  *
  * Backend support: setLlmConfig accepts partial updates; we always send
  * all 3 features pointed at the same provider. The backend keeps its
@@ -39,7 +44,11 @@ const REFRESH_INTERVAL_MS = 30_000;
 // Order matters — this is the left-to-right card order in the dialog.
 // Gemini first (Google's most popular CLI), Claude middle, OpenAI Codex last.
 const SHOWN_PROVIDERS: LLMProviderName[] = ["gemini", "claude", "openai"];
-const FEATURES: LLMFeature[] = ["auto_prompt", "vision", "planner"];
+// First-run default selection. Gemini wins because it's free for personal
+// use, has the lowest CLI install friction, and (on a configured machine)
+// passes the test gate fastest. The user can still click any other card —
+// this just gives them a sensible starting point instead of a blank panel.
+const FIRST_RUN_DEFAULT: LLMProviderName = "gemini";
 
 // CLI install reference — shown as a footer under the test checklist so
 // users know how to upgrade / reinstall the CLI without leaving the
@@ -63,43 +72,25 @@ const CLI_REFERENCE: Record<
     docsUrl: "https://github.com/openai/codex",
     docsLabel: "Codex CLI repo",
   },
-  grok: {
-    installCmd: "",
-    docsUrl: "https://docs.x.ai/api/quickstart",
-    docsLabel: "xAI API docs",
-  },
 };
-const FEATURE_LABEL: Record<LLMFeature, string> = {
-  auto_prompt: "Auto-Prompt",
-  vision: "Vision",
-  planner: "Planner",
-};
-const FEATURE_HINT: Record<LLMFeature, string> = {
-  auto_prompt: "Composes prompts when you click Generate without typing one.",
-  vision: "Describes uploaded images into short factual aiBriefs.",
-  planner: "Drafts the JSON plan in chat replies.",
-};
-
 type TestState = "untested" | "testing" | "ok" | "fail";
-interface FeatureTestResult {
+interface ConnectionTestResult {
   state: TestState;
   error?: string;
   latencyMs?: number;
 }
 
-const INITIAL_TESTS: Record<LLMFeature, FeatureTestResult> = {
-  auto_prompt: { state: "untested" },
-  vision: { state: "untested" },
-  planner: { state: "untested" },
-};
+const INITIAL_TEST: ConnectionTestResult = { state: "untested" };
 
 function deriveCurrent(config: LLMConfig | null): LLMProviderName | null {
-  // "Current active provider" = the one all 3 features point at. If
-  // they diverge (config drift from a previous version that supported
-  // per-feature routing), report null and prompt the user to consolidate.
+  // "Current active provider" = the one all 3 features point at. Any
+  // null slot or any divergence (legacy mixed config / partial pick)
+  // returns null so the UI prompts the user to consolidate.
   if (!config) return null;
-  if (config.auto_prompt === config.vision && config.vision === config.planner) {
-    return config.auto_prompt;
+  const a = config.auto_prompt;
+  if (a === null) return null;
+  if (a === config.vision && config.vision === config.planner) {
+    return a;
   }
   return null;
 }
@@ -113,11 +104,10 @@ export function AiProvidersSection() {
   // to whatever's currently active so opening the dialog doesn't show
   // a blank state.
   const [pending, setPending] = useState<LLMProviderName | null>(null);
-  const [tests, setTests] = useState<Record<LLMFeature, FeatureTestResult>>(INITIAL_TESTS);
+  const [test, setTest] = useState<ConnectionTestResult>(INITIAL_TEST);
   const [applying, setApplying] = useState(false);
   const [helpFor, setHelpFor] = useState<LLMProviderName | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [savingVision, setSavingVision] = useState(false);
 
   const aliveRef = useRef(true);
   useEffect(() => {
@@ -134,10 +124,6 @@ export function AiProvidersSection() {
       setProviders(p);
       setConfig(c);
       setLoadError(null);
-      // Mirror the toggle into the generation store so dispatchGeneration's
-      // post-gen auto-brief skip path stays in sync without an extra
-      // round-trip per gen.
-      useGenerationStore.setState({ visionEnabled: c.visionEnabled });
     } catch (err) {
       if (!aliveRef.current) return;
       setLoadError(err instanceof Error ? err.message : String(err));
@@ -160,15 +146,23 @@ export function AiProvidersSection() {
     };
   }, [refresh]);
 
-  // Once the first /config arrives, seed the pending selection with
-  // the currently-active provider so Apply is a no-op until the user
-  // picks something different.
+  // Once the first /config arrives, seed the pending selection. Two
+  // cases:
+  //   - User already has a configured provider → seed with it so Apply
+  //     is a no-op until they pick something different.
+  //   - Fresh install (no current) → seed with FIRST_RUN_DEFAULT (Gemini)
+  //     so the panel opens with one card pre-selected and the user sees
+  //     the next-step CTA (Setup help OR test list) immediately, instead
+  //     of a blank state that hides what to do next.
   const current = deriveCurrent(config);
   useEffect(() => {
-    if (pending === null && current !== null && SHOWN_PROVIDERS.includes(current)) {
+    if (pending !== null || config === null) return;
+    if (current !== null && SHOWN_PROVIDERS.includes(current)) {
       setPending(current);
+    } else {
+      setPending(FIRST_RUN_DEFAULT);
     }
-  }, [current, pending]);
+  }, [current, pending, config]);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -179,29 +173,19 @@ export function AiProvidersSection() {
     if (name === pending) return;
     setPending(name);
     // Switching the candidate provider invalidates any prior test
-    // results — they were against a different target.
-    setTests(INITIAL_TESTS);
+    // result — it was against a different target.
+    setTest(INITIAL_TEST);
   }
 
-  async function runTest(feature: LLMFeature) {
+  async function runTest() {
     if (!pending) return;
-    setTests((t) => ({ ...t, [feature]: { state: "testing" } }));
+    setTest({ state: "testing" });
     const result = await testLlmProvider(pending);
-    setTests((t) => ({
-      ...t,
-      [feature]: result.ok
+    setTest(
+      result.ok
         ? { state: "ok", latencyMs: result.latencyMs }
         : { state: "fail", error: result.error || "test failed" },
-    }));
-  }
-
-  async function runAllTests() {
-    if (!pending) return;
-    // Run the 3 feature tests in PARALLEL — each backend test endpoint
-    // spawns an independent subprocess, so there's no contention. Slow
-    // CLIs (Gemini ~15s cold-start) used to mean sequential = 45s+ wall
-    // time; parallel collapses that to single-call latency.
-    await Promise.all(FEATURES.map(runTest));
+    );
   }
 
   async function handleApply() {
@@ -216,6 +200,11 @@ export function AiProvidersSection() {
       });
       showToast(`AI provider switched to ${labelOf(pending)}.`);
       await refresh();
+      // Broadcast so the badge + ForcedSetupGate refresh immediately
+      // instead of waiting up to 30s for their own poll. Plain window
+      // event keeps the contract loose — anyone interested subscribes,
+      // no shared store coupling.
+      window.dispatchEvent(new CustomEvent("flowboard:llm-config-changed"));
       // Tests stay valid after Apply — provider hasn't changed, we
       // just persisted the selection.
     } catch (err) {
@@ -224,33 +213,6 @@ export function AiProvidersSection() {
       );
     } finally {
       if (aliveRef.current) setApplying(false);
-    }
-  }
-
-  async function handleToggleVision(nextEnabled: boolean) {
-    if (savingVision) return;
-    setSavingVision(true);
-    // Optimistic update — both local state AND the generation store
-    // mirror so dispatchGeneration's auto-brief gating sees the new
-    // value immediately, before the next 30s poll.
-    setConfig((c) => (c ? { ...c, visionEnabled: nextEnabled } : c));
-    useGenerationStore.setState({ visionEnabled: nextEnabled });
-    try {
-      await setLlmConfig({ visionEnabled: nextEnabled });
-      showToast(
-        nextEnabled
-          ? "Vision enabled — auto-prompt will use image briefs."
-          : "Vision disabled — auto-prompt will use node prompts instead.",
-      );
-    } catch (err) {
-      // Revert
-      setConfig((c) => (c ? { ...c, visionEnabled: !nextEnabled } : c));
-      useGenerationStore.setState({ visionEnabled: !nextEnabled });
-      showToast(
-        `Couldn't save: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    } finally {
-      if (aliveRef.current) setSavingVision(false);
     }
   }
 
@@ -291,19 +253,18 @@ export function AiProvidersSection() {
     claude: providers!.find((p) => p.name === "claude"),
     gemini: providers!.find((p) => p.name === "gemini"),
     openai: providers!.find((p) => p.name === "openai"),
-    grok: providers!.find((p) => p.name === "grok"),
   };
 
   const pendingProvider = pending ? byName[pending] : null;
   const ready = !!pendingProvider && pendingProvider.available && pendingProvider.configured;
-  const allTestsPassed = FEATURES.every((f) => tests[f].state === "ok");
-  const anyTestRunning = FEATURES.some((f) => tests[f].state === "testing");
+  const testPassed = test.state === "ok";
+  const testRunning = test.state === "testing";
   const selectionUnchanged = pending !== null && pending === current;
   const canApply =
     ready
-    && allTestsPassed
+    && testPassed
     && !applying
-    && !anyTestRunning
+    && !testRunning
     && !selectionUnchanged;
 
   return (
@@ -313,12 +274,13 @@ export function AiProvidersSection() {
         features — switching is one decision, not three.
       </div>
 
-      {current === null && config !== null && (
-        // Mixed-state notice — config has different providers per feature
-        // (legacy or hand-edited secrets.json). Pick one to consolidate.
+      {current === null && config !== null && !config.configured
+        && (config.auto_prompt || config.vision || config.planner) && (
+        // Mixed-state notice — at least one feature has been pinned but
+        // not all three (or they diverge). Pick one card to consolidate.
         <div className="ai-providers-section__mixed-notice" role="alert">
-          ⓘ Your config has different providers per feature
-          ({config.auto_prompt} / {config.vision} / {config.planner}).
+          ⓘ Your providers don't match across features
+          ({config.auto_prompt ?? "—"} / {config.vision ?? "—"} / {config.planner ?? "—"}).
           Pick one below and Apply to consolidate.
         </div>
       )}
@@ -365,57 +327,23 @@ export function AiProvidersSection() {
               </button>
             </div>
           ) : (
-            // Ready branch: provider is connected. Show the 3 feature
-            // tests + Apply button. User must run all 3 tests green
-            // before Apply enables.
+            // Ready branch: provider is connected. Show ONE connection
+            // test + Apply. One ping is sufficient — Auto-Prompt /
+            // Vision / Planner all hit the same provider in
+            // single-provider mode, so a working ping for one is a
+            // working ping for all three. (3 parallel pings used to
+            // trigger MODEL_CAPACITY_EXHAUSTED on Gemini's CodeAssist
+            // backend — Google throttles concurrent calls per user.)
             <>
               <div className="selection-panel__heading">
-                Test {labelOf(pending)} on each feature before applying
+                Test the connection, then Apply
               </div>
-              <label
-                className={`vision-toggle${
-                  config && !config.visionEnabled ? " vision-toggle--off" : ""
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  className="vision-toggle__input"
-                  checked={config ? !config.visionEnabled : false}
-                  disabled={savingVision || !config}
-                  onChange={(e) => handleToggleVision(!e.target.checked)}
-                />
-                <span className="vision-toggle__switch" aria-hidden="true">
-                  <span className="vision-toggle__knob" />
-                </span>
-                <span className="vision-toggle__body">
-                  <span className="vision-toggle__title">Disable Vision</span>
-                  <span className="vision-toggle__hint">
-                    Auto-prompt will use each upstream node's typed prompt
-                    instead of an image-derived brief. Uploaded images
-                    still run vision automatically — this only changes
-                    what the synthesiser reads.
-                  </span>
-                </span>
-              </label>
-              <div className="feature-test-list">
-                {FEATURES.map((f) => (
-                  <FeatureTestRow
-                    key={f}
-                    feature={f}
-                    result={tests[f]}
-                    onTest={() => runTest(f)}
-                  />
-                ))}
-              </div>
+              <ConnectionTestRow
+                providerLabel={labelOf(pending)}
+                result={test}
+                onTest={runTest}
+              />
               <div className="selection-panel__actions">
-                <button
-                  type="button"
-                  className="selection-panel__test-all-btn"
-                  onClick={runAllTests}
-                  disabled={anyTestRunning}
-                >
-                  {anyTestRunning ? "Testing…" : "Test all"}
-                </button>
                 <button
                   type="button"
                   className="selection-panel__apply-btn"
@@ -424,8 +352,8 @@ export function AiProvidersSection() {
                   title={
                     selectionUnchanged
                       ? `${labelOf(pending)} is already active.`
-                      : !allTestsPassed
-                        ? "Run all 3 feature tests successfully to enable Apply."
+                      : !testPassed
+                        ? "Run the connection test successfully to enable Apply."
                         : `Apply ${labelOf(pending)} to all features.`
                   }
                 >
@@ -458,13 +386,16 @@ export function AiProvidersSection() {
   );
 }
 
-interface FeatureTestRowProps {
-  feature: LLMFeature;
-  result: FeatureTestResult;
+interface ConnectionTestRowProps {
+  providerLabel: string;
+  result: ConnectionTestResult;
   onTest(): void;
 }
 
-function FeatureTestRow({ feature, result, onTest }: FeatureTestRowProps) {
+/** Single connection test for the selected provider. Replaces the old
+ * 3-feature test list — one ping is sufficient because all 3 features
+ * point at the same provider in single-provider mode. */
+function ConnectionTestRow({ providerLabel, result, onTest }: ConnectionTestRowProps) {
   const icon =
     result.state === "ok"
       ? "✓"
@@ -473,6 +404,14 @@ function FeatureTestRow({ feature, result, onTest }: FeatureTestRowProps) {
         : result.state === "testing"
           ? "⏳"
           : "○";
+  const subtitle =
+    result.state === "ok" && result.latencyMs != null
+      ? `Connected · ${result.latencyMs}ms · powers Auto-Prompt, Vision, Planner`
+      : result.state === "fail" && result.error
+        ? result.error
+        : result.state === "testing"
+          ? "Pinging the CLI…"
+          : "Sends one tiny prompt to verify the CLI answers.";
   return (
     <div className={`feature-test-row feature-test-row--${result.state}`}>
       <span
@@ -482,16 +421,20 @@ function FeatureTestRow({ feature, result, onTest }: FeatureTestRowProps) {
         {icon}
       </span>
       <div className="feature-test-row__body">
-        <span className="feature-test-row__name">{FEATURE_LABEL[feature]}</span>
-        <span className="feature-test-row__hint">{FEATURE_HINT[feature]}</span>
-        {result.state === "ok" && result.latencyMs != null && (
-          <span className="feature-test-row__latency">
-            ✓ Connected · {result.latencyMs}ms
-          </span>
-        )}
-        {result.state === "fail" && result.error && (
-          <span className="feature-test-row__error">✗ {result.error}</span>
-        )}
+        <span className="feature-test-row__name">
+          {providerLabel} connection
+        </span>
+        <span
+          className={
+            result.state === "fail"
+              ? "feature-test-row__error"
+              : result.state === "ok"
+                ? "feature-test-row__latency"
+                : "feature-test-row__hint"
+          }
+        >
+          {subtitle}
+        </span>
       </div>
       <button
         type="button"
@@ -535,8 +478,6 @@ function CliReference({ provider }: CliReferenceProps) {
     }
   }
 
-  if (!ref.installCmd) return null; // Grok has no CLI; nothing to show
-
   return (
     <div className="cli-reference">
       <div className="cli-reference__row">
@@ -571,7 +512,5 @@ function labelOf(name: LLMProviderName): string {
       return "Gemini";
     case "openai":
       return "OpenAI";
-    case "grok":
-      return "Grok";
   }
 }

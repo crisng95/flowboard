@@ -1,16 +1,7 @@
 import { create } from "zustand";
 import { ensureBoardProject, createRequest, getRequest, patchNode } from "../api/client";
-import { requestAutoBrief } from "../api/autoBrief";
 import { useBoardStore } from "./board";
 import { useSettingsStore } from "./settings";
-
-// Image nodes also need aiBrief now: when they feed into a downstream
-// video, the motion synth uses the source still's brief to detect SCENE
-// (studio / street / café / outdoor) and pick environment-appropriate
-// motion vocabulary. Without this the video synth has no idea the source
-// is a NYC street and outputs studio editorial poses instead of casual
-// lifestyle motion.
-const AUTO_BRIEF_TYPES = new Set(["character", "visual_asset", "image"]);
 
 type PollEntry = { requestId: number; timerId: ReturnType<typeof setTimeout> | null };
 
@@ -23,12 +14,6 @@ interface GenerationState {
   // default tier for every dispatch so the UI no longer needs to ask.
   // Null until the first successful project bootstrap.
   paygateTier: "PAYGATE_TIER_ONE" | "PAYGATE_TIER_TWO" | null;
-  // Mirrors the backend Vision toggle so dispatchGeneration's post-gen
-  // auto-brief skip path doesn't have to round-trip /api/llm/config.
-  // Synced by AiProvidersSection on its 30s poll + on user toggle.
-  // Default true preserves existing behaviour for users who never open
-  // the AI Providers dialog.
-  visionEnabled: boolean;
   error: string | null;
 
   openGenerationDialog(rfId: string, prompt: string): void;
@@ -71,6 +56,19 @@ interface GenerationState {
 // (character / image / visual_asset) feeding into this image-target node.
 // All of these are passed to Flow as IMAGE_INPUT_TYPE_REFERENCE inputs so the
 // new image is composed from them.
+//
+// Per-edge variant pinning: each edge from a multi-variant source
+// remembers exactly WHICH variant feeds the downstream — stored on
+// `edge.data.sourceVariantIdx`. Resolution rules per edge:
+//   1. If the edge has a pinned `sourceVariantIdx` AND the source has
+//      a `mediaIds[idx]` entry there → use it.
+//   2. Else if the source has an active `mediaId` → use it
+//      (single-variant case; or multi-variant where the user hasn't
+//      pinned yet — variant 0 is the natural default).
+//   3. Else if the source has a non-empty `mediaIds[]` → use index 0.
+// One ref per edge means one Flow API call regardless of how many
+// variants the upstream has — the user picks which variant feeds
+// which downstream by clicking the variant tile (Stage 2 UX).
 const REF_SOURCE_TYPES = new Set(["character", "image", "visual_asset"]);
 
 function collectUpstreamRefMediaIds(targetRfId: string): string[] {
@@ -80,8 +78,26 @@ function collectUpstreamRefMediaIds(targetRfId: string): string[] {
     if (e.target !== targetRfId) continue;
     const src = nodes.find((n) => n.id === e.source);
     if (!src || !REF_SOURCE_TYPES.has(src.data.type)) continue;
-    const mid = src.data.mediaId;
-    if (typeof mid === "string" && mid) ids.push(mid);
+
+    const variants = Array.isArray(src.data.mediaIds) ? src.data.mediaIds : [];
+    const pinned = (e.data?.sourceVariantIdx ?? null) as number | null;
+
+    let chosen: string | null = null;
+    if (
+      pinned !== null
+      && pinned >= 0
+      && pinned < variants.length
+      && typeof variants[pinned] === "string"
+      && variants[pinned]
+    ) {
+      chosen = variants[pinned] as string;
+    } else if (typeof src.data.mediaId === "string" && src.data.mediaId) {
+      chosen = src.data.mediaId;
+    } else if (variants.length > 0 && typeof variants[0] === "string" && variants[0]) {
+      chosen = variants[0] as string;
+    }
+
+    if (chosen) ids.push(chosen);
   }
   return ids;
 }
@@ -92,7 +108,6 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
   openViewer: { rfId: null, idx: 0 },
   projectId: null,
   paygateTier: null,
-  visionEnabled: true,
   error: null,
 
   openGenerationDialog(rfId, prompt) {
@@ -276,8 +291,27 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             }));
             scheduleNextPoll();
           } else if (req.status === "done") {
-            const mediaIds = req.result["media_ids"] as string[] | undefined ?? [];
-            const mediaId = mediaIds[0];
+            // `media_ids` may contain `null` placeholders for variants
+            // the backend marked as partial-failures (e.g. Veo content
+            // filter blocked one of 4 i2v clips while the other 3
+            // succeeded). Keep the positional alignment so the frontend
+            // can map slot i ↔ upstream variant i, but pick the first
+            // non-null entry as the "primary" mediaId for legacy
+            // single-tile UI consumers.
+            const mediaIds = (req.result["media_ids"] as (string | null)[] | undefined) ?? [];
+            const mediaId = mediaIds.find(
+              (m): m is string => typeof m === "string" && m.length > 0,
+            );
+            // Surface the partial-error summary onto data.error while
+            // keeping status="done" — the node still has renderable
+            // variants, but the UI can flag that some slots got blocked.
+            const partialError = (req.result["partial_error"] as string | undefined) ?? null;
+            // Per-slot error codes (aligned to mediaIds) so the detail
+            // viewer can render the exact filter reason on each blocked
+            // tile. `null` length-matched array when nothing's blocked;
+            // missing on legacy / non-video results.
+            const slotErrors =
+              (req.result["slot_errors"] as (string | null)[] | undefined) ?? null;
             // Stamp the model used onto the node so the detail panel can
             // show "Banana Pro" / "Quality" etc. — read from req.params
             // (what was dispatched). Tier-1 UI locks Lite + Quality so
@@ -294,9 +328,11 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               status: "done",
               mediaId,
               mediaIds,
+              slotErrors: slotErrors ?? undefined,
               aiBrief: undefined,
               aspectRatio: opts.aspectRatio,
               renderedAt: new Date().toISOString(),
+              error: partialError ?? undefined,
               ...(stampedImageModel ? { imageModel: stampedImageModel } : {}),
               ...(stampedVideoQuality ? { videoQuality: stampedVideoQuality } : {}),
             });
@@ -321,10 +357,15 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                   prompt: opts.prompt,
                   mediaId,
                   mediaIds,
+                  slotErrors: slotErrors ?? null,
                   variantCount: d?.variantCount ?? mediaIds.length,
                   aiBrief: null,
                   aspectRatio: opts.aspectRatio,
                   renderedAt: new Date().toISOString(),
+                  // `null` clears stale error from a previous attempt
+                  // when this run was clean; otherwise persist the
+                  // partial summary so it survives reload.
+                  error: partialError ?? null,
                   ...(stampedImageModel ? { imageModel: stampedImageModel } : {}),
                   ...(stampedVideoQuality ? { videoQuality: stampedVideoQuality } : {}),
                 },
@@ -332,22 +373,13 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                 // Non-fatal: the in-memory state is still correct for this session.
               });
             }
-            // Auto-brief on success for ref-style nodes (character /
-            // visual_asset) so downstream auto-prompt has rich context.
-            // Gated on the user's Vision toggle: when OFF, gen-completion
-            // doesn't auto-fire vision (matches the synthesiser's
-            // fallback to node.prompt). Manual upload paths in
-            // NodeCard.tsx still call requestAutoBrief unconditionally
-            // because the user explicitly added bytes.
-            const n = useBoardStore.getState().nodes.find((x) => x.id === rfId);
-            if (
-              mediaId
-              && n
-              && AUTO_BRIEF_TYPES.has(n.data.type)
-              && get().visionEnabled
-            ) {
-              requestAutoBrief(rfId, mediaId);
-            }
+            // Generation results always carry a prompt (the one we just
+            // dispatched with), and downstream synth treats prompt as the
+            // source of truth. Vision adds nothing here — skip it.
+            // Manual upload paths in NodeCard.tsx still call
+            // requestAutoBrief; that helper now early-returns if the
+            // target node already has a prompt, so behaviour stays sane
+            // for upload-then-type flows too.
             set((s) => {
               const next = { ...s.active };
               delete next[rfId];

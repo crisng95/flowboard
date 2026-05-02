@@ -7,7 +7,7 @@ Two paths:
   ``FLOWBOARD_PLANNER_BACKEND=mock``.
 - ``generate_plan_reply`` — invokes the configured Planner provider via
   ``run_llm("planner", ...)`` (default = Claude CLI; user can pin Gemini /
-  OpenAI / Grok in Settings → AI Providers). Asks it to produce a
+  OpenAI Codex in Settings → AI Providers). Asks it to produce a
   conversational acknowledgement and (optionally) a JSON pipeline plan
   matching the schema in ``docs/PLAN.md``.
 
@@ -225,15 +225,16 @@ async def generate_plan_reply(
         }
 
     if backend == "auto":
-        # Probe the configured Planner provider, not Claude unconditionally.
-        # Saves the cost of building the prompt context if we already know
-        # we'll fall back to mock.
+        # Probe the configured Planner provider — no default. If the user
+        # hasn't completed the AI Provider setup, fall back to mock
+        # silently here (the forced-setup gate in the UI is what nudges
+        # them to configure; mock keeps the chat reply path graceful).
         config = secrets.read_active_providers()
-        provider_name = config.get("planner", "claude")
-        provider = registry.get_provider(provider_name)
+        provider_name = config.get("planner")
+        provider = registry.get_provider(provider_name) if provider_name else None
         if provider is None or not await provider.is_available():
             logger.info(
-                "planner: %s unavailable, using mock", provider_name
+                "planner: %s unavailable, using mock", provider_name or "unset"
             )
             return {
                 "reply_text": generate_mock_reply(

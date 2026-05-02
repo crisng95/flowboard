@@ -9,6 +9,7 @@ import { ProjectSidebar } from "./components/ProjectSidebar";
 import { Toaster } from "./components/Toaster";
 import { GenerationDialog } from "./components/GenerationDialog";
 import { ResultViewer } from "./components/ResultViewer";
+import { ForcedSetupGate } from "./components/ForcedSetupGate";
 import { useBoardStore } from "./store/board";
 
 export function App() {
@@ -44,6 +45,7 @@ export function App() {
       <Toaster />
       <GenerationDialog />
       <ResultViewer />
+      <ForcedSetupGate />
     </div>
   );
 }

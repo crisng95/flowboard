@@ -2,42 +2,48 @@ import { useEffect, useRef } from "react";
 import { AiProvidersSection } from "./settings/AiProvidersSection";
 
 /**
- * Standalone dialog for the AI Providers panel. Mirrors SettingsPanel's
- * backdrop + click-outside + ESC pattern, but is conceptually distinct:
- * SettingsPanel is for the *Google Flow* generation context (tier, video
- * quality, image model), AiProviderDialog is for the *LLM provider* layer
- * (which AI powers Auto-Prompt / Vision / Planner).
+ * Standalone dialog for the AI Providers panel.
  *
- * Triggered from the AiProviderBadge in the toolbar (top-right, left of
- * Sponsor). Keeping the two surfaces separate matches how the user
- * thinks about them — Flow billing decisions don't belong with LLM
+ * Two modes:
+ *  - **User-opened** (`force=false`): backdrop click + ESC + ✕ all close.
+ *  - **Forced setup** (`force=true`): no close affordances. The parent
+ *    (ForcedSetupGate at the App level) controls visibility based on
+ *    `/api/llm/config.configured`. Once the user runs Apply with a
+ *    provider that passes all 3 tests, the next /config poll flips
+ *    `configured=true` and the parent unmounts the dialog.
+ *
+ * SettingsPanel (Google Flow tier / video quality / image model) is a
+ * separate dialog — Flow billing decisions don't belong with LLM
  * provider switches.
  */
 
 interface AiProviderDialogProps {
   open: boolean;
   onClose(): void;
+  /** When true, hide ✕, ignore ESC, ignore backdrop click. */
+  force?: boolean;
 }
 
-export function AiProviderDialog({ open, onClose }: AiProviderDialogProps) {
+export function AiProviderDialog({ open, onClose, force = false }: AiProviderDialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || force) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, force]);
 
   if (!open) return null;
 
   return (
     <div
-      className="ai-provider-dialog-backdrop"
+      className={`ai-provider-dialog-backdrop${force ? " ai-provider-dialog-backdrop--force" : ""}`}
       role="presentation"
       onClick={(e) => {
+        if (force) return;
         if (e.target === e.currentTarget) onClose();
       }}
     >
@@ -49,16 +55,27 @@ export function AiProviderDialog({ open, onClose }: AiProviderDialogProps) {
         aria-label="AI Providers"
       >
         <div className="ai-provider-dialog__header">
-          <span className="ai-provider-dialog__title">AI Providers</span>
-          <button
-            type="button"
-            className="ai-provider-dialog__close"
-            onClick={onClose}
-            aria-label="Close AI Providers"
-          >
-            ×
-          </button>
+          <span className="ai-provider-dialog__title">
+            {force ? "Set up your AI provider" : "AI Providers"}
+          </span>
+          {!force && (
+            <button
+              type="button"
+              className="ai-provider-dialog__close"
+              onClick={onClose}
+              aria-label="Close AI Providers"
+            >
+              ×
+            </button>
+          )}
         </div>
+        {force && (
+          <div className="ai-provider-dialog__force-banner" role="alert">
+            Flowboard needs an AI provider before it can run Auto-Prompt,
+            Vision, or Planner. Pick one card, run all 3 tests green, then
+            Apply to continue.
+          </div>
+        )}
         <AiProvidersSection />
       </div>
     </div>

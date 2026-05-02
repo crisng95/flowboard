@@ -50,7 +50,7 @@ def test_write_creates_parent_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
 def test_write_sets_mode_0600(tmp_secrets_path: Path):
     """Critical — file must not be group/world readable. API keys live here."""
-    secrets.write({"apiKeys": {"grok": "xai-secret"}})
+    secrets.write({"apiKeys": {"openai": "sk-secret"}})
     mode = stat.S_IMODE(os.stat(tmp_secrets_path).st_mode)
     assert mode == 0o600, f"expected 0o600 got {oct(mode)}"
 
@@ -68,9 +68,12 @@ def test_get_api_key_roundtrip(tmp_secrets_path: Path):
 
 
 def test_get_api_key_returns_none_when_missing(tmp_secrets_path: Path):
+    """Missing key → None. Other providers' keys don't bleed through."""
     assert secrets.get_api_key("openai") is None
-    secrets.set_api_key("grok", "xai-1")
-    assert secrets.get_api_key("openai") is None  # other provider isn't set
+    # Intentionally use a non-shipped name to verify isolation — the
+    # secrets layer doesn't validate keys against the registry.
+    secrets.set_api_key("custom", "x-1")
+    assert secrets.get_api_key("openai") is None
 
 
 def test_get_api_key_returns_none_for_empty_string(tmp_secrets_path: Path):
@@ -91,43 +94,43 @@ def test_set_api_key_clears_with_none(tmp_secrets_path: Path):
 
 
 def test_set_api_key_does_not_touch_other_providers(tmp_secrets_path: Path):
-    """Editing one key must leave others alone — basic but worth a regression."""
+    """Editing one key must leave others alone — basic but worth a
+    regression. Uses an unknown provider name as the "other" key to
+    verify the secrets layer is provider-agnostic at this level."""
     secrets.set_api_key("openai", "sk-1")
-    secrets.set_api_key("grok", "xai-1")
+    secrets.set_api_key("custom", "x-1")
     secrets.set_api_key("openai", "sk-2")
-    assert secrets.get_api_key("grok") == "xai-1"
+    assert secrets.get_api_key("custom") == "x-1"
     assert secrets.get_api_key("openai") == "sk-2"
 
 
 def test_set_api_key_preserves_active_providers(tmp_secrets_path: Path):
     """Saving a key shouldn't wipe the user's feature routing."""
     secrets.set_feature_provider("vision", "gemini")
-    secrets.set_api_key("grok", "xai-key")
+    secrets.set_api_key("openai", "sk-key")
     assert secrets.read_active_providers()["vision"] == "gemini"
 
 
-def test_read_active_providers_defaults_to_claude(tmp_secrets_path: Path):
-    """Brand-new install — every feature defaults to claude."""
+def test_read_active_providers_empty_for_fresh_install(tmp_secrets_path: Path):
+    """Brand-new install — no providers are pinned. Callers (registry,
+    HTTP route) must handle missing keys; the forced-setup dialog in the
+    UI is what nudges the user to set one up."""
     cfg = secrets.read_active_providers()
-    assert cfg == {
-        "auto_prompt": "claude",
-        "vision": "claude",
-        "planner": "claude",
-    }
+    assert cfg == {}
 
 
-def test_read_active_providers_overlays_defaults(tmp_secrets_path: Path):
-    """User picks Gemini for Vision; the other two stay at claude defaults."""
+def test_read_active_providers_returns_only_saved(tmp_secrets_path: Path):
+    """User picks Gemini for Vision; only that key is present. The other
+    two features are absent (caller treats absence as "not configured")."""
     secrets.set_feature_provider("vision", "gemini")
     cfg = secrets.read_active_providers()
-    assert cfg["vision"] == "gemini"
-    assert cfg["auto_prompt"] == "claude"
-    assert cfg["planner"] == "claude"
+    assert cfg == {"vision": "gemini"}
 
 
 def test_read_active_providers_ignores_garbage_values(tmp_secrets_path: Path):
     """Defensive — a hand-edited secrets.json with non-string values for a
-    feature must not crash; fall back to the claude default for that slot."""
+    feature must drop the bad entry rather than crash. Missing slots are
+    absent (no silent default substitution)."""
     secrets.write({
         "activeProviders": {
             "auto_prompt": "gemini",
@@ -136,9 +139,36 @@ def test_read_active_providers_ignores_garbage_values(tmp_secrets_path: Path):
         }
     })
     cfg = secrets.read_active_providers()
-    assert cfg["auto_prompt"] == "gemini"
-    assert cfg["vision"] == "claude"
-    assert cfg["planner"] == "claude"
+    assert cfg == {"auto_prompt": "gemini"}
+
+
+def test_is_active_providers_configured_false_when_empty(tmp_secrets_path: Path):
+    assert secrets.is_active_providers_configured() is False
+
+
+def test_is_active_providers_configured_false_when_partial(tmp_secrets_path: Path):
+    secrets.set_feature_provider("vision", "gemini")
+    secrets.set_feature_provider("planner", "gemini")
+    # auto_prompt unset → not configured.
+    assert secrets.is_active_providers_configured() is False
+
+
+def test_is_active_providers_configured_false_when_mixed(tmp_secrets_path: Path):
+    """All 3 set, but to different providers — single-provider invariant
+    fails so the forced-setup gate prompts the user to consolidate."""
+    secrets.set_feature_provider("auto_prompt", "claude")
+    secrets.set_feature_provider("vision", "gemini")
+    secrets.set_feature_provider("planner", "claude")
+    assert secrets.is_active_providers_configured() is False
+
+
+def test_is_active_providers_configured_true_when_all_match(tmp_secrets_path: Path):
+    """All 3 set to the same provider — this is what the dialog's Apply
+    button writes. Setup-complete state."""
+    secrets.set_feature_provider("auto_prompt", "gemini")
+    secrets.set_feature_provider("vision", "gemini")
+    secrets.set_feature_provider("planner", "gemini")
+    assert secrets.is_active_providers_configured() is True
 
 
 def test_set_feature_provider_does_not_touch_api_keys(tmp_secrets_path: Path):
@@ -151,11 +181,10 @@ def test_set_feature_provider_does_not_touch_api_keys(tmp_secrets_path: Path):
 def test_write_then_read_preserves_full_document(tmp_secrets_path: Path):
     """End-to-end: a populated document survives a write + read cycle."""
     secrets.set_api_key("openai", "sk-1")
-    secrets.set_api_key("grok", "xai-1")
     secrets.set_feature_provider("auto_prompt", "gemini")
     secrets.set_feature_provider("vision", "openai")
 
     raw = json.loads(tmp_secrets_path.read_text())
-    assert raw["apiKeys"] == {"openai": "sk-1", "grok": "xai-1"}
+    assert raw["apiKeys"] == {"openai": "sk-1"}
     assert raw["activeProviders"]["auto_prompt"] == "gemini"
     assert raw["activeProviders"]["vision"] == "openai"
