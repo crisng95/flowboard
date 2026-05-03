@@ -20,16 +20,24 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import subprocess
 from typing import Optional
 
 from .base import LLMError
+from .cli_utils import (
+    resolve_cli_binary,
+    get_windows_npm_paths,
+    validate_prompt_size,
+    validate_attachment_paths,
+    DEFAULT_SUBPROCESS_TIMEOUT,
+    CLI_PROBE_TIMEOUT,
+)
 
 logger = logging.getLogger(__name__)
 
-
 _CLI_BIN = "gemini"
-_DEFAULT_TIMEOUT = 90.0
-_PROBE_TIMEOUT = 5.0
+_DEFAULT_TIMEOUT = DEFAULT_SUBPROCESS_TIMEOUT
+_PROBE_TIMEOUT = CLI_PROBE_TIMEOUT
 
 # Pin a stable production model. Gemini CLI v0.38.2's default Auto
 # mode picks `gemini-3-flash-preview` (preview tier) which Google
@@ -74,6 +82,7 @@ class GeminiProvider:
 
     name: str = "gemini"
     supports_vision: bool = True  # Gemini Flash + Pro both have vision
+    test_timeout_secs: float = 180.0  # Retries with backoff on 429 quota exhaustion
 
     def __init__(self) -> None:
         self._available: Optional[bool] = None
@@ -100,28 +109,28 @@ class GeminiProvider:
         """Testing hook + Settings panel rescan support."""
         self._available = None
 
+
     async def _probe_version(self) -> bool:
+        """Check gemini CLI availability using subprocess (Windows-compatible)."""
+        # Use shared binary resolver which tries PATH + npm locations
         try:
-            proc = await asyncio.create_subprocess_exec(
-                _CLI_BIN,
-                "--version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            gemini_bin = resolve_cli_binary(_CLI_BIN, _PROBE_TIMEOUT)
+            result = subprocess.run(
+                [gemini_bin, "--version"],
+                capture_output=True,
+                timeout=_PROBE_TIMEOUT,
             )
-        except (FileNotFoundError, PermissionError):
+            if result.returncode == 0:
+                logger.info("gemini: found at %s", gemini_bin)
+                return True
+            logger.warning("gemini: version probe returned code %d", result.returncode)
             return False
-        except Exception:  # noqa: BLE001
-            logger.exception("gemini: unexpected error during availability probe")
+        except subprocess.TimeoutExpired:
+            logger.warning("gemini: probe timed out")
             return False
-        try:
-            await asyncio.wait_for(proc.communicate(), timeout=_PROBE_TIMEOUT)
-        except asyncio.TimeoutError:
-            try:
-                proc.kill()
-            except Exception:  # noqa: BLE001
-                pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning("gemini: probe failed: %s", e)
             return False
-        return proc.returncode == 0
 
     # ── dispatch ──────────────────────────────────────────────────────
 
@@ -146,6 +155,15 @@ class GeminiProvider:
         behind it with a 90s timeout, Auto-Prompt has 83s of work time
         once it acquires.
         """
+        # Validate inputs
+        try:
+            validate_prompt_size(user_prompt)
+            if system_prompt:
+                validate_prompt_size(system_prompt)
+            validate_attachment_paths(attachments)
+        except ValueError as exc:
+            raise LLMError(f"Invalid input: {exc}") from exc
+
         # Build the composite prompt: system block, user prompt, attachments.
         parts: list[str] = []
         if system_prompt:
@@ -161,7 +179,8 @@ class GeminiProvider:
         # for the capacity-exhausted preview-model rationale. When unset
         # we don't pass `-m` so Gemini CLI's own `/model` setting wins.
         model = os.environ.get("FLOWBOARD_GEMINI_MODEL") or _DEFAULT_MODEL
-        args: list[str] = [_CLI_BIN]
+        gemini_bin = resolve_cli_binary(_CLI_BIN, _PROBE_TIMEOUT)
+        args: list[str] = [gemini_bin]
         if model:
             args += ["-m", model]
         args += ["-p", full_prompt]
@@ -177,33 +196,31 @@ class GeminiProvider:
     async def _invoke_locked(
         self, args: list[str], *, timeout: float
     ) -> str:
-        """Subprocess + wait + decode, assumed to be holding ``_call_lock``.
+        """Subprocess invocation using subprocess.run (Windows-compatible).
 
-        Split out so tests can target the unlocked invocation path
-        directly when we want to assert subprocess args without
-        timing the semaphore."""
+        Assumed to be holding ``_call_lock``. This remains async for
+        compatibility with the semaphore pattern, but internally uses
+        synchronous subprocess.run() which avoids asyncio subprocess
+        issues on Windows."""
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                timeout=timeout,
+                text=False,  # Keep as bytes for .decode() below
             )
         except FileNotFoundError as exc:
             raise LLMError("gemini CLI not found on PATH") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise LLMError(f"gemini CLI timed out after {timeout}s (likely quota exhaustion or network issue)") from exc
+        except Exception as exc:  # noqa: BLE001
+            raise LLMError(f"gemini CLI error: {exc}") from exc
 
-        try:
-            stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
-        except asyncio.TimeoutError as exc:
-            try:
-                proc.kill()
-            except Exception:  # noqa: BLE001
-                pass
-            raise LLMError(f"gemini CLI timed out after {timeout}s") from exc
+        if result.returncode != 0:
+            stderr = result.stderr.decode(errors="replace")[:400]
+            # Check for quota exhaustion error
+            if "429" in stderr or "exhausted" in stderr.lower() or "quota" in stderr.lower():
+                raise LLMError(f"Gemini quota exhausted: {stderr}")
+            raise LLMError(f"gemini CLI exited {result.returncode}: {stderr}")
 
-        if proc.returncode != 0:
-            stderr = stderr_b.decode(errors="replace")[:400]
-            raise LLMError(f"gemini CLI exited {proc.returncode}: {stderr}")
-
-        return stdout_b.decode(errors="replace").strip()
+        return result.stdout.decode(errors="replace").strip()

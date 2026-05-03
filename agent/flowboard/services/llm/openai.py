@@ -30,6 +30,7 @@ import json
 import logging
 import mimetypes
 import re
+import subprocess
 import time
 from pathlib import Path
 from typing import Optional
@@ -38,6 +39,13 @@ import httpx
 
 from .base import LLMError
 from . import secrets
+from .cli_utils import (
+    resolve_cli_binary,
+    validate_prompt_size,
+    validate_attachment_paths,
+    DEFAULT_SUBPROCESS_TIMEOUT,
+    CLI_PROBE_TIMEOUT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,17 +100,17 @@ class OpenAIProvider:
 
         # Step 1: does the binary exist + run `--version`?
         try:
-            proc = await asyncio.create_subprocess_exec(
-                _CLI_BIN, "--version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            codex_bin = resolve_cli_binary(_CLI_BIN, CLI_PROBE_TIMEOUT)
+            result = subprocess.run(
+                [codex_bin, "--version"],
+                capture_output=True,
+                timeout=CLI_PROBE_TIMEOUT,
             )
-            await asyncio.wait_for(proc.communicate(), timeout=_PROBE_TIMEOUT)
-            self._cli_available = proc.returncode == 0
+            self._cli_available = result.returncode == 0
         except (FileNotFoundError, PermissionError):
             self._cli_available = False
             return
-        except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+        except (subprocess.TimeoutExpired, Exception):  # noqa: BLE001
             self._cli_available = False
             return
 
@@ -111,15 +119,14 @@ class OpenAIProvider:
 
         # Step 2: parse `--help` for an image-attachment flag.
         try:
-            proc = await asyncio.create_subprocess_exec(
-                _CLI_BIN, "--help",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            codex_bin = resolve_cli_binary(_CLI_BIN, CLI_PROBE_TIMEOUT)
+            result = subprocess.run(
+                [codex_bin, "--help"],
+                capture_output=True,
+                timeout=CLI_PROBE_TIMEOUT,
             )
-            stdout_b, _ = await asyncio.wait_for(
-                proc.communicate(), timeout=_PROBE_TIMEOUT
-            )
-        except (FileNotFoundError, PermissionError, asyncio.TimeoutError):
+            stdout_b = result.stdout
+        except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
             return
         except Exception:  # noqa: BLE001
             logger.exception("openai: unexpected error during codex --help probe")
@@ -232,8 +239,18 @@ class OpenAIProvider:
         the JSON envelope (similar shape to `claude` CLI)."""
         import os
 
+        # Validate inputs
+        try:
+            validate_prompt_size(user_prompt)
+            if system_prompt:
+                validate_prompt_size(system_prompt)
+            validate_attachment_paths(attachments)
+        except ValueError as exc:
+            raise LLMError(f"Invalid input: {exc}") from exc
+
+        codex_bin = resolve_cli_binary(_CLI_BIN, CLI_PROBE_TIMEOUT)
         args: list[str] = [
-            _CLI_BIN, "exec", "--output-format", "json", "-p", user_prompt,
+            codex_bin, "exec", "--output-format", "json", "-p", user_prompt,
         ]
         if system_prompt:
             args += ["--system", system_prompt]
@@ -242,30 +259,23 @@ class OpenAIProvider:
                 args += [self._cli_image_flag, os.path.abspath(path)]
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                timeout=timeout,
             )
         except FileNotFoundError as exc:
             raise LLMError("codex CLI not found on PATH") from exc
-
-        try:
-            stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
-        except asyncio.TimeoutError as exc:
-            try:
-                proc.kill()
-            except Exception:  # noqa: BLE001
-                pass
+        except subprocess.TimeoutExpired as exc:
             raise LLMError(f"codex CLI timed out after {timeout}s") from exc
+        except Exception as exc:  # noqa: BLE001
+            raise LLMError(f"codex CLI error: {exc}") from exc
 
-        if proc.returncode != 0:
-            stderr = stderr_b.decode(errors="replace")[:400]
-            raise LLMError(f"codex CLI exited {proc.returncode}: {stderr}")
+        if result.returncode != 0:
+            stderr = result.stderr.decode(errors="replace")[:400]
+            raise LLMError(f"codex CLI exited {result.returncode}: {stderr}")
 
-        stdout = stdout_b.decode(errors="replace")
+        stdout = result.stdout.decode(errors="replace")
         try:
             envelope = json.loads(stdout)
         except json.JSONDecodeError as exc:
