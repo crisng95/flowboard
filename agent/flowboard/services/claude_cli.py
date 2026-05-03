@@ -15,11 +15,20 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import subprocess
 from typing import Optional
+
+from .llm.cli_utils import (
+    resolve_cli_binary,
+    validate_attachment_paths,
+    validate_prompt_size,
+    DEFAULT_SUBPROCESS_TIMEOUT,
+    CLI_PROBE_TIMEOUT,
+)
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT = 90.0
+DEFAULT_TIMEOUT = DEFAULT_SUBPROCESS_TIMEOUT
 _CLI_BIN = "claude"
 
 # Cached availability probe. None = not probed yet.
@@ -31,26 +40,24 @@ class ClaudeCliError(RuntimeError):
 
 
 async def _probe_available() -> bool:
+    # Try to resolve and probe claude binary
     try:
-        proc = await asyncio.create_subprocess_exec(
-            _CLI_BIN,
-            "--version",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        claude_bin = resolve_cli_binary(_CLI_BIN, CLI_PROBE_TIMEOUT)
+        result = subprocess.run(
+            [claude_bin, "--version"],
+            capture_output=True,
+            timeout=CLI_PROBE_TIMEOUT,
         )
-        try:
-            await asyncio.wait_for(proc.communicate(), timeout=5.0)
-        except asyncio.TimeoutError:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            return False
-        return proc.returncode == 0
-    except (FileNotFoundError, PermissionError):
+        if result.returncode == 0:
+            logger.info("claude_cli: SUCCESS - found claude at %s", claude_bin)
+            return True
+        logger.warning("claude_cli: probe returned code %d", result.returncode)
         return False
-    except Exception:  # noqa: BLE001
-        logger.exception("claude_cli: unexpected error during availability probe")
+    except subprocess.TimeoutExpired:
+        logger.warning("claude_cli: probe timed out")
+        return False
+    except Exception as e:  # noqa: BLE001
+        logger.warning("claude_cli: probe failed - %s", e)
         return False
 
 
@@ -95,13 +102,24 @@ async def run_claude(
     """
     import os
 
+    # Validate inputs
+    try:
+        validate_prompt_size(user_prompt)
+        if system_prompt:
+            validate_prompt_size(system_prompt)
+        validate_attachment_paths(attachments)
+    except ValueError as exc:
+        raise ClaudeCliError(f"Invalid input: {exc}") from exc
+
     full_prompt = user_prompt
     if attachments:
         # `@<path>` syntax handled by the CLI for file attachments.
-        suffix = " ".join(f"@{p}" for p in attachments)
+        suffix = " ".join(f"@{os.path.abspath(p)}" for p in attachments)
         full_prompt = f"{user_prompt}\n\n{suffix}" if user_prompt else suffix
 
-    args: list[str] = [_CLI_BIN, "-p", full_prompt, "--output-format", "json"]
+    # Resolve claude binary path: try PATH first, then npm locations
+    claude_bin = resolve_cli_binary(_CLI_BIN, CLI_PROBE_TIMEOUT)
+    args: list[str] = [claude_bin, "-p", full_prompt, "--output-format", "json"]
     if system_prompt:
         args += ["--append-system-prompt", system_prompt]
     if attachments:
@@ -116,32 +134,26 @@ async def run_claude(
                 args += ["--add-dir", parent]
         args += ["--permission-mode", "bypassPermissions"]
 
+    # Use synchronous subprocess.run() to avoid asyncio subprocess issues on Windows.
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            timeout=timeout,
+            text=False,
         )
     except FileNotFoundError as exc:
         raise ClaudeCliError("claude CLI not found on PATH") from exc
-
-    try:
-        stdout_b, stderr_b = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout
-        )
-    except asyncio.TimeoutError as exc:
-        try:
-            proc.kill()
-        except Exception:  # noqa: BLE001
-            pass
+    except subprocess.TimeoutExpired as exc:
         raise ClaudeCliError(f"claude CLI timed out after {timeout}s") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise ClaudeCliError(f"claude CLI error: {exc}") from exc
 
-    if proc.returncode != 0:
-        raise ClaudeCliError(
-            f"claude CLI exited {proc.returncode}: {stderr_b.decode(errors='replace')[:400]}"
-        )
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace")[:400]
+        raise ClaudeCliError(f"claude CLI exited {result.returncode}: {stderr}")
 
-    stdout = stdout_b.decode(errors="replace")
+    stdout = result.stdout.decode(errors="replace")
     try:
         envelope = json.loads(stdout)
     except json.JSONDecodeError as exc:
@@ -157,8 +169,8 @@ async def run_claude(
             f"claude CLI reported error: {envelope.get('result') or envelope.get('subtype')}"
         )
 
-    result = envelope.get("result")
-    if not isinstance(result, str):
+    result_text = envelope.get("result")
+    if not isinstance(result_text, str):
         raise ClaudeCliError("claude CLI envelope missing string 'result' field")
 
-    return result
+    return result_text

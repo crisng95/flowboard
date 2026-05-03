@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from flowboard.services.llm import registry, secrets
 from flowboard.services.llm.base import LLMError
+from flowboard.services import claude_cli
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,14 @@ _VALID_FEATURES = ("auto_prompt", "vision", "planner")
 
 
 # ── GET /api/llm/providers ────────────────────────────────────────────
+
+
+@router.post("/debug/reset-probe")
+async def debug_reset_probe() -> dict:
+    """Force re-probe Claude CLI (debug endpoint)."""
+    claude_cli.reset_availability_cache()
+    available = await claude_cli.is_available(force=True)
+    return {"ok": True, "claude_available": available}
 
 
 @router.get("/providers")
@@ -154,7 +163,10 @@ async def test_provider(name: str) -> dict:
         # because the Test path was tighter than what the user actually
         # runs. 120s keeps Test honest — if Vision passes here, it'll
         # pass at dispatch time too.
-        await provider.run(".", timeout=120.0)
+        # Gemini retries with exponential backoff on quota exhaustion (429),
+        # so it uses 180s to account for multiple retries.
+        test_timeout = getattr(provider, "test_timeout_secs", 120.0)
+        await provider.run(".", timeout=test_timeout)
     except LLMError as exc:
         return {"ok": False, "error": str(exc)[:200]}
     except Exception as exc:  # noqa: BLE001
