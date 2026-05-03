@@ -249,8 +249,13 @@ class OpenAIProvider:
             raise LLMError(f"Invalid input: {exc}") from exc
 
         codex_bin = resolve_cli_binary(_CLI_BIN, CLI_PROBE_TIMEOUT)
+        # Pipe the prompt via stdin (`-` sentinel) instead of as an argv
+        # token. Same Windows ``.cmd`` shim rationale as claude_cli.py:
+        # cmd.exe re-parses argv for ``.cmd``-shimmed binaries and
+        # mangles newlines / quotes in long prompts. Stdin sidesteps the
+        # parser entirely.
         args: list[str] = [
-            codex_bin, "exec", "--output-format", "json", "-p", user_prompt,
+            codex_bin, "exec", "--output-format", "json", "-p", "-",
         ]
         if system_prompt:
             args += ["--system", system_prompt]
@@ -261,6 +266,7 @@ class OpenAIProvider:
         try:
             result = subprocess.run(
                 args,
+                input=user_prompt.encode("utf-8"),
                 capture_output=True,
                 timeout=timeout,
             )

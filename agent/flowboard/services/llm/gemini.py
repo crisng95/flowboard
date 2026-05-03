@@ -12,12 +12,18 @@ prompt body:
   pattern Claude CLI uses). Verified live: `gemini -p "describe @path"`
   works and returns a real description.
 
-Output is plain text on stdout in non-interactive mode. Errors and
-timeouts surface as ``LLMError`` so the registry contract holds.
+Output is requested as ``-o json`` so we get a structured envelope of
+the form ``{"session_id": "...", "response": "<text>", "stats": {...}}``.
+We extract the ``response`` field and discard the rest. Earlier the
+provider returned raw stdout, which periodically picked up "Loaded
+cached credentials" banners + ``Tip:`` informational lines + ANSI
+escape codes that broke downstream parsers (especially the batch
+auto-prompt synth that expects a JSON array reply from the model).
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import subprocess
@@ -183,7 +189,9 @@ class GeminiProvider:
         args: list[str] = [gemini_bin]
         if model:
             args += ["-m", model]
-        args += ["-p", full_prompt]
+        # ``-o json`` gives us a structured envelope instead of raw text
+        # mixed with banner/tip/ANSI noise. Parsed in ``_invoke_locked``.
+        args += ["-o", "json", "-p", full_prompt]
 
         # Lazy-init the semaphore on the running loop. The wait + the
         # subprocess + communicate all live inside the lock so a second
@@ -223,4 +231,21 @@ class GeminiProvider:
                 raise LLMError(f"Gemini quota exhausted: {stderr}")
             raise LLMError(f"gemini CLI exited {result.returncode}: {stderr}")
 
-        return result.stdout.decode(errors="replace").strip()
+        stdout = result.stdout.decode(errors="replace").strip()
+        # ``-o json`` envelope shape:
+        #   {"session_id": "...", "response": "<model text>", "stats": {...}}
+        # Extract ``response`` and discard everything else. Banners /
+        # ``Tip:`` lines / ANSI codes that older raw-text mode mixed in
+        # never reach the caller now because they're outside the JSON.
+        try:
+            envelope = json.loads(stdout)
+        except json.JSONDecodeError as exc:
+            raise LLMError(
+                f"gemini CLI returned non-JSON output: {stdout[:200]}"
+            ) from exc
+        if not isinstance(envelope, dict):
+            raise LLMError("gemini CLI envelope is not an object")
+        response = envelope.get("response")
+        if not isinstance(response, str):
+            raise LLMError("gemini CLI envelope missing string 'response' field")
+        return response.strip()

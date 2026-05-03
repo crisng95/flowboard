@@ -119,7 +119,24 @@ async def run_claude(
 
     # Resolve claude binary path: try PATH first, then npm locations
     claude_bin = resolve_cli_binary(_CLI_BIN, CLI_PROBE_TIMEOUT)
-    args: list[str] = [claude_bin, "-p", full_prompt, "--output-format", "json"]
+    # Pipe the prompt via stdin instead of `-p <prompt>` argv.
+    #
+    # Why: on Windows, npm-installed CLIs are ``.cmd`` shims. Python's
+    # subprocess.run on a ``.cmd`` re-invokes through cmd.exe, which
+    # re-parses arguments — newlines / ``"`` / ``&`` / ``|`` inside the
+    # prompt get split, and the CLI ends up seeing an empty / truncated
+    # ``-p`` payload. Symptom on the wire was:
+    #
+    #   ClaudeCliError: claude CLI returned non-JSON output:
+    #   "I see the system reminders about deferred tools, available
+    #    skills, and project context. No user request has been made yet
+    #    — what would you like me to do?"
+    #
+    # i.e. claude received NO real prompt and replied conversationally
+    # in plain text. Switching to stdin sidesteps cmd.exe's argv parser
+    # entirely — bytes flow straight to claude's stdin. macOS / Linux
+    # behaviour is unchanged (stdin works there too).
+    args: list[str] = [claude_bin, "-p", "--output-format", "json"]
     if system_prompt:
         args += ["--append-system-prompt", system_prompt]
     if attachments:
@@ -138,6 +155,7 @@ async def run_claude(
     try:
         result = subprocess.run(
             args,
+            input=full_prompt.encode("utf-8"),
             capture_output=True,
             timeout=timeout,
             text=False,
