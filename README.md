@@ -18,17 +18,29 @@
   <img src="https://img.shields.io/badge/Status-personal%20local--only-orange" alt="Status"/>
 </p>
 
+---
+
+### ☕ Sponsor this project
+
 <p align="center">
   <a href="docs/assets/sponsor-qr-vn.jpg">
     <img src="docs/assets/sponsor-qr-vn.jpg" alt="Buy me a coffee — Vietnam QR (MoMo · VietQR · napas247)" width="280" />
-  </a><br/>
-  <sub>☕ <b>Sponsor this project</b> — 📱 Vietnam: scan QR (MoMo · VietQR · napas247).
-  International:
+  </a>
+</p>
+
+<p align="center">
+  📱 <b>Vietnam:</b> scan QR (MoMo · VietQR · napas247) &nbsp;·&nbsp;
+  🌍 <b>International:</b>
   <a href="https://ko-fi.com/crisnguyen95">
     <img src="https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-FF5E5B?logo=kofi&logoColor=white" alt="Ko-fi" />
-  </a></sub><br/>
+  </a>
+</p>
+
+<p align="center">
   <sub><i>(yes — I moved this up here on purpose. Was afraid nobody scrolls past the badges 😅)</i></sub>
 </p>
+
+---
 
 <p align="center">
   <b>A local-only, single-user infinite-canvas workspace for AI media workflows.</b><br/>
