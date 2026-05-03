@@ -22,15 +22,25 @@
 
 ### ☕ Sponsor this project
 
-<p align="center">
-  <a href="docs/assets/sponsor-qr-vn.jpg">
-    <img src="docs/assets/sponsor-qr-vn.jpg" alt="Buy me a coffee — Vietnam QR (MoMo · VietQR · napas247)" width="280" />
-  </a>
-</p>
+<table align="center">
+  <tr>
+    <td align="center" width="50%">
+      <a href="docs/assets/sponsor-qr-vn.jpg">
+        <img src="docs/assets/sponsor-qr-vn.jpg" alt="Vietnam QR — MoMo / VietQR / napas247" width="240" />
+      </a><br/>
+      <sub>📱 <b>Vietnam</b><br/>MoMo · VietQR · napas247</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="docs/assets/sponsor-qr-binance.png">
+        <img src="docs/assets/sponsor-qr-binance.png" alt="Binance Pay QR — Cris Ng" width="240" />
+      </a><br/>
+      <sub>💰 <b>Binance Pay</b><br/>Crypto / cross-border</sub>
+    </td>
+  </tr>
+</table>
 
 <p align="center">
-  📱 <b>Vietnam:</b> scan QR (MoMo · VietQR · napas247) &nbsp;·&nbsp;
-  🌍 <b>International:</b>
+  🌍 <b>International (card):</b>
   <a href="https://ko-fi.com/crisnguyen95">
     <img src="https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-FF5E5B?logo=kofi&logoColor=white" alt="Ko-fi" />
   </a>
