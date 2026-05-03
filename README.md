@@ -19,6 +19,18 @@
 </p>
 
 <p align="center">
+  <a href="docs/assets/sponsor-qr-vn.jpg">
+    <img src="docs/assets/sponsor-qr-vn.jpg" alt="Buy me a coffee — Vietnam QR (MoMo · VietQR · napas247)" width="280" />
+  </a><br/>
+  <sub>☕ <b>Sponsor this project</b> — 📱 Vietnam: scan QR (MoMo · VietQR · napas247).
+  International:
+  <a href="https://ko-fi.com/crisnguyen95">
+    <img src="https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-FF5E5B?logo=kofi&logoColor=white" alt="Ko-fi" />
+  </a></sub><br/>
+  <sub><i>(yes — I moved this up here on purpose. Was afraid nobody scrolls past the badges 😅)</i></sub>
+</p>
+
+<p align="center">
   <b>A local-only, single-user infinite-canvas workspace for AI media workflows.</b><br/>
   Compose characters, products, scenes, and videos as a directed graph. Drive generation through a Chrome extension that proxies requests to Google Flow (Veo 3.1 / GEM_PIX_2).<br/>
   Every node is reusable, every edge is a real data-dependency, every variant is independently regenerable.
@@ -588,37 +600,6 @@ clean (frontend). Caveats:
 ## License
 
 MIT (proposed — license file pending).
-
----
-
-## Sponsor this project
-
-Flowboard is built and maintained as a personal local-only tool. If
-it saves you a few hours of clicking through the Flow web UI, a coffee
-goes a long way toward keeping the roadmap moving — bug fixes, new
-provider integrations, and the next batch of features all live in the
-same single-developer queue.
-
-<p align="center">
-  <a href="docs/assets/sponsor-qr-vn.jpg">
-    <img src="docs/assets/sponsor-qr-vn.jpg" alt="Buy me a coffee — Vietnam QR (MoMo · VietQR · napas247)" width="320" />
-  </a><br/>
-  <sub>📱 <b>Vietnam:</b> scan to send via MoMo · VietQR · napas247.<br/>
-  Click the QR to open it full-size if your scanner needs more pixels.</sub>
-</p>
-
-International sponsors can also support via:
-
-<p align="center">
-  <a href="https://ko-fi.com/crisnguyen95">
-    <img src="https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-FF5E5B?logo=kofi&logoColor=white&style=for-the-badge" alt="Ko-fi" />
-  </a>
-</p>
-
-Every contribution goes directly toward Google Flow Pro/Ultra
-subscription costs (the testing footprint of this project), Claude /
-Gemini API time for prompt-synth quality work, and the occasional
-bowl of phở. Thank you 🙏
 
 ---
 
