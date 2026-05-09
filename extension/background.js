@@ -6,7 +6,7 @@
  */
 
 const AGENT_WS_URL  = 'ws://127.0.0.1:9222';
-const CALLBACK_URL  = 'http://127.0.0.1:8100/api/ext/callback';
+const CALLBACK_URL  = 'http://127.0.0.1:8101/api/ext/callback';
 
 let ws               = null;
 let flowKey          = null;

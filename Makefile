@@ -10,7 +10,7 @@ help:
 	@echo "  make install-dev  - install agent with dev extras (ruff, pytest)"
 	@echo "  make update       - upgrade existing deps (agent + frontend)"
 	@echo "  make dev          - hint: run agent + frontend in separate terminals"
-	@echo "  make agent        - run agent only (FastAPI on :8100)"
+	@echo "  make agent        - run agent only (FastAPI on :8101)"
 	@echo "  make frontend     - run frontend only (Vite on :5173)"
 	@echo "  make extension    - package extension (unpacked: load from ./extension)"
 	@echo "  make clean        - remove build + cache"
@@ -44,7 +44,7 @@ dev:
 	@echo "Load ./extension as unpacked extension in chrome://extensions."
 
 agent:
-	cd agent && .venv/bin/uvicorn flowboard.main:app --reload --port 8100
+	cd agent && .venv/bin/uvicorn flowboard.main:app --reload --port 8101
 
 frontend:
 	cd frontend && npm run dev

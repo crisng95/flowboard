@@ -329,7 +329,7 @@ matching vocab from the system prompt.
 ```
 ┌──────────────────────┐    ┌────────────────────┐    ┌──────────────────────┐
 │  Chrome MV3 ext      │◄───┤  FastAPI agent     ├───►│  SQLite (storage/)   │
-│  - content script    │ WS │  127.0.0.1:8100    │    │  Board, Node, Edge,  │
+│  - content script    │ WS │  127.0.0.1:8101    │    │  Board, Node, Edge,  │
 │  - injected MAIN     │ ws │  + worker queue    │    │  Request, Asset,     │
 │  - CDN URL allow     │9222│  + WS server :9222 │    │  Plan, ChatMessage,  │
 │  - Captcha bridge    │    │  + LLM CLI bridge  │    │  BoardFlowProject    │
@@ -386,7 +386,7 @@ Steps 2 + 3:
 make install        # agent venv + frontend deps (uses uv if available, else pip)
 make install-dev    # same, but adds ruff + pytest extras
 make update         # upgrade agent + frontend deps in place
-make agent          # run FastAPI on :8100
+make agent          # run FastAPI on :8101
 make frontend       # run Vite on :5173
 ```
 
@@ -417,14 +417,14 @@ python3.11 -m venv .venv
 
 # `--timeout-graceful-shutdown 2` keeps `--reload` snappy when you save
 # a Python file — without it, uvicorn waits forever for the WS to drain.
-.venv/bin/uvicorn flowboard.main:app --reload --port 8100 \
+.venv/bin/uvicorn flowboard.main:app --reload --port 8101 \
   --timeout-graceful-shutdown 2
 ```
 
 Smoke-test:
 
 ```bash
-curl http://127.0.0.1:8100/api/health
+curl http://127.0.0.1:8101/api/health
 # {"ok":true,"extension_connected":true,"ws_stats":{"connected":true,"flow_key_present":true,...}}
 ```
 

@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 STORAGE_DIR = Path(os.getenv("FLOWBOARD_STORAGE", ROOT / "storage"))
 DB_PATH = Path(os.getenv("FLOWBOARD_DB", STORAGE_DIR / "flowboard.db"))
 
-HTTP_PORT = int(os.getenv("FLOWBOARD_HTTP_PORT", "8100"))
+HTTP_PORT = int(os.getenv("FLOWBOARD_HTTP_PORT", "8101"))
 WS_HOST = os.getenv("FLOWBOARD_WS_HOST", "127.0.0.1")
 EXTENSION_WS_PORT = int(os.getenv("FLOWBOARD_EXT_WS_PORT", "9222"))
 

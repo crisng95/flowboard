@@ -1,6 +1,6 @@
 """Standalone WebSocket server on :9222 for the Chrome extension bridge.
 
-Kept separate from the FastAPI :8100 app to match flowkit's pattern — the
+Kept separate from the FastAPI :8101 app to match flowkit's pattern — the
 extension's `background.js` connects to `ws://127.0.0.1:9222` only.
 """
 from __future__ import annotations
