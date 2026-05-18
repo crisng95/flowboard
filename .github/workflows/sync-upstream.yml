@@ -3,20 +3,20 @@
 on:
   schedule:
     # Every day at 02:00 UTC (09:00 Asia/Saigon)
-    - cron: '0 2 * * *'
+    - cron: "0 2 * * *"
   workflow_dispatch:
     inputs:
       upstream_branch:
-        description: 'Upstream branch to sync from'
+        description: "Upstream branch to sync from"
         required: false
-        default: 'main'
+        default: "main"
 
 permissions:
   contents: write
 
 jobs:
   sync:
-    name: Fast-forward main from upstream
+    name: Rebase main onto upstream
     runs-on: ubuntu-latest
 
     steps:
@@ -58,24 +58,43 @@ jobs:
           echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
           echo "Fork main is $AHEAD commit(s) ahead and $BEHIND commit(s) behind upstream/$BRANCH."
 
-      - name: Refuse if fork main has diverged
-        if: steps.check.outputs.ahead != '0'
-        run: |
-          echo "::error::Fork main is ${{ steps.check.outputs.ahead }} commit(s) ahead of upstream. Refusing fast-forward."
-          echo "Resolve manually: rebase fork main onto upstream, or move custom commits to a feature branch."
-          exit 1
-
       - name: Skip if already up to date
         if: steps.check.outputs.behind == '0'
         run: echo "Already up to date with upstream/${{ steps.upstream.outputs.branch }}."
 
-      - name: Fast-forward main
-        if: steps.check.outputs.ahead == '0' && steps.check.outputs.behind != '0'
-        run: git merge --ff-only upstream/${{ steps.upstream.outputs.branch }}
+      - name: Guard against unexpected drift on main
+        if: steps.check.outputs.behind != '0'
+        run: |
+          set -e
+          # Inspect commits on fork main that are not on upstream.
+          # Allow only fork-owned CI commits (paths under .github/) to live on main.
+          FORK_COMMITS=$(git rev-list upstream/${{ steps.upstream.outputs.branch }}..HEAD)
+          if [ -z "$FORK_COMMITS" ]; then
+            echo "No fork-only commits on main. Will fast-forward."
+            exit 0
+          fi
+          echo "Fork-only commits on main:"
+          echo "$FORK_COMMITS"
+          for sha in $FORK_COMMITS; do
+            FILES=$(git diff-tree --no-commit-id --name-only -r "$sha")
+            BAD=$(echo "$FILES" | grep -v '^.github/' || true)
+            if [ -n "$BAD" ]; then
+              echo "::error::Commit $sha touches non-CI files. Refusing automatic rebase."
+              echo "Files outside .github/:"
+              echo "$BAD"
+              echo "Move these commits to a feature branch, then re-run sync."
+              exit 1
+            fi
+          done
+          echo "All fork-only commits are CI-only. Safe to rebase."
+
+      - name: Rebase main onto upstream
+        if: steps.check.outputs.behind != '0'
+        run: git rebase upstream/${{ steps.upstream.outputs.branch }}
 
       - name: Push to fork
-        if: steps.check.outputs.ahead == '0' && steps.check.outputs.behind != '0'
-        run: git push origin main
+        if: steps.check.outputs.behind != '0'
+        run: git push origin main --force-with-lease
 
       - name: Summary
         if: always()
@@ -84,7 +103,6 @@ jobs:
             echo "### Sync result";
             echo "";
             echo "- Upstream: \`crisng95/flowboard@${{ steps.upstream.outputs.branch }}\`";
-            echo "- Ahead:  ${{ steps.check.outputs.ahead }}";
-            echo "- Behind: ${{ steps.check.outputs.behind }}";
+            echo "- Ahead before sync:  ${{ steps.check.outputs.ahead }}";
+            echo "- Behind before sync: ${{ steps.check.outputs.behind }}";
           } >> "$GITHUB_STEP_SUMMARY"
-
