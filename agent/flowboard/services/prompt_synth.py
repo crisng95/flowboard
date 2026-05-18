@@ -639,6 +639,46 @@ _STORYBOARD_SUFFIX = (
 )
 
 
+async def get_identity(node_id: int) -> str:
+    """Return a short identity blurb for the upstream subject of `node_id`.
+
+    Used by the Multi-view 2-phase pipeline (`/api/prompt/auto-sheet` and
+    `/api/prompt/auto-multiview`) to compose per-view prompts that all
+    anchor on the same subject description, without re-running the
+    full LLM auto-prompt pipeline for every angle.
+
+    Resolution order, picking the first non-empty source:
+      1. Target node''s own `prompt` (user-typed description on the
+         Multi-view node itself).
+      2. Upstream Concept / Reference / Visual-asset brief or prompt
+         (collected by `_collect_upstream`).
+      3. Empty string -> caller falls back to a neutral default.
+
+    Returns a string that''s safe to splice into other prompts -
+    trimmed of whitespace, no trailing period (the prompt-builder will
+    add the joining punctuation).
+    """
+    records, target = _collect_upstream(node_id)
+    if target is not None:
+        data = target.data if isinstance(target.data, dict) else {}
+        own_prompt = data.get("prompt") if isinstance(data.get("prompt"), str) else None
+        if own_prompt and own_prompt.strip():
+            return own_prompt.strip().rstrip(".")
+
+    # Walk upstream looking for the first usable identity-bearing record.
+    # Concept / Reference / Visual-asset all carry briefs that describe
+    # the subject; prompt nodes carry style notes which are not
+    # identity, so we skip them.
+    identity_types = {"concept", "reference", "visual_asset", "character"}
+    for record in records:
+        if record.get("type") not in identity_types:
+            continue
+        text = record.get("brief") or record.get("prompt") or record.get("title")
+        if isinstance(text, str) and text.strip():
+            return text.strip().rstrip(".")
+
+    return ""
+
 async def auto_prompt_storyboard(
     node_id: int,
     count: int,
