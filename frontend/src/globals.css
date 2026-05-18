@@ -1,14 +1,14 @@
-/*
- * globals.css — Tailwind layers + canvas/typography refinements.
+﻿/*
+ * globals.css â€” Tailwind layers + canvas/typography refinements.
  *
  * IMPORTANT: this file is loaded BEFORE legacy styles.css in main.tsx.
  * Order matters because some legacy class selectors override what
  * @tailwind base resets (e.g. button styles, body color). Putting
  * tailwind first lets the existing CSS keep precedence by virtue of
- * being later — zero regressions on V1 components.
+ * being later â€” zero regressions on V1 components.
  */
 
-/* @import MUST precede @tailwind directives — CSS spec requires
+/* @import MUST precede @tailwind directives â€” CSS spec requires
    imports to come before any other statement. Inter is loaded from
    Google Fonts with `display=swap` to keep initial paint snappy.
    If we later self-host, swap this for a local @font-face. */
@@ -20,7 +20,7 @@
 
 @layer base {
   :root {
-    /* New canvas palette — overrides the v1 vars in styles.css when
+    /* New canvas palette â€” overrides the v1 vars in styles.css when
        this file is loaded first. The v1 var names stay so existing CSS
        keeps working; values change to match the Magnific-inspired
        darker scheme. */
@@ -40,7 +40,7 @@
     font-family:
       "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
       sans-serif;
-    /* Numeric tabular alignment — useful for variant counters / metrics
+    /* Numeric tabular alignment â€” useful for variant counters / metrics
        columns where the legacy CSS sets `font-variant-numeric: tabular-nums`
        on tiny one-off rules. Just inherit it everywhere. */
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
@@ -50,7 +50,7 @@
 }
 
 @layer components {
-  /* Glass surface — used by toolbar v2 + spotlight ⌘K. Backdrop blur
+  /* Glass surface â€” used by toolbar v2 + spotlight âŒ˜K. Backdrop blur
      with a soft edge highlight gives the "floating panel" depth that
      Magnific's chrome relies on. */
   .surface-glass {
@@ -58,7 +58,7 @@
     @apply backdrop-blur-xl border border-line-subtle shadow-glass;
   }
 
-  /* Node V2 surface — Magnific-inspired. Border barely-there; soft
+  /* Node V2 surface â€” Magnific-inspired. Border barely-there; soft
      drop shadow does the elevation lifting. Radius scales with card
      size (16px is the right feel at 240-280px width; 22px reads
      bloated at small scales). Tone tuned to fade into the canvas dot
@@ -86,6 +86,36 @@
       0 0 0 1px rgba(124, 92, 255, 0.3),
       0 14px 40px -8px rgba(124, 92, 255, 0.22);
   }
+  /* Status feedback ring - low-cost visual cue beyond the status
+     dot in the header. Tints the card outline so the user can see
+     a generation is in flight even when the title bar is offscreen. */
+  .node-surface[data-status="running"] {
+    border-color: rgba(124, 92, 255, 0.45);
+    animation: node-running-pulse 1.6s ease-in-out infinite;
+  }
+  .node-surface[data-status="queued"] {
+    border-color: rgba(255, 196, 87, 0.35);
+  }
+  .node-surface[data-status="error"] {
+    border-color: rgba(239, 68, 68, 0.5);
+    box-shadow:
+      0 1px 0 0 rgba(239, 68, 68, 0.12) inset,
+      0 14px 40px -10px rgba(239, 68, 68, 0.18);
+  }
+  @keyframes node-running-pulse {
+    0%, 100% {
+      box-shadow:
+        0 1px 0 0 rgba(124, 92, 255, 0.10) inset,
+        0 0 0 1px rgba(124, 92, 255, 0.20),
+        0 14px 40px -10px rgba(124, 92, 255, 0.20);
+    }
+    50% {
+      box-shadow:
+        0 1px 0 0 rgba(124, 92, 255, 0.18) inset,
+        0 0 0 1px rgba(124, 92, 255, 0.45),
+        0 14px 40px -8px rgba(124, 92, 255, 0.35);
+    }
+  }
 }
 
 @layer utilities {
@@ -100,7 +130,7 @@
   }
 }
 
-/* React Flow canvas — slightly darker bg so node surfaces pop. The dot
+/* React Flow canvas â€” slightly darker bg so node surfaces pop. The dot
    pattern is drawn by ReactFlow's <Background> component; we tint the
    wrapper here for the area outside the dot field (visible at extreme
    zoom-out). */
@@ -117,7 +147,7 @@
   filter: drop-shadow(0 0 6px rgba(124, 92, 255, 0.5));
 }
 
-/* V2 handle pill — light up on active drag.
+/* V2 handle pill â€” light up on active drag.
    The HandleVisual component above renders the pill with the default
    surface tint; ReactFlow toggles `.connecting` on the host handle
    during a drag. We can't use a Tailwind hover variant for the
@@ -128,7 +158,7 @@
   color: #fff;
 }
 
-/* React Flow node host — by default has overflow:visible already, but
+/* React Flow node host â€” by default has overflow:visible already, but
    we set it explicitly to defend against any future global rule that
    might clip the external title label NodeShell renders ABOVE the
    card body via `absolute -top-7`. Without overflow visible the label
@@ -143,7 +173,7 @@
   padding: 0;
 }
 
-/* PickerDropdown scrollbar — subtle dark scrollbar so longer preset
+/* PickerDropdown scrollbar â€” subtle dark scrollbar so longer preset
    lists (8 type entries) stay scannable without blasting the user
    with the default OS bar. WebKit-only; Firefox keeps its default
    thin bar via scrollbar-width via Tailwind's prose plugin if needed
@@ -162,7 +192,7 @@
   background: rgba(255, 255, 255, 0.16);
 }
 
-/* NodeResizeControl visibility — the @xyflow/react default places
+/* NodeResizeControl visibility â€” the @xyflow/react default places
    the resize handle inside the React Flow node wrapper. Our V2 cards
    set `overflow: hidden` on their inner body which would clip a
    margin-offset handle. The handle is a child of <Handle>'s sibling
@@ -173,11 +203,11 @@
   z-index: 10;
 }
 
-/* Magnific-style curved resize handle — fades in only when the user
+/* Magnific-style curved resize handle â€” fades in only when the user
    hovers the corner zone. The wrapper element has the
    `resize-handle-arc` class (see ResizeHandle.tsx); the inner SVG
-   uses `resize-handle-arc__svg`. Hover the wrapper → the SVG
-   transitions opacity from 0 → 1. Drag works regardless of the
+   uses `resize-handle-arc__svg`. Hover the wrapper â†’ the SVG
+   transitions opacity from 0 â†’ 1. Drag works regardless of the
    SVG's visibility because @xyflow/react's NodeResizeControl
    captures pointer events on its root div. */
 .resize-handle-arc:hover .resize-handle-arc__svg,
@@ -188,10 +218,11 @@
 /* When the user is mid-resize, keep the arc fully visible even if
    the cursor leaves the wrapper (drag jitter). @xyflow/react adds a
    `dragging` data attribute on the body during a resize drag, but
-   exposes nothing to the resize control itself — we proxy via the
+   exposes nothing to the resize control itself â€” we proxy via the
    global cursor change. Acceptable approximation: pin opacity to 1
-   during the entire pointer-down → pointer-up cycle by also keying
+   during the entire pointer-down â†’ pointer-up cycle by also keying
    on :active. */
 .resize-handle-arc:active .resize-handle-arc__svg {
   opacity: 1 !important;
 }
+

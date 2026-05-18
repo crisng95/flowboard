@@ -1,20 +1,20 @@
-/**
- * NodeShell — V2 base wrapper, rebuilt to match Magnific Spaces.
+﻿/**
+ * NodeShell â€” V2 base wrapper, rebuilt to match Magnific Spaces.
  *
  * Reference: Magnific "Assistant" + "Creation" node screenshots.
  *
  * Key structural choices:
- *   1. Title sits OUTSIDE the card (top-left subtle label) — NOT inside
+ *   1. Title sits OUTSIDE the card (top-left subtle label) â€” NOT inside
  *      the card as a header bar. This is the single most important
- *      Magnific cue — the card body becomes pure content, not chrome.
+ *      Magnific cue â€” the card body becomes pure content, not chrome.
  *   2. Card body is a big rounded surface (~22px) with generous padding
  *      (24px) and a barely-there border. The shadow does the heavy
  *      lifting for "lifted" depth.
  *   3. Handles render as labeled pills floating OUTSIDE the card edge,
- *      not flush with it. Icon inside the pill (T for text, ▣ for
- *      image, ▶ for video) tells the user what flows through that
+ *      not flush with it. Icon inside the pill (T for text, â–£ for
+ *      image, â–¶ for video) tells the user what flows through that
  *      port.
- *   4. Optional inner toolbar row at the top of the card body — two
+ *   4. Optional inner toolbar row at the top of the card body â€” two
  *      groups: a left group of "type/mode" pills, a right group of
  *      action icons (copy, expand). Components decide what to put in
  *      each slot.
@@ -33,7 +33,7 @@ import { cn } from "../../lib/utils";
 
 interface HandleSpec {
   id: string;
-  /** Icon rendered inside the pill — communicates what data type flows
+  /** Icon rendered inside the pill â€” communicates what data type flows
    *  through this port. Magnific labels every port; we follow suit. */
   icon: LucideIcon;
   label?: string;
@@ -52,7 +52,7 @@ export interface NodeShellProps {
   /** Apply default 20px padding to the card body. Pass false for
    *  full-bleed media cards. */
   padded?: boolean;
-  /** Optional toolbar row rendered at the top of the card body —
+  /** Optional toolbar row rendered at the top of the card body â€”
    *  before children. Two slots (left + right) match Magnific. */
   toolbarLeft?: ReactNode;
   toolbarRight?: ReactNode;
@@ -95,7 +95,7 @@ export function NodeShell({
     // node bounds aligned with the card itself (handles + edges
     // attach correctly).
     <div className="relative font-sans" style={{ width }}>
-      {/* External title — Magnific puts it OUTSIDE the card so the
+      {/* External title â€” Magnific puts it OUTSIDE the card so the
           card body is pure content. Sits above the card with a small
           inline icon. Magnific keeps the title light/subtle (not
           bold), the shortId monospace + dimmer than the title. */}
@@ -117,7 +117,7 @@ export function NodeShell({
         )}
       </div>
 
-      {/* Card body. NOT overflow:hidden — that would clip the
+      {/* Card body. NOT overflow:hidden â€” that would clip the
           NodeResizeControl handle (rendered as a sibling below by
           consumers) and any other portaled affordance pinned outside
           the card edge. Inner content that needs clipping (the top
@@ -125,11 +125,12 @@ export function NodeShell({
           overflow. */}
       <div
         data-selected={selected || undefined}
+        data-status={status !== "idle" ? status : undefined}
         className={cn("node-surface relative", className)}
       >
         {(toolbarLeft || toolbarRight) && (
           <div
-            // Inner toolbar — Magnific puts ~28px icon pills here.
+            // Inner toolbar â€” Magnific puts ~28px icon pills here.
             // Left group = mode/type toggles, right group = action
             // icons. Tight padding keeps the toolbar visually a
             // floating row, not a separate header zone.
@@ -146,7 +147,7 @@ export function NodeShell({
         <div
           className={cn(
             // Tight 12px (p-3) around the body so the media slot
-            // dominates — Magnific's cards never have generous body
+            // dominates â€” Magnific's cards never have generous body
             // padding; the *card* itself provides the breathing room.
             padded ? "p-3" : "",
             (toolbarLeft || toolbarRight) && padded ? "pt-2" : "",
@@ -162,7 +163,7 @@ export function NodeShell({
           position={Position.Left}
           id={targetHandle.id}
           // The Handle host element IS the hit-area. Make it large
-          // (28x28) and transparent — visible pill is rendered as a
+          // (28x28) and transparent â€” visible pill is rendered as a
           // child div positioned inside.
           className="!h-7 !w-7 !border-0 !bg-transparent !-translate-x-1/2"
           style={{ top: "50%" }}
@@ -187,7 +188,7 @@ export function NodeShell({
 
 /**
  * The labeled pill inside a Handle. Magnific uses a circular dark
- * pill (~28px) with a single icon — no fill, just a soft border and
+ * pill (~28px) with a single icon â€” no fill, just a soft border and
  * an icon. Hover scales + lights up the border so the user knows
  * it's grabbable.
  */
@@ -216,3 +217,4 @@ function HandlePill({ icon: Icon, label }: { icon: LucideIcon; label?: string })
     </div>
   );
 }
+
