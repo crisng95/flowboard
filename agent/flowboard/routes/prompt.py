@@ -94,95 +94,162 @@ async def auto_prompt_multiview(
 ) -> AutoPromptMultiviewResponse:
     """Return pre-composed per-angle prompts for a Multi-view dispatch.
 
-    No LLM call — the 4-view angles are fixed and the prompts are
-    deterministic. Each prompt uses explicit camera positioning +
-    [VISIBLE]/[HIDDEN] tags to prevent Imagen's left/right collapse.
+    No LLM call - the angles are fixed and the prompts are deterministic.
+    Each prompt uses explicit camera positioning + visibility tags to
+    prevent Imagen left/right collapse.
+
+    Two prompt families ship today:
+      * `_CHARACTER_PROMPTS` for `4view` (humanoid / creature / robot).
+        Anchors on A-pose, eye/ear visibility, body silhouette.
+      * `_PROP_PROMPTS` for `prop_4view` (object / weapon / outfit).
+        Anchors on product-photography framing - no body language,
+        focuses on silhouette readability + scale + design clarity.
+    The dispatcher selects which family to use from the preset key,
+    so the prop pipeline never inherits humanoid wording (which would
+    otherwise drift the model toward generating a person).
     """
     from flowboard.services.concept import angles_for_preset
 
     angles = angles_for_preset(body.preset)
     if not angles:
-        raise HTTPException(status_code=400, detail=f"unknown preset {body.preset!r}")
+        raise HTTPException(
+            status_code=400, detail=f"unknown preset {body.preset!r}"
+        )
 
-    # Pre-composed prompts keyed by angle. Each one:
-    #   - Uses explicit camera-position phrasing
-    #   - Includes [VISIBLE] and [HIDDEN] tags
-    #   - Specifies orthographic framing + neutral grey bg
-    #   - Does NOT describe subject design (reference image carries identity)
-    #
-    # Left/right profile notes: Imagen collapses "left" and "right"
-    # into a generic 3/4 view unless the prompt:
-    #   1. States EXACT 90° perpendicular (no "slightly turned")
-    #   2. Explicitly says face points AWAY from camera (perpendicular)
-    #   3. Describes which eye/ear is visible vs hidden
-    #   4. Contradicts the two profiles on every visible element
-    _STATIC_PROMPTS: dict[str, str] = {
-        "front": (
-            "Camera directly in front of the subject, facing the camera "
-            "head-on. Subject in A-pose: arms relaxed at 45 degrees "
-            "away from body, palms facing inward, legs slightly apart "
-            "shoulder-width, feet flat. Both shoulders perfectly square "
-            "to the lens. "
-            "No weapons of any kind. No swords, no daggers, no knives, "
-            "no guns, no sheaths, no scabbards. Clean uncluttered body "
-            "silhouette. Fingers relaxed, hands empty. "
-            "Orthographic projection, full body, centred, plain neutral "
-            "grey background, even studio lighting."
-        ),
-        "back": (
-            "Camera directly behind the subject. Subject in A-pose: "
-            "arms relaxed at 45 degrees away from body, palms facing "
-            "inward, legs slightly apart shoulder-width, feet flat. "
-            "Subject faces AWAY from camera entirely. "
-            "No weapons of any kind. No swords, no daggers, no knives, "
-            "no guns, no sheaths, no scabbards. Clean uncluttered body "
-            "silhouette. Fingers relaxed, hands empty. "
-            "Orthographic projection, full body, centred, plain neutral "
-            "grey background, even studio lighting."
-        ),
-        "left profile": (
-            "STRICT LEFT PROFILE. Camera at subject's 9-o'clock position. "
-            "The nose points directly toward the LEFT edge of the image. "
-            "The back of the head faces the RIGHT edge of the image. "
-            "Only the left half of the face is visible: left eye, left "
-            "eyebrow, left cheek, left ear. Right eye completely hidden "
-            "behind the nose bridge. Right ear fully occluded by skull. "
-            "A-pose, right arm hidden behind torso. "
-            "NOT a three-quarter view. NOT both eyes visible. "
-            "No weapons of any kind. Clean uncluttered silhouette. "
-            "Hands empty. "
-            "Orthographic, full body, centred, plain neutral grey "
-            "background, even studio lighting."
-        ),
-        "right profile": (
-            "STRICT RIGHT PROFILE. Camera at subject's 3-o'clock position. "
-            "The nose points directly toward the RIGHT edge of the image. "
-            "The back of the head faces the LEFT edge of the image. "
-            "Only the right half of the face is visible: right eye, right "
-            "eyebrow, right cheek, right ear. Left eye completely hidden "
-            "behind the nose bridge. Left ear fully occluded by skull. "
-            "A-pose, left arm hidden behind torso. "
-            "NOT a three-quarter view. NOT both eyes visible. "
-            "No weapons of any kind. Clean uncluttered silhouette. "
-            "Hands empty. "
-            "Orthographic, full body, centred, plain neutral grey "
-            "background, even studio lighting."
-        ),
-    }
+    prompts_by_angle = _PROMPTS_BY_PRESET.get(body.preset, _CHARACTER_PROMPTS)
 
     prompts: list[str] = []
     for angle in angles:
-        prompt = _STATIC_PROMPTS.get(angle)
+        prompt = prompts_by_angle.get(angle)
         if prompt:
             prompts.append(prompt)
         else:
-            # Fallback for unknown angles — generic but functional
             prompts.append(
                 f"{angle} view of the subject. Orthographic projection, "
-                f"full body, centred, neutral grey background, even "
-                f"studio lighting. Preserve identity from reference."
+                f"centred composition, plain neutral grey background, "
+                f"even studio lighting. Preserve identity from the "
+                f"reference image."
             )
 
     return AutoPromptMultiviewResponse(
         node_id=body.node_id, angles=angles, prompts=prompts,
     )
+
+
+# -- Per-angle prompt tables ----------------------------------------
+#
+# Character family (humanoid / creature / robot). A-pose anchors the
+# silhouette; the original Imagen left/right collapse mitigations live
+# here. The "no weapons" lines are kept because the upstream Concept
+# may include them and turnaround sheets read better without them.
+_CHARACTER_PROMPTS: dict[str, str] = {
+    "front": (
+        "Camera directly in front of the subject, facing the camera "
+        "head-on. Subject in A-pose: arms relaxed at 45 degrees "
+        "away from body, palms facing inward, legs slightly apart "
+        "shoulder-width, feet flat. Both shoulders perfectly square "
+        "to the lens. "
+        "No weapons of any kind. No swords, no daggers, no knives, "
+        "no guns, no sheaths, no scabbards. Clean uncluttered body "
+        "silhouette. Fingers relaxed, hands empty. "
+        "Orthographic projection, full body, centred, plain neutral "
+        "grey background, even studio lighting."
+    ),
+    "back": (
+        "Camera directly behind the subject. Subject in A-pose: "
+        "arms relaxed at 45 degrees away from body, palms facing "
+        "inward, legs slightly apart shoulder-width, feet flat. "
+        "Subject faces AWAY from camera entirely. "
+        "No weapons of any kind. No swords, no daggers, no knives, "
+        "no guns, no sheaths, no scabbards. Clean uncluttered body "
+        "silhouette. Fingers relaxed, hands empty. "
+        "Orthographic projection, full body, centred, plain neutral "
+        "grey background, even studio lighting."
+    ),
+    "left profile": (
+        "STRICT LEFT PROFILE. Camera at the subject 9-o-clock position. "
+        "The nose points directly toward the LEFT edge of the image. "
+        "The back of the head faces the RIGHT edge of the image. "
+        "Only the left half of the face is visible: left eye, left "
+        "eyebrow, left cheek, left ear. Right eye completely hidden "
+        "behind the nose bridge. Right ear fully occluded by skull. "
+        "A-pose, right arm hidden behind torso. "
+        "NOT a three-quarter view. NOT both eyes visible. "
+        "No weapons of any kind. Clean uncluttered silhouette. "
+        "Hands empty. "
+        "Orthographic, full body, centred, plain neutral grey "
+        "background, even studio lighting."
+    ),
+    "right profile": (
+        "STRICT RIGHT PROFILE. Camera at the subject 3-o-clock position. "
+        "The nose points directly toward the RIGHT edge of the image. "
+        "The back of the head faces the LEFT edge of the image. "
+        "Only the right half of the face is visible: right eye, right "
+        "eyebrow, right cheek, right ear. Left eye completely hidden "
+        "behind the nose bridge. Left ear fully occluded by skull. "
+        "A-pose, left arm hidden behind torso. "
+        "NOT a three-quarter view. NOT both eyes visible. "
+        "No weapons of any kind. Clean uncluttered silhouette. "
+        "Hands empty. "
+        "Orthographic, full body, centred, plain neutral grey "
+        "background, even studio lighting."
+    ),
+}
+
+# Prop family (object / weapon / outfit). Subject is INANIMATE.
+# These prompts deliberately repeat that the subject is a prop /
+# object so the model does not regress toward humanoid output -
+# this is the failure mode reported when prop_4view first shipped
+# (chest reference rendered as a creature on `front` and `back`).
+_PROP_PROMPTS: dict[str, str] = {
+    "3/4 hero": (
+        "Hero product-photography angle of an INANIMATE PROP / OBJECT. "
+        "The subject is NOT a person, NOT a creature, NOT a robot - "
+        "it is the static prop shown in the reference image. "
+        "Camera positioned 30-45 degrees rotated from the prop''s "
+        "front, slightly elevated by 10-15 degrees. "
+        "Front face and one side of the prop are both visible, "
+        "creating a clean three-quarter silhouette. "
+        "Object isolated, centred in frame, no character or hands "
+        "holding it. Orthographic projection. Plain neutral grey "
+        "background, three-point studio lighting, soft shadows."
+    ),
+    "front": (
+        "Strict front orthographic view of an INANIMATE PROP / OBJECT. "
+        "The subject is NOT a person and NOT a creature - it is the "
+        "prop shown in the reference image. "
+        "Camera dead-on perpendicular to the prop''s front face. "
+        "Object centred, no rotation, no perspective skew. "
+        "Object isolated, no hands, no character holding it. "
+        "Orthographic projection, plain neutral grey background, "
+        "flat even studio lighting, minimal cast shadow."
+    ),
+    "back": (
+        "Strict back orthographic view of an INANIMATE PROP / OBJECT. "
+        "The subject is NOT a person and NOT a creature - it is the "
+        "prop shown in the reference image, viewed from behind. "
+        "Camera dead-on perpendicular to the prop''s back face. "
+        "Object centred, no rotation, no perspective skew. "
+        "Show the rear surface of the prop - panels, fasteners, "
+        "hinges, stitching, mounting points. "
+        "Object isolated, no hands, no character holding it. "
+        "Orthographic projection, plain neutral grey background, "
+        "flat even studio lighting, minimal cast shadow."
+    ),
+    "top-down": (
+        "Top-down orthographic view of an INANIMATE PROP / OBJECT. "
+        "The subject is NOT a person and NOT a creature - it is the "
+        "prop shown in the reference image, viewed straight from above. "
+        "Camera directly overhead, lens pointing straight down at the "
+        "prop. Outline / footprint of the object reads as a clean "
+        "silhouette against the ground plane. "
+        "Object isolated, centred in frame, no hands or character. "
+        "Orthographic projection, plain neutral grey background, "
+        "flat even studio lighting from above."
+    ),
+}
+
+_PROMPTS_BY_PRESET: dict[str, dict[str, str]] = {
+    "4view": _CHARACTER_PROMPTS,
+    "prop_4view": _PROP_PROMPTS,
+}
