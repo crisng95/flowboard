@@ -877,6 +877,13 @@ async def _handle_gen_multiview(params: dict) -> tuple[dict, Optional[str]]:
     aspect = params.get("aspect_ratio") or "IMAGE_ASPECT_RATIO_PORTRAIT"
     tier = params.get("paygate_tier") or flow_client.paygate_tier
     image_model = params.get("image_model")
+    # 2-phase pipeline params (optional, default = legacy edit_chain mode).
+    # When mode == "sheet_regen", the worker first generates a multi-panel
+    # sheet from "sheet_prompt", then uses the resulting media_id as the
+    # primary reference for every per-angle gen_image. This implements the
+    # premium SHEET_REGEN flow defined by /api/prompt/auto-sheet.
+    mode = (params.get("mode") or "edit_chain").strip()
+    sheet_prompt = params.get("sheet_prompt") or ""
 
     if not isinstance(project_id, str) or not is_valid_project_id(project_id):
         return {}, "invalid_project_id"
@@ -896,10 +903,58 @@ async def _handle_gen_multiview(params: dict) -> tuple[dict, Optional[str]]:
     if isinstance(raw_refs, list):
         extra_refs = [m for m in raw_refs if isinstance(m, str) and m]
 
-    # Refs passed to Flow: the Concept goes first as the IDENTITY
-    # anchor (Flow's reference attention biases harder toward earlier
-    # entries), any optional style packs after.
-    ref_chain = [concept_media_id, *extra_refs]
+    # Refs passed to Flow.
+    #
+    #   edit_chain mode (default):
+    #     Concept goes first as the IDENTITY anchor (Flow's reference
+    #     attention biases harder toward earlier entries), optional
+    #     style packs after.
+    #
+    #   sheet_regen mode:
+    #     Phase 1 - generate one multi-panel character sheet from
+    #     sheet_prompt, conditioned on the Concept reference.
+    #     Phase 2 - run N angle gen_image calls with the freshly
+    #     generated sheet as the primary reference, demoting the
+    #     original Concept (if any) to a secondary anchor.
+    #
+    # The Phase 1 dispatch lives here (synchronous within this handler)
+    # so the per-angle gens can chain off the sheet's media_id without
+    # frontend coordination. The sheet's media_id is also returned in
+    # the result blob ("sheet_media_id") so the frontend can preview it.
+    sdk_for_sheet = get_flow_sdk()
+    sheet_media_id: Optional[str] = None
+    sheet_entries: list[dict] = []
+    if mode == "sheet_regen":
+        if not sheet_prompt.strip():
+            return {}, "missing_sheet_prompt"
+        try:
+            sheet_resp = await sdk_for_sheet.gen_image(
+                prompt=sheet_prompt.strip(),
+                project_id=project_id,
+                aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE",
+                paygate_tier=tier,
+                ref_media_ids=[concept_media_id, *extra_refs],
+                variant_count=1,
+                image_model=image_model,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("gen_multiview sheet phase failed")
+            return {}, f"sheet_dispatch:{exc}"[:200]
+        if (sheet_resp or {}).get("error"):
+            return {}, str(sheet_resp["error"])[:200]
+        sheet_ids = (sheet_resp or {}).get("media_ids") or []
+        sheet_media_id = next((m for m in sheet_ids if isinstance(m, str) and m), None)
+        if not sheet_media_id:
+            return {}, "sheet_filtered_or_missing"
+        for e in (sheet_resp.get("media_entries") or []):
+            if isinstance(e, dict) and e.get("url"):
+                sheet_entries.append(e)
+
+    if mode == "sheet_regen" and sheet_media_id:
+        # Sheet leads, Concept becomes a secondary anchor.
+        ref_chain = [sheet_media_id, concept_media_id, *extra_refs]
+    else:
+        ref_chain = [concept_media_id, *extra_refs]
 
     # Dispatch ONE gen_image call per angle (parallel chunks of 4 to
     # respect Flow's per-call cap). Each call uses the same ref_chain
@@ -962,10 +1017,11 @@ async def _handle_gen_multiview(params: dict) -> tuple[dict, Optional[str]]:
         await asyncio.gather(*(_gen_one(k) for k in chunk))
 
     # Ingest all media at the end so the cache fills before the
-    # frontend's poll lands.
-    if media_entries_acc:
+    # frontend's poll lands. Sheet entries (if any) are batched in.
+    all_entries = media_entries_acc + sheet_entries
+    if all_entries:
         try:
-            media_service.ingest_urls(media_entries_acc)
+            media_service.ingest_urls(all_entries)
         except Exception:  # noqa: BLE001
             logger.exception("auto-ingest from gen_multiview failed")
 
@@ -983,6 +1039,8 @@ async def _handle_gen_multiview(params: dict) -> tuple[dict, Optional[str]]:
             "angle_errors": angle_errors,
             "partial_error": partial_error,
             "media_entries": [],  # already ingested
+            "sheet_media_id": sheet_media_id,
+            "mode": mode,
         },
         None,
     )

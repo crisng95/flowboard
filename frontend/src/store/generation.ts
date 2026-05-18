@@ -77,7 +77,13 @@ interface GenerationState {
   dispatchMultiview(
     rfId: string,
     opts: {
-      preset: string; // "4view" | "6view" | "8view" | "arch_views"
+      preset: string; // "4view" | "prop_4view" | future presets
+      // 2-phase pipeline opt-in. "edit_chain" (default) preserves the
+      // legacy root + edit_image flow. "sheet_regen" runs Phase 1
+      // (multi-panel sheet) + Phase 2 (N gen_image with the sheet as
+      // primary reference). Costs +1 Flow request but holds identity
+      // tighter for Nano Banana 2 (no seed control).
+      mode?: "edit_chain" | "sheet_regen";
       aspectRatio?: string;
       paygateTier?: string;
     },
@@ -1302,6 +1308,8 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     // rotation), and the round-trip is small (~5-8s per call).
     let angles: string[] = [];
     let prompts: string[] = [];
+    let sheetPrompt: string | null = null;
+    const mode = opts.mode ?? "edit_chain";
     useBoardStore.getState().updateNodeData(rfId, {
       autoPromptStatus: "pending",
       status: "queued",
@@ -1311,9 +1319,11 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       const resp = await autoPromptMultiview(
         parseInt(rfId, 10),
         preset,
+        mode,
       );
       angles = resp.angles;
       prompts = resp.prompts;
+      sheetPrompt = resp.sheet_prompt ?? null;
     } catch (err) {
       useBoardStore.getState().updateNodeData(rfId, {
         autoPromptStatus: "failed",
@@ -1348,7 +1358,14 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       aspect_ratio: aspectRatio,
       paygate_tier: knownTier,
       image_model: useSettingsStore.getState().imageModel,
+      mode,
     };
+    if (mode === "sheet_regen" && sheetPrompt) {
+      // Worker uses sheet_prompt to dispatch the Phase-1 sheet
+      // before fanning out the per-angle gen_image calls. Without
+      // a sheet_prompt the worker will return missing_sheet_prompt.
+      params.sheet_prompt = sheetPrompt;
+    }
 
     let reqDto;
     try {
@@ -1403,6 +1420,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           const mediaIds = (result["media_ids"] as (string | null)[]) ?? [];
           const angleErrors = (result["angle_errors"] as (string | null)[]) ?? [];
           const partialError = (result["partial_error"] as string | undefined) ?? null;
+          const sheetMediaId = (result["sheet_media_id"] as string | null | undefined) ?? null;
           const firstMid = mediaIds.find(
             (m): m is string => typeof m === "string" && !!m,
           );
@@ -1411,6 +1429,8 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             mediaIds,
             mediaId: firstMid,
             angleErrors,
+            sheetMediaId,
+            multiviewMode: mode,
             renderedAt: new Date().toISOString(),
             error: partialError ?? undefined,
           });
@@ -1425,6 +1445,8 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                 angles,
                 angleErrors,
                 multiviewPreset: preset,
+                multiviewMode: mode,
+                sheetMediaId,
                 aspectRatio,
                 renderedAt: new Date().toISOString(),
                 error: partialError ?? null,

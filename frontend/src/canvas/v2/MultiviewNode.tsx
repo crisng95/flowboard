@@ -1,4 +1,4 @@
-﻿/**
+/**
  * MultiviewNode - Concepta-fork orthographic turnaround sheet.
  *
  * Backend node type: `multiview`. Takes a single upstream Concept node
@@ -48,6 +48,13 @@ export function MultiviewNode(props: NodeProps<FlowNode>) {
   const { id: rfId, data, selected } = props;
 
   const presetKey = (data.multiviewPreset as MultiviewKey | undefined) ?? "4view";
+  // 2-phase pipeline mode. "edit_chain" (default) is the existing flow;
+  // "sheet_regen" generates a multi-panel sheet first then re-gens each
+  // angle from it. Costs +1 Flow request but holds identity tighter for
+  // Nano Banana 2 since the sheet acts as an explicit reference.
+  const mvMode =
+    (data.multiviewMode as "edit_chain" | "sheet_regen" | undefined) ??
+    "edit_chain";
   const preset =
     MULTIVIEW_PRESETS.find((p) => p.key === presetKey) ?? MULTIVIEW_PRESETS[0];
   const angles = (data.angles as string[] | undefined) ?? preset.angles.slice();
@@ -87,7 +94,17 @@ export function MultiviewNode(props: NodeProps<FlowNode>) {
   }
 
   function openGenerate() {
-    useGenerationStore.getState().dispatchMultiview(rfId, { preset: presetKey });
+    useGenerationStore
+      .getState()
+      .dispatchMultiview(rfId, { preset: presetKey, mode: mvMode });
+  }
+
+  function persistMode(next: "edit_chain" | "sheet_regen") {
+    useBoardStore.getState().updateNodeData(rfId, { multiviewMode: next });
+    const dbId = parseInt(rfId, 10);
+    if (!Number.isNaN(dbId)) {
+      patchNode(dbId, { data: { multiviewMode: next } }).catch(() => {});
+    }
   }
 
   function onCopySheet() {
@@ -155,6 +172,11 @@ export function MultiviewNode(props: NodeProps<FlowNode>) {
             <span className="text-2xs text-ink-muted">
               {angles.length} angles
             </span>
+            <ModeToggle
+              value={mvMode}
+              onChange={persistMode}
+              disabled={isProcessing}
+            />
             {hasFilled && (
               <IconChip icon={Copy} label="Copy media ids" onClick={onCopySheet} />
             )}
@@ -272,3 +294,53 @@ function AngleTile({
   );
 }
 
+
+function ModeToggle({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: "edit_chain" | "sheet_regen";
+  onChange: (next: "edit_chain" | "sheet_regen") => void;
+  disabled?: boolean;
+}) {
+  // Compact 2-state pill toggle. Reusing the picker chip style would
+  // imply a dropdown; this is a binary choice so we render the two
+  // options side by side and tint the active one.
+  const opts: { key: "edit_chain" | "sheet_regen"; label: string }[] = [
+    { key: "edit_chain", label: "Edit chain" },
+    { key: "sheet_regen", label: "Sheet regen" },
+  ];
+  return (
+    <div
+      role="group"
+      aria-label="Multi-view dispatch mode"
+      className="inline-flex items-center gap-0.5 h-7 p-0.5 rounded-full border border-white/[0.08]"
+      style={{ backgroundColor: "rgba(255,255,255,0.02)" }}
+    >
+      {opts.map((opt) => {
+        const active = opt.key === value;
+        return (
+          <button
+            key={opt.key}
+            type="button"
+            disabled={disabled || active}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!active) onChange(opt.key);
+            }}
+            className={cn(
+              "inline-flex items-center px-2.5 h-6 rounded-full text-2xs font-medium transition-colors",
+              active
+                ? "bg-accent/15 text-white"
+                : "text-ink-muted hover:text-ink-primary hover:bg-white/[0.05]",
+              disabled && "opacity-50 cursor-not-allowed",
+            )}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}

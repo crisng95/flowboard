@@ -557,10 +557,23 @@ export async function autoPrompt(
 }
 
 // ── Multi-view (Concepta fork) ───────────────────────────────────────────
+export type MultiviewMode = "edit_chain" | "sheet_regen";
+
 export interface AutoPromptMultiviewResponse {
   node_id: number;
   angles: string[];
   prompts: string[];
+  /** Populated only when mode === "sheet_regen". Frontend can use this
+   *  to dispatch the Phase-1 sheet generation in the same flow. */
+  sheet_prompt?: string | null;
+}
+
+export interface AutoPromptSheetResponse {
+  node_id: number;
+  preset: string;
+  angles: string[];
+  sheet_prompt: string;
+  per_view_prompts: string[];
 }
 
 /**
@@ -571,8 +584,27 @@ export interface AutoPromptMultiviewResponse {
 export async function autoPromptMultiview(
   nodeId: number,
   preset: string,
+  mode: MultiviewMode = "edit_chain",
 ): Promise<AutoPromptMultiviewResponse> {
   const res = await fetch("/api/prompt/auto-multiview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ node_id: nodeId, preset, mode }),
+  });
+  if (!res.ok) {
+    throw new Error(await extractErrorMessage(res));
+  }
+  return res.json() as Promise<AutoPromptMultiviewResponse>;
+}
+
+/** Phase 1 of the sheet_regen pipeline: returns the multi-panel sheet
+ *  prompt + per-view prompts (with reference anchors) for Phase 2.
+ *  Currently called inline by dispatchMultiview when mode === sheet_regen. */
+export async function autoPromptSheet(
+  nodeId: number,
+  preset: string,
+): Promise<AutoPromptSheetResponse> {
+  const res = await fetch("/api/prompt/auto-sheet", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ node_id: nodeId, preset }),
@@ -580,7 +612,7 @@ export async function autoPromptMultiview(
   if (!res.ok) {
     throw new Error(await extractErrorMessage(res));
   }
-  return res.json() as Promise<AutoPromptMultiviewResponse>;
+  return res.json() as Promise<AutoPromptSheetResponse>;
 }
 
 // ── Part / Variant metadata (Concepta) ───────────────────────────────────
