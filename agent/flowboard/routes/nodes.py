@@ -10,7 +10,29 @@ from flowboard.short_id import generate_unique_short_id
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
-NodeType = Literal["character", "image", "video", "prompt", "note", "visual_asset"]
+# NodeType enum — keeps every legacy id (character / image / …) so old
+# boards keep loading, plus the Concepta fork's new types. Palette UI
+# only surfaces the new ones, but the data model accepts both for
+# the migration window.
+NodeType = Literal[
+    # ── Legacy (Flowboard upstream — still creatable for backward compat) ──
+    "character",
+    "image",
+    "video",
+    "prompt",
+    "note",
+    "visual_asset",
+    "Storyboard",
+    # ── Concepta fork — game / arch / illustration asset pipeline ────────
+    "reference",   # texture / sketch / photo input
+    "style_pack",  # preset style anchor (metadata-only node)
+    "concept",     # canonical asset sheet (T-pose, neutral lighting)
+    "multiview",   # N orthographic angles from a concept
+    "part",        # zoomed isolated region of a concept
+    "variant",     # alternate states (color / material / damage / equipment)
+    "pose",        # pose change keeping identity (Phase 3)
+    "turntable",   # Veo i2v with orbit camera prompt (Phase 3)
+]
 NodeStatus = Literal["idle", "queued", "running", "done", "error"]
 
 _COORD_MIN = -1_000_000.0

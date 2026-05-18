@@ -13,6 +13,7 @@ import {
   deleteEdge,
   type Board,
   type NodeType,
+  type NodeStatus as ApiNodeStatus,
 } from "../api/client";
 
 export type { NodeType };
@@ -98,6 +99,38 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   charCountry?: string;
   charVibe?: string;
   charGender?: string;
+  // ── Concepta fork (concept node) ─────────────────────────────────────
+  // Style preset (Stylized 3D / Anime / Realistic / …) and type
+  // preset (Humanoid / Vehicle / Building / Weapon / …) chosen by
+  // the user on a Concept node. Backend's auto-prompt synth reads
+  // these to pick the right system prompt clauses (see
+  // `services/concept/subject.py`). Keys match
+  // `frontend/src/constants/concept.ts`.
+  styleKey?: string;
+  typeKey?: string;
+  // Multi-view node — preset key + per-angle metadata. Mirrors
+  // `frontend/src/constants/concept.ts > MULTIVIEW_PRESETS`. The
+  // dispatcher fans out as one root + N-1 edits in
+  // `worker/processor.py:_handle_gen_multiview`.
+  multiviewPreset?: string;
+  angles?: string[];
+  /** Per-angle error codes parallel to mediaIds. Null = ok. */
+  angleErrors?: (string | null)[];
+  // Part node — region key (head / weapon / outfit_top / …). Mirrors
+  // `agent/flowboard/services/concept/part.py:_PART_REGIONS`.
+  // Frontend resolves the label via `GET /api/concepta/part-regions`.
+  regionKey?: string;
+  // Variant node — picked axis + the user's free-text instruction
+  // (e.g. axis=color + instruction="deep crimson and gold trim").
+  // Backend composes the dispatched prompt from these via
+  // `services/concept/variant.py:build_variant_prompt`.
+  axisKey?: string;
+  variantInstruction?: string;
+  // User-resized node width in px. NodeResizeControl writes this on
+  // resize-end; the V2 NodeShell reads it as `width` so the card
+  // takes whatever footprint the user picked. Falls back to the
+  // per-component default (Concept 300, Reference 260) when absent.
+  nodeWidth?: number;
   error?: string;
   // Storyboard-only fields (type === "Storyboard"). See plan §4.1.
   shots?: StoryboardShot[];
@@ -144,6 +177,7 @@ function debouncePosition(rfId: string, fn: () => void, delay = 150) {
 
 // ── Type-to-title lookup ───────────────────────────────────────────────────
 const TYPE_TITLE: Record<NodeType, string> = {
+  // legacy
   character: "Character",
   image: "Image",
   video: "Video",
@@ -151,7 +185,79 @@ const TYPE_TITLE: Record<NodeType, string> = {
   note: "Note",
   visual_asset: "Visual asset",
   Storyboard: "Storyboard",
+  // Concepta fork
+  reference: "Reference",
+  style_pack: "Style pack",
+  concept: "Concept",
+  multiview: "Multi-view",
+  part: "Part",
+  variant: "Variant",
+  pose: "Pose",
+  turntable: "Turntable",
 };
+
+/**
+ * Map a node DTO from the backend (`getBoard().nodes[i]`) into the
+ * client-side FlowNode shape. Centralised so the three load paths
+ * (`loadInitialBoard`, `switchBoard`, `refreshBoardState`) stay in
+ * lock-step — adding a new persisted field used to mean editing 3
+ * places, which had bitrot risk every time we extended the schema.
+ */
+type NodeDTO = {
+  id: number;
+  type: NodeType;
+  short_id: string;
+  x: number;
+  y: number;
+  data: Record<string, unknown>;
+  status: ApiNodeStatus;
+};
+
+function nodeFromDto(n: NodeDTO): FlowNode {
+  const d = n.data;
+  return {
+    id: String(n.id),
+    type: n.type,
+    position: { x: n.x, y: n.y },
+    data: {
+      type: n.type,
+      shortId: n.short_id,
+      title: (d["title"] as string | undefined) ?? TYPE_TITLE[n.type],
+      status: n.status,
+      prompt: d["prompt"] as string | undefined,
+      thumbnailUrl: d["thumbnailUrl"] as string | undefined,
+      mediaId: d["mediaId"] as string | undefined,
+      mediaIds: d["mediaIds"] as (string | null)[] | undefined,
+      slotErrors: d["slotErrors"] as (string | null)[] | undefined,
+      variantCount: d["variantCount"] as number | undefined,
+      aspectRatio: d["aspectRatio"] as string | undefined,
+      aiBrief: d["aiBrief"] as string | undefined,
+      imageModel: d["imageModel"] as string | undefined,
+      videoQuality: d["videoQuality"] as string | undefined,
+      // Legacy character builder (still loaded for old boards)
+      charCountry: d["charCountry"] as string | undefined,
+      charVibe: d["charVibe"] as string | undefined,
+      charGender: d["charGender"] as string | undefined,
+      // Concepta fork
+      styleKey: d["styleKey"] as string | undefined,
+      typeKey: d["typeKey"] as string | undefined,
+      // Multi-view metadata — angles + per-angle errors carry through
+      // the dispatch loop. The root angle gets the ⭐ marker in the
+      // tile UI; angle errors render as ⚠ slot fail badges.
+      multiviewPreset: d["multiviewPreset"] as string | undefined,
+      angles: d["angles"] as string[] | undefined,
+      angleErrors: d["angleErrors"] as (string | null)[] | undefined,
+      // Part / Variant metadata
+      regionKey: d["regionKey"] as string | undefined,
+      axisKey: d["axisKey"] as string | undefined,
+      variantInstruction: d["variantInstruction"] as string | undefined,
+      // User-resized width persisted per node — read here so a refresh
+      // doesn't snap the node back to its default size.
+      nodeWidth: d["nodeWidth"] as number | undefined,
+      error: d["error"] as string | undefined,
+    },
+  };
+}
 
 // ── Persisted active-board id ─────────────────────────────────────────────
 // Survives page reloads so refreshing on project #4 doesn't kick the user
@@ -254,30 +360,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       }
       const detail = await getBoard(board.id);
 
-      const nodes: FlowNode[] = detail.nodes.map((n) => ({
-        id: String(n.id),
-        type: n.type,
-        position: { x: n.x, y: n.y },
-        data: {
-          type: n.type,
-          shortId: n.short_id,
-          title: (n.data["title"] as string | undefined) ?? TYPE_TITLE[n.type],
-          status: n.status,
-          prompt: n.data["prompt"] as string | undefined,
-          thumbnailUrl: n.data["thumbnailUrl"] as string | undefined,
-          mediaId: n.data["mediaId"] as string | undefined,
-          mediaIds: n.data["mediaIds"] as (string | null)[] | undefined,
-          slotErrors: n.data["slotErrors"] as (string | null)[] | undefined,
-          variantCount: n.data["variantCount"] as number | undefined,
-          aspectRatio: n.data["aspectRatio"] as string | undefined,
-          aiBrief: n.data["aiBrief"] as string | undefined,
-          imageModel: n.data["imageModel"] as string | undefined,
-          videoQuality: n.data["videoQuality"] as string | undefined,
-          charCountry: n.data["charCountry"] as string | undefined,
-          charVibe: n.data["charVibe"] as string | undefined,
-          charGender: n.data["charGender"] as string | undefined,
-        },
-      }));
+      const nodes: FlowNode[] = detail.nodes.map(nodeFromDto);
 
       const edges: Edge[] = detail.edges.map(edgeFromDto);
 
@@ -309,30 +392,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const detail = await getBoard(id);
-      const nodes: FlowNode[] = detail.nodes.map((n) => ({
-        id: String(n.id),
-        type: n.type,
-        position: { x: n.x, y: n.y },
-        data: {
-          type: n.type,
-          shortId: n.short_id,
-          title: (n.data["title"] as string | undefined) ?? TYPE_TITLE[n.type],
-          status: n.status,
-          prompt: n.data["prompt"] as string | undefined,
-          thumbnailUrl: n.data["thumbnailUrl"] as string | undefined,
-          mediaId: n.data["mediaId"] as string | undefined,
-          mediaIds: n.data["mediaIds"] as (string | null)[] | undefined,
-          slotErrors: n.data["slotErrors"] as (string | null)[] | undefined,
-          variantCount: n.data["variantCount"] as number | undefined,
-          aspectRatio: n.data["aspectRatio"] as string | undefined,
-          aiBrief: n.data["aiBrief"] as string | undefined,
-          imageModel: n.data["imageModel"] as string | undefined,
-          videoQuality: n.data["videoQuality"] as string | undefined,
-          charCountry: n.data["charCountry"] as string | undefined,
-          charVibe: n.data["charVibe"] as string | undefined,
-          charGender: n.data["charGender"] as string | undefined,
-        },
-      }));
+      const nodes: FlowNode[] = detail.nodes.map(nodeFromDto);
       const edges: Edge[] = detail.edges.map(edgeFromDto);
       set({
         boardId: detail.board.id,
@@ -392,30 +452,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     if (boardId === null) return;
     try {
       const detail = await getBoard(boardId);
-      const nodes: FlowNode[] = detail.nodes.map((n) => ({
-        id: String(n.id),
-        type: n.type,
-        position: { x: n.x, y: n.y },
-        data: {
-          type: n.type,
-          shortId: n.short_id,
-          title: (n.data["title"] as string | undefined) ?? TYPE_TITLE[n.type],
-          status: n.status,
-          prompt: n.data["prompt"] as string | undefined,
-          thumbnailUrl: n.data["thumbnailUrl"] as string | undefined,
-          mediaId: n.data["mediaId"] as string | undefined,
-          mediaIds: n.data["mediaIds"] as (string | null)[] | undefined,
-          slotErrors: n.data["slotErrors"] as (string | null)[] | undefined,
-          variantCount: n.data["variantCount"] as number | undefined,
-          aiBrief: n.data["aiBrief"] as string | undefined,
-          imageModel: n.data["imageModel"] as string | undefined,
-          videoQuality: n.data["videoQuality"] as string | undefined,
-          charCountry: n.data["charCountry"] as string | undefined,
-          charVibe: n.data["charVibe"] as string | undefined,
-          charGender: n.data["charGender"] as string | undefined,
-          error: n.data["error"] as string | undefined,
-        },
-      }));
+      const nodes: FlowNode[] = detail.nodes.map(nodeFromDto);
       const edges: Edge[] = detail.edges.map(edgeFromDto);
       set({ nodes, edges });
     } catch {
@@ -440,7 +477,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   },
 
   async addNodeOfType(type, position) {
-    const { boardId } = get();
+    const { boardId, nodes } = get();
     if (boardId === null) return null;
     const title = TYPE_TITLE[type];
     try {
@@ -463,6 +500,43 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         },
       };
       set((s) => ({ nodes: [...s.nodes, node] }));
+
+      // ── Auto-connect (Concepta workflow UX) ──────────────────────
+      // When the user drops a downstream node type (multiview / part /
+      // variant) and there's exactly ONE selected concept-bearing node
+      // on the canvas, auto-wire an edge from that concept to the new
+      // node. Saves the user from having to manually drag an edge
+      // every time — the most common workflow is "select concept →
+      // add Part" and the edge is implied.
+      //
+      // Rules:
+      //   - Only fires for downstream types that NEED an upstream
+      //     (multiview, part, variant). Reference + Concept are roots.
+      //   - Only fires when exactly 1 node is selected AND that node
+      //     is a valid upstream type (concept / multiview / part /
+      //     variant / reference — anything with media output).
+      //   - Does NOT fire if the user already has an edge to this new
+      //     node (e.g. from the drop-popover path which wires its own).
+      const DOWNSTREAM_TYPES: Set<NodeType> = new Set([
+        "multiview", "part", "variant", "pose", "turntable",
+      ]);
+      const VALID_UPSTREAM_TYPES: Set<NodeType> = new Set([
+        "concept", "multiview", "part", "variant", "reference",
+      ]);
+      if (DOWNSTREAM_TYPES.has(type)) {
+        const selected = nodes.filter((n) => n.selected);
+        if (selected.length === 1 && VALID_UPSTREAM_TYPES.has(selected[0].data.type)) {
+          // Check no edge already exists (defensive — drop-popover
+          // path creates its own edge before calling addNodeOfType).
+          const existingEdge = get().edges.find(
+            (e) => e.source === selected[0].id && e.target === node.id,
+          );
+          if (!existingEdge) {
+            await get().addEdgeFromConnection(selected[0].id, node.id);
+          }
+        }
+      }
+
       return node.id;
     } catch {
       // surface silently for now

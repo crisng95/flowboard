@@ -1,5 +1,11 @@
 import { create } from "zustand";
-import { ensureBoardProject, createRequest, getRequest, patchNode } from "../api/client";
+import {
+  ensureBoardProject,
+  createRequest,
+  getRequest,
+  patchNode,
+  autoPromptMultiview,
+} from "../api/client";
 import { useBoardStore, type NodeStatus } from "./board";
 import { useSettingsStore } from "./settings";
 
@@ -64,6 +70,45 @@ interface GenerationState {
 
   retryStoryboardShot(rfId: string, shotIdx: number): Promise<void>;
 
+  // Multi-view (Concepta fork) — generate an N-angle turnaround sheet
+  // from an upstream Concept node. Backend dispatches as one root
+  // gen_image + N-1 edit_image rotations off the root for tight
+  // identity preservation.
+  dispatchMultiview(
+    rfId: string,
+    opts: {
+      preset: string; // "4view" | "6view" | "8view" | "arch_views"
+      aspectRatio?: string;
+      paygateTier?: string;
+    },
+  ): Promise<void>;
+
+  // Part (Concepta) — zoomed isolated region of an upstream Concept
+  // (or Multi-view) node. One Flow `edit_image` per dispatch, prompt
+  // composed backend-side from the picked region key.
+  dispatchPart(
+    rfId: string,
+    opts: {
+      regionKey: string; // "head" | "torso" | "weapon" | …
+      aspectRatio?: string;
+      paygateTier?: string;
+    },
+  ): Promise<void>;
+
+  // Variant (Concepta) — alternate states of an upstream Concept /
+  // Part / Multi-view. Backend fans out as N×1 edit_image with the
+  // axis-specific prompt template + user-supplied instruction.
+  dispatchVariant(
+    rfId: string,
+    opts: {
+      axisKey: string; // "color" | "material" | "damage" | …
+      instruction: string; // free-text appended to the axis template
+      variantCount?: number; // 1..4; default 1
+      aspectRatio?: string;
+      paygateTier?: string;
+    },
+  ): Promise<void>;
+
   cancelGeneration(rfId: string): void;
   clearError(): void;
 }
@@ -116,6 +161,266 @@ function collectUpstreamRefMediaIds(targetRfId: string): string[] {
     if (chosen) ids.push(chosen);
   }
   return ids;
+}
+
+/**
+ * Shared dispatch helper for Concepta nodes that derive from an
+ * upstream Concept (or other media-bearing) node via Flow
+ * `edit_image`. Covers Part + Variant dispatch loops which both:
+ *   1. require exactly one upstream edge with a media-bearing source,
+ *   2. send a single Request-row with a node-type-specific extra
+ *      payload (region_key for Part; axis/instruction for Variant),
+ *   3. poll the request until it lands and stamp the result onto the
+ *      target node + persist it to the DB so reloads keep the state.
+ *
+ * Without this helper Part + Variant would each duplicate ~120 lines
+ * of poll-loop boilerplate that's already battle-tested in
+ * dispatchGeneration / dispatchMultiview.
+ *
+ * `mapResult` lets each caller translate the request `result` JSON
+ * into the FlowboardNodeData fields it expects — Part is single-tile,
+ * Variant is grid; both ride the same poll loop.
+ */
+type EditDerivedOpts = {
+  aspectRatioFallback: string;
+  paygateTier?: string;
+  get: () => GenerationState;
+  set: (
+    update: Partial<GenerationState> | ((s: GenerationState) => Partial<GenerationState>),
+  ) => void;
+  /**
+   * Translate the backend `result` blob into the node-data deltas to
+   * stamp on completion. `extra` is merged into both the in-memory
+   * updateNodeData and the persisted patchNode payload, so node-type-
+   * specific fields (regionKey, axisKey, …) survive reload.
+   */
+  mapResult: (result: Record<string, unknown>) => {
+    mediaId: string | undefined;
+    mediaIds: (string | null)[];
+    slotErrors: (string | null)[] | undefined;
+    partialError: string | null;
+    extra: Record<string, unknown>;
+  };
+  // Type-specific dispatch params (region_key / axis_key / etc.)
+  // forwarded verbatim into Request.params.
+  [key: string]: unknown;
+};
+
+async function dispatchEditDerived(
+  rfId: string,
+  requestType: "gen_part" | "gen_variant",
+  opts: EditDerivedOpts,
+): Promise<void> {
+  const { get, set, mapResult, aspectRatioFallback, paygateTier, ...typeParams } =
+    opts;
+
+  const projectId = await get().ensureProjectId();
+  if (projectId === null) return;
+
+  const knownTier = paygateTier ?? get().paygateTier;
+  if (!knownTier) {
+    set({
+      error:
+        "Open Flow once so the extension can detect your plan, then retry.",
+    });
+    useBoardStore.getState().updateNodeData(rfId, {
+      status: "error",
+      error: "paygate_tier_unknown",
+    });
+    return;
+  }
+
+  // Resolve upstream — Part / Variant need exactly one connected
+  // upstream node with media (Concept, Multi-view tile, or another
+  // Part / Variant for chaining). We pull the first incoming edge's
+  // source mediaId; if the upstream is multi-variant we pick variant 0.
+  const board = useBoardStore.getState();
+  const upstreamEdge = board.edges.find((e) => e.target === rfId);
+  if (!upstreamEdge) {
+    const label = requestType === "gen_part" ? "Part" : "Variant";
+    set({
+      error: `${label} needs a Concept (or Multi-view / Part / Variant) connected upstream.`,
+    });
+    useBoardStore.getState().updateNodeData(rfId, {
+      status: "error",
+      error: "no_upstream",
+    });
+    return;
+  }
+  const upstreamNode = board.nodes.find((n) => n.id === upstreamEdge.source);
+  // Variant pin support — same logic as collectUpstreamRefMediaIds.
+  const variants = Array.isArray(upstreamNode?.data.mediaIds)
+    ? (upstreamNode!.data.mediaIds as (string | null)[])
+    : [];
+  const pinned = (upstreamEdge.data?.sourceVariantIdx ?? null) as number | null;
+  let sourceMediaId: string | undefined;
+  if (
+    pinned !== null
+    && pinned >= 0
+    && pinned < variants.length
+    && typeof variants[pinned] === "string"
+    && variants[pinned]
+  ) {
+    sourceMediaId = variants[pinned] as string;
+  } else if (typeof upstreamNode?.data.mediaId === "string" && upstreamNode.data.mediaId) {
+    sourceMediaId = upstreamNode.data.mediaId;
+  } else if (variants.length > 0) {
+    const fallback = variants.find(
+      (m): m is string => typeof m === "string" && !!m,
+    );
+    if (fallback) sourceMediaId = fallback;
+  }
+  if (!sourceMediaId) {
+    set({
+      error: "Upstream node has no media yet — generate it first.",
+    });
+    useBoardStore.getState().updateNodeData(rfId, {
+      status: "error",
+      error: "upstream_has_no_media",
+    });
+    return;
+  }
+
+  const node = board.nodes.find((n) => n.id === rfId);
+  // Carry the upstream's aspect through if the caller didn't set
+  // one — Part / Variant inherits framing intent from the Concept
+  // it's derived from (a portrait Concept → portrait Variant feels
+  // right; user can override via the dialog later).
+  const aspectRatio =
+    (node?.data.aspectRatio as string | undefined)
+    ?? (upstreamNode?.data.aspectRatio as string | undefined)
+    ?? aspectRatioFallback;
+
+  // Cancel any in-flight poll for this node before re-dispatching.
+  const existingEntry = get().active[rfId];
+  if (existingEntry && existingEntry.timerId !== null) {
+    clearTimeout(existingEntry.timerId);
+  }
+
+  // Optimistically mark queued so the node renders the busy state.
+  useBoardStore.getState().updateNodeData(rfId, {
+    status: "queued",
+    error: undefined,
+    mediaId: undefined,
+    mediaIds: undefined,
+  });
+
+  // Build params: shared keys + type-specific keys spread last.
+  const params: Record<string, unknown> = {
+    project_id: projectId,
+    source_media_id: sourceMediaId,
+    aspect_ratio: aspectRatio,
+    paygate_tier: knownTier,
+    image_model: useSettingsStore.getState().imageModel,
+    ...typeParams,
+  };
+
+  let reqDto;
+  try {
+    const dbId = parseInt(rfId, 10);
+    reqDto = await createRequest({
+      type: requestType,
+      node_id: isNaN(dbId) ? undefined : dbId,
+      params,
+    });
+  } catch (err) {
+    useBoardStore.getState().updateNodeData(rfId, {
+      status: "error",
+      error: err instanceof Error ? err.message : "dispatch_failed",
+    });
+    set({
+      error: err instanceof Error ? err.message : "Dispatch failed",
+    });
+    return;
+  }
+
+  // Register the active poll BEFORE the first tick — the guard at
+  // the top of poll() bails if the entry is undefined, which is the
+  // bug we hit first time we wired dispatchMultiview.
+  const requestId = reqDto.id;
+  set((s) => ({
+    active: { ...s.active, [rfId]: { requestId, timerId: null } },
+  }));
+
+  const MAX_RETRIES = 8;
+  let retries = 0;
+
+  const poll = async () => {
+    if (get().active[rfId] === undefined) return;
+    try {
+      const req = await getRequest(requestId);
+      retries = 0;
+      if (req.status === "running" || req.status === "queued") {
+        useBoardStore.getState().updateNodeData(rfId, { status: "running" });
+        const t = setTimeout(poll, 1500);
+        set((s) => ({
+          active: { ...s.active, [rfId]: { requestId, timerId: t } },
+        }));
+      } else if (req.status === "done") {
+        const result = (req.result ?? {}) as Record<string, unknown>;
+        const mapped = mapResult(result);
+        useBoardStore.getState().updateNodeData(rfId, {
+          status: "done",
+          mediaId: mapped.mediaId,
+          mediaIds: mapped.mediaIds,
+          slotErrors: mapped.slotErrors,
+          aspectRatio,
+          renderedAt: new Date().toISOString(),
+          error: mapped.partialError ?? undefined,
+          ...mapped.extra,
+        });
+        const dbId = parseInt(rfId, 10);
+        if (!isNaN(dbId)) {
+          patchNode(dbId, {
+            status: "done",
+            data: {
+              mediaId: mapped.mediaId ?? null,
+              mediaIds: mapped.mediaIds,
+              slotErrors: mapped.slotErrors ?? null,
+              aspectRatio,
+              renderedAt: new Date().toISOString(),
+              error: mapped.partialError ?? null,
+              ...mapped.extra,
+            },
+          }).catch(() => {});
+        }
+        set((s) => {
+          const next = { ...s.active };
+          delete next[rfId];
+          return { active: next };
+        });
+      } else {
+        useBoardStore.getState().updateNodeData(rfId, {
+          status: "error",
+          error: req.error ?? `${requestType}_failed`,
+        });
+        set((s) => {
+          const next = { ...s.active };
+          delete next[rfId];
+          return { active: next, error: req.error ?? "Dispatch failed" };
+        });
+      }
+    } catch {
+      retries++;
+      if (retries >= MAX_RETRIES) {
+        useBoardStore.getState().updateNodeData(rfId, {
+          status: "error",
+          error: "network_unavailable",
+        });
+        set((s) => {
+          const next = { ...s.active };
+          delete next[rfId];
+          return { active: next, error: "Network unavailable" };
+        });
+        return;
+      }
+      const t = setTimeout(poll, 1500);
+      set((s) => ({
+        active: { ...s.active, [rfId]: { requestId, timerId: t } },
+      }));
+    }
+  };
+  setTimeout(poll, 800);
 }
 
 export const useGenerationStore = create<GenerationState>((set, get) => ({
@@ -246,10 +551,36 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         });
       } else {
         const refMediaIds = collectUpstreamRefMediaIds(rfId);
+        // Concept-aware aspect default: humanoid / creature / robot /
+        // outfit are vertically biased (full-body T-pose), vehicle /
+        // building / weapon / prop want square or landscape. The
+        // explicit caller-provided aspect always wins; this only fills
+        // the gap when the dialog didn't pick one.
+        //
+        // Mutate opts so every downstream stamp (the patchNode +
+        // updateNodeData calls below) sees the resolved value
+        // without threading a separate variable through the long
+        // dispatch + poll flow. Local-only mutation — opts is a
+        // fresh object passed by the dialog.
+        if (!opts.aspectRatio) {
+          const node = useBoardStore.getState().nodes.find((n) => n.id === rfId);
+          const typeKey = node?.data.typeKey as string | undefined;
+          if (node?.data.type === "concept") {
+            opts.aspectRatio = ["humanoid", "creature", "robot", "outfit"].includes(
+              typeKey ?? "",
+            )
+              ? "IMAGE_ASPECT_RATIO_PORTRAIT"
+              : ["building", "vehicle"].includes(typeKey ?? "")
+                ? "IMAGE_ASPECT_RATIO_LANDSCAPE"
+                : "IMAGE_ASPECT_RATIO_SQUARE";
+          } else {
+            opts.aspectRatio = "IMAGE_ASPECT_RATIO_LANDSCAPE";
+          }
+        }
         const params: Record<string, unknown> = {
           prompt: opts.prompt,
           project_id: projectId,
-          aspect_ratio: opts.aspectRatio ?? "IMAGE_ASPECT_RATIO_LANDSCAPE",
+          aspect_ratio: opts.aspectRatio,
           paygate_tier:
             opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
           variant_count: variantCount,
@@ -916,6 +1247,292 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       }
     };
     setTimeout(poll, 800);
+  },
+
+  // ── Multi-view (Concepta fork) ────────────────────────────────────
+  async dispatchMultiview(rfId, opts) {
+    const projectId = await get().ensureProjectId();
+    if (projectId === null) return;
+
+    const knownTier = opts.paygateTier ?? get().paygateTier;
+    if (!knownTier) {
+      set({
+        error:
+          "Open Flow once so the extension can detect your plan, then retry.",
+      });
+      useBoardStore.getState().updateNodeData(rfId, {
+        status: "error",
+        error: "paygate_tier_unknown",
+      });
+      return;
+    }
+
+    // Resolve upstream Concept — Multi-view requires exactly one
+    // concept-bearing parent edge. We look at the first incoming edge
+    // and pull its mediaId. Variants of the upstream concept (if any)
+    // — pin via edge.data.sourceVariantIdx as elsewhere in the codebase.
+    const board = useBoardStore.getState();
+    const upstreamEdge = board.edges.find((e) => e.target === rfId);
+    if (!upstreamEdge) {
+      set({ error: "Multi-view needs a Concept node connected upstream." });
+      useBoardStore.getState().updateNodeData(rfId, {
+        status: "error",
+        error: "no_concept_upstream",
+      });
+      return;
+    }
+    const upstreamNode = board.nodes.find((n) => n.id === upstreamEdge.source);
+    const conceptMediaId = upstreamNode?.data.mediaId;
+    if (!conceptMediaId) {
+      set({ error: "Upstream Concept has no media yet — generate it first." });
+      useBoardStore.getState().updateNodeData(rfId, {
+        status: "error",
+        error: "concept_has_no_media",
+      });
+      return;
+    }
+
+    const node = board.nodes.find((n) => n.id === rfId);
+    const preset = opts.preset || node?.data.multiviewPreset || "4view";
+    const aspectRatio = opts.aspectRatio ?? "IMAGE_ASPECT_RATIO_PORTRAIT";
+
+    // Step 1 — fetch per-angle prompts from the LLM. The backend
+    // returns angles + prompts in lock-step. This is sequential
+    // because the prompts depend on each other's role (root vs
+    // rotation), and the round-trip is small (~5-8s per call).
+    let angles: string[] = [];
+    let prompts: string[] = [];
+    useBoardStore.getState().updateNodeData(rfId, {
+      autoPromptStatus: "pending",
+      status: "queued",
+      error: undefined,
+    });
+    try {
+      const resp = await autoPromptMultiview(
+        parseInt(rfId, 10),
+        preset,
+      );
+      angles = resp.angles;
+      prompts = resp.prompts;
+    } catch (err) {
+      useBoardStore.getState().updateNodeData(rfId, {
+        autoPromptStatus: "failed",
+        status: "error",
+        error:
+          err instanceof Error
+            ? `multiview_synth: ${err.message}`
+            : "multiview_synth: failed",
+      });
+      set({
+        error:
+          err instanceof Error
+            ? `Multi-view prompt synth failed: ${err.message}`
+            : "Multi-view prompt synth failed",
+      });
+      return;
+    }
+    useBoardStore.getState().updateNodeData(rfId, {
+      autoPromptStatus: undefined,
+      angles,
+      mediaIds: Array.from({ length: angles.length }, () => null),
+    });
+
+    // Step 2 — dispatch the gen_multiview request. Backend handler
+    // fans out as one root + N-1 edits. This stays in a single
+    // Request row; we poll it like any other.
+    const params: Record<string, unknown> = {
+      project_id: projectId,
+      angles,
+      prompts,
+      concept_media_id: conceptMediaId,
+      aspect_ratio: aspectRatio,
+      paygate_tier: knownTier,
+      image_model: useSettingsStore.getState().imageModel,
+    };
+
+    let reqDto;
+    try {
+      const dbId = parseInt(rfId, 10);
+      reqDto = await createRequest({
+        type: "gen_multiview",
+        node_id: isNaN(dbId) ? undefined : dbId,
+        params,
+      });
+    } catch (err) {
+      useBoardStore.getState().updateNodeData(rfId, {
+        status: "error",
+        error:
+          err instanceof Error ? err.message : "multiview_dispatch_failed",
+      });
+      set({
+        error:
+          err instanceof Error ? err.message : "Multi-view dispatch failed",
+      });
+      return;
+    }
+
+    // Step 3 — poll the request, mirror the gen_image poll loop. We
+    // reuse the same `active` map + setTimeout chain.
+    const requestId = reqDto.id;
+    const MAX_RETRIES = 8;
+    let retries = 0;
+
+    // Register the active poll BEFORE scheduling the first tick.
+    // Without this, the `active[rfId] === undefined` guard at the top
+    // of poll() bails out on the very first run because no entry has
+    // been written yet — node never updates even when the backend
+    // request finishes successfully. Mirrors dispatchGeneration's
+    // setup at line ~552.
+    set((s) => ({
+      active: { ...s.active, [rfId]: { requestId, timerId: null } },
+    }));
+
+    const poll = async () => {
+      if (get().active[rfId] === undefined) return;
+      try {
+        const req = await getRequest(requestId);
+        retries = 0;
+        if (req.status === "running" || req.status === "queued") {
+          useBoardStore.getState().updateNodeData(rfId, { status: "running" });
+          const t = setTimeout(poll, 1500);
+          set((s) => ({
+            active: { ...s.active, [rfId]: { requestId, timerId: t } },
+          }));
+        } else if (req.status === "done") {
+          const result = (req.result ?? {}) as Record<string, unknown>;
+          const mediaIds = (result["media_ids"] as (string | null)[]) ?? [];
+          const angleErrors = (result["angle_errors"] as (string | null)[]) ?? [];
+          const partialError = (result["partial_error"] as string | undefined) ?? null;
+          const firstMid = mediaIds.find(
+            (m): m is string => typeof m === "string" && !!m,
+          );
+          useBoardStore.getState().updateNodeData(rfId, {
+            status: "done",
+            mediaIds,
+            mediaId: firstMid,
+            angleErrors,
+            renderedAt: new Date().toISOString(),
+            error: partialError ?? undefined,
+          });
+          // Persist
+          const dbId = parseInt(rfId, 10);
+          if (!isNaN(dbId) && firstMid) {
+            patchNode(dbId, {
+              status: "done",
+              data: {
+                mediaIds,
+                mediaId: firstMid,
+                angles,
+                angleErrors,
+                multiviewPreset: preset,
+                aspectRatio,
+                renderedAt: new Date().toISOString(),
+                error: partialError ?? null,
+              },
+            }).catch(() => {});
+          }
+          set((s) => {
+            const next = { ...s.active };
+            delete next[rfId];
+            return { active: next };
+          });
+        } else {
+          // failed
+          useBoardStore.getState().updateNodeData(rfId, {
+            status: "error",
+            error: req.error ?? "multiview_failed",
+          });
+          set((s) => {
+            const next = { ...s.active };
+            delete next[rfId];
+            return { active: next, error: req.error ?? "Multi-view failed" };
+          });
+        }
+      } catch {
+        retries++;
+        if (retries >= MAX_RETRIES) {
+          useBoardStore.getState().updateNodeData(rfId, {
+            status: "error",
+            error: "network_unavailable",
+          });
+          set((s) => {
+            const next = { ...s.active };
+            delete next[rfId];
+            return { active: next, error: "Network unavailable" };
+          });
+          return;
+        }
+        const t = setTimeout(poll, 1500);
+        set((s) => ({
+          active: { ...s.active, [rfId]: { requestId, timerId: t } },
+        }));
+      }
+    };
+    setTimeout(poll, 800);
+  },
+
+  // ── Part (Concepta fork) ──────────────────────────────────────────
+  async dispatchPart(rfId, opts) {
+    await dispatchEditDerived(rfId, "gen_part", {
+      region_key: opts.regionKey,
+      aspectRatioFallback: opts.aspectRatio ?? "IMAGE_ASPECT_RATIO_SQUARE",
+      paygateTier: opts.paygateTier,
+      get,
+      set,
+      // Single-tile output — Part is a one-region zoom, not a batch.
+      // Frontend expects mediaIds: [single] back to fit the slot
+      // pattern the rest of the codebase uses.
+      mapResult: (result) => {
+        const mid = (result["media_ids"] as string[] | undefined)?.[0];
+        // gen_part returns the same shape as gen_image (legacy
+        // edit_image): media_ids is a 1-element array, not an
+        // explicit `media_id` key. Coerce.
+        const cleaned = typeof mid === "string" && mid ? [mid] : [];
+        return {
+          mediaId: cleaned[0],
+          mediaIds: cleaned,
+          slotErrors: undefined,
+          partialError: null,
+          extra: { regionKey: opts.regionKey },
+        };
+      },
+    });
+  },
+
+  // ── Variant (Concepta fork) ───────────────────────────────────────
+  async dispatchVariant(rfId, opts) {
+    const variantCount = Math.max(1, Math.min(opts.variantCount ?? 1, 4));
+    await dispatchEditDerived(rfId, "gen_variant", {
+      axis_key: opts.axisKey,
+      instruction: opts.instruction,
+      variant_count: variantCount,
+      aspectRatioFallback: opts.aspectRatio ?? "IMAGE_ASPECT_RATIO_PORTRAIT",
+      paygateTier: opts.paygateTier,
+      get,
+      set,
+      mapResult: (result) => {
+        const mediaIds =
+          (result["media_ids"] as (string | null)[] | undefined) ?? [];
+        const slotErrors =
+          (result["slot_errors"] as (string | null)[] | undefined) ?? null;
+        const partialError =
+          (result["partial_error"] as string | undefined) ?? null;
+        const firstMid = mediaIds.find(
+          (m): m is string => typeof m === "string" && !!m,
+        );
+        return {
+          mediaId: firstMid,
+          mediaIds,
+          slotErrors: slotErrors ?? undefined,
+          partialError,
+          extra: {
+            axisKey: opts.axisKey,
+            variantInstruction: opts.instruction,
+            variantCount,
+          },
+        };
+      },
+    });
   },
 
   cancelGeneration(rfId) {

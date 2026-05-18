@@ -110,7 +110,24 @@ export function getHealth() {
 
 // ── DTOs ────────────────────────────────────────────────────────────────────
 
-export type NodeType = "character" | "image" | "video" | "prompt" | "note" | "visual_asset" | "Storyboard";
+export type NodeType =
+  // legacy (Flowboard upstream — still creatable for backward compat)
+  | "character"
+  | "image"
+  | "video"
+  | "prompt"
+  | "note"
+  | "visual_asset"
+  | "Storyboard"
+  // Concepta fork — game / arch / illustration asset pipeline
+  | "reference"
+  | "style_pack"
+  | "concept"
+  | "multiview"
+  | "part"
+  | "variant"
+  | "pose"
+  | "turntable";
 export type NodeStatus = "idle" | "queued" | "running" | "done" | "error" | "partial";
 
 export interface Board {
@@ -537,6 +554,60 @@ export async function autoPrompt(
     throw new Error(await extractErrorMessage(res));
   }
   return res.json() as Promise<AutoPromptResponse>;
+}
+
+// ── Multi-view (Concepta fork) ───────────────────────────────────────────
+export interface AutoPromptMultiviewResponse {
+  node_id: number;
+  angles: string[];
+  prompts: string[];
+}
+
+/**
+ * Compose per-angle prompts for a Multi-view node. Backend returns
+ * angles + prompts in lock-step; the dispatch handler then fans
+ * them out as one root + N-1 edits.
+ */
+export async function autoPromptMultiview(
+  nodeId: number,
+  preset: string,
+): Promise<AutoPromptMultiviewResponse> {
+  const res = await fetch("/api/prompt/auto-multiview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ node_id: nodeId, preset }),
+  });
+  if (!res.ok) {
+    throw new Error(await extractErrorMessage(res));
+  }
+  return res.json() as Promise<AutoPromptMultiviewResponse>;
+}
+
+// ── Part / Variant metadata (Concepta) ───────────────────────────────────
+export interface PartRegionDTO {
+  key: string;
+  label: string;
+}
+export interface VariantAxisDTO {
+  key: string;
+  label: string;
+}
+
+/** Surface the canonical Part region list from the backend. The
+ *  frontend uses the `label` for the picker UI and ships the `key`
+ *  back on dispatch; the prompt template stays backend-side so we
+ *  can evolve it without a frontend redeploy. */
+export async function getPartRegions(): Promise<PartRegionDTO[]> {
+  const res = await fetch("/api/concepta/part-regions");
+  if (!res.ok) throw new Error(`getPartRegions: ${res.status}`);
+  return res.json() as Promise<PartRegionDTO[]>;
+}
+
+/** Same idea as getPartRegions, but for Variant axes. */
+export async function getVariantAxes(): Promise<VariantAxisDTO[]> {
+  const res = await fetch("/api/concepta/variant-axes");
+  if (!res.ok) throw new Error(`getVariantAxes: ${res.status}`);
+  return res.json() as Promise<VariantAxisDTO[]>;
 }
 
 export async function describeMedia(mediaId: string): Promise<VisionDescribeResponse> {

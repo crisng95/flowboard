@@ -793,7 +793,402 @@ _DEFAULT_HANDLERS: dict[str, Handler] = {
     "edit_image": _handle_edit_image,
     "gen_storyboard": _handle_gen_storyboard,
     "retry_storyboard_shot": _handle_retry_storyboard_shot,
+    "gen_multiview": None,  # filled below — late-binding to defer the
+                            # forward reference. Without this line the
+                            # registration order would force the handler
+                            # to live above the dict, which is a worse
+                            # location for a node-type-specific handler.
+    "gen_part": None,
+    "gen_variant": None,
 }
+
+
+# ── Multi-view (Concepta fork) ────────────────────────────────────────────
+# A multi-view request fans out into:
+#   Phase A — gen_image for the ROOT angle (e.g. "front") off the
+#             upstream Concept node's mediaId as a positional reference.
+#   Phase B — for each remaining angle in parallel: edit_image with
+#             base = Phase A's mediaId, prompt = rotation directive.
+#
+# This pattern keeps subject identity tight: every non-root angle is
+# one edit step deep from the root, so drift compounds at most once
+# (vs. linear chaining 1→2→3→4 which compounds 3 times by the last
+# angle).
+#
+# Params shape (created by the frontend dispatch path):
+#   {
+#     "project_id": str,
+#     "angles":     list[str],        # e.g. ["front","back","left profile","right profile"]
+#     "concept_media_id": str,        # upstream Concept node's mediaId
+#     "ref_media_ids":   list[str]?,  # optional extra refs (style packs etc.)
+#     "aspect_ratio":    str,         # IMAGE_ASPECT_RATIO_*
+#     "paygate_tier":    str,
+#     "image_model":     str,
+#     # Per-angle prompts pre-composed by auto_prompt_multiview before
+#     # the dispatch lands here. The handler does NOT call the LLM
+#     # itself — it only orchestrates Flow API dispatches.
+#     "prompts":         list[str],   # parallel to angles[]
+#   }
+
+
+async def _handle_gen_multiview(params: dict) -> tuple[dict, Optional[str]]:
+    """Multi-view dispatch — single batched gen_image with N per-variant
+    prompts + the upstream Concept as a positional reference.
+
+    Why one batched gen_image (not a chain of gen_image + N edit_image):
+      Earlier iterations chained: angle 1 → gen_image, angles 2..N →
+      edit_image with base = angle 1's output. The premise was that
+      edit_image preserves identity better than re-sampling.
+
+      In practice Flow's edit_image takes the prompt as authoritative
+      and re-generates the entire scene, dropping background context
+      and frequently mis-mapping the requested angle. The output for
+      "back view" was a grey-studio shot of a different character;
+      "left profile" returned a back-of-head; "right profile" looped
+      back to the front view. The chained approach failed.
+
+      The fix: dispatch a single `gen_image` with `variant_count = N`,
+      each variant getting its own angle-specific prompt. The upstream
+      Concept's mediaId is passed as `IMAGE_INPUT_TYPE_REFERENCE`, so
+      Flow conditions ALL variants on the same identity reference.
+      This is the same pattern Magnific / Midjourney use for
+      turnarounds — one batch, N prompts, one shared reference image.
+      Identity stays consistent because the reference is the same; the
+      prompts only differ in camera angle.
+
+    Params shape (set by the frontend dispatch path):
+      {
+        "project_id":   str,
+        "angles":       list[str]    (4..8),
+        "concept_media_id": str,     # upstream Concept mediaId (ref)
+        "ref_media_ids":   list[str]?,  # optional extra refs
+        "aspect_ratio":    str,
+        "paygate_tier":    str,
+        "image_model":     str,
+        "prompts":         list[str], # parallel to angles[]
+      }
+    """
+    from flowboard.services.flow_sdk import is_valid_project_id
+
+    project_id = params.get("project_id")
+    angles = params.get("angles") or []
+    prompts = params.get("prompts") or []
+    concept_media_id = params.get("concept_media_id")
+    aspect = params.get("aspect_ratio") or "IMAGE_ASPECT_RATIO_PORTRAIT"
+    tier = params.get("paygate_tier") or flow_client.paygate_tier
+    image_model = params.get("image_model")
+
+    if not isinstance(project_id, str) or not is_valid_project_id(project_id):
+        return {}, "invalid_project_id"
+    if not isinstance(concept_media_id, str) or not concept_media_id:
+        return {}, "missing_concept_media_id"
+    if not isinstance(angles, list) or not (4 <= len(angles) <= 8):
+        return {}, "invalid_angles_count"
+    if not isinstance(prompts, list) or len(prompts) != len(angles):
+        return {}, "prompts_angle_mismatch"
+    if tier is None:
+        return {}, "paygate_tier_unknown"
+    if not isinstance(image_model, str) or not image_model.strip():
+        image_model = None
+
+    raw_refs = params.get("ref_media_ids")
+    extra_refs: list[str] = []
+    if isinstance(raw_refs, list):
+        extra_refs = [m for m in raw_refs if isinstance(m, str) and m]
+
+    # Refs passed to Flow: the Concept goes first as the IDENTITY
+    # anchor (Flow's reference attention biases harder toward earlier
+    # entries), any optional style packs after.
+    ref_chain = [concept_media_id, *extra_refs]
+
+    # Dispatch ONE gen_image call per angle (parallel chunks of 4 to
+    # respect Flow's per-call cap). Each call uses the same ref_chain
+    # for identity preservation.
+    #
+    # Why N×1 instead of one batch with `prompts=[…]`: Flow's batch
+    # gen_image does NOT preserve order between request[i] and
+    # output[i] when per-variant prompts differ. The response's
+    # `data.media[]` arrives in arbitrary order and there's no
+    # field on the entry that lets us back-map to the prompt that
+    # produced it (no sessionId, no seed echoed). Symptom: the
+    # "back" tile got the right-profile image, "left profile" got
+    # back, etc — every tile mis-mapped except the root.
+    #
+    # The fix: one Flow call per angle. Each call is small (1
+    # variant), the response → one mediaId belonging to a known
+    # angle by construction. Cost: N captcha solves + N HTTP
+    # roundtrips, but throughput stays acceptable because we
+    # parallelise via asyncio.gather within Flow's 4-call cap.
+    sdk = get_flow_sdk()
+    media_ids: list[Optional[str]] = [None] * len(angles)
+    angle_errors: list[Optional[str]] = [None] * len(angles)
+    media_entries_acc: list[dict] = []
+
+    async def _gen_one(k: int) -> None:
+        try:
+            resp = await sdk.gen_image(
+                prompt=(prompts[k] or "").strip() or angles[k],
+                project_id=project_id,
+                aspect_ratio=aspect,
+                paygate_tier=tier,
+                ref_media_ids=ref_chain,
+                variant_count=1,
+                image_model=image_model,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("gen_multiview angle %d (%s) dispatch failed", k, angles[k])
+            angle_errors[k] = f"dispatch:{exc}"[:200]
+            return
+        if (resp or {}).get("error"):
+            angle_errors[k] = str(resp["error"])[:200]
+            return
+        ids = (resp or {}).get("media_ids") or []
+        mid = next((m for m in ids if isinstance(m, str) and m), None)
+        if not mid:
+            angle_errors[k] = "filtered_or_missing"
+            return
+        media_ids[k] = mid
+        # Collect entries for ingest. Append to the shared list under
+        # the GIL — append is atomic in CPython, no extra lock needed.
+        for e in (resp.get("media_entries") or []):
+            if isinstance(e, dict) and e.get("url"):
+                media_entries_acc.append(e)
+
+    # Flow caps in-flight gen requests at 4 per project. Dispatch in
+    # chunks of 4 to stay within bounds; each chunk runs in parallel.
+    CHUNK = 4
+    for start in range(0, len(angles), CHUNK):
+        chunk = list(range(start, min(start + CHUNK, len(angles))))
+        await asyncio.gather(*(_gen_one(k) for k in chunk))
+
+    # Ingest all media at the end so the cache fills before the
+    # frontend's poll lands.
+    if media_entries_acc:
+        try:
+            media_service.ingest_urls(media_entries_acc)
+        except Exception:  # noqa: BLE001
+            logger.exception("auto-ingest from gen_multiview failed")
+
+    failed_angles = [angles[k] for k, e in enumerate(angle_errors) if e]
+    partial_error = (
+        f"angles_failed:{','.join(failed_angles[:3])}"
+        if failed_angles
+        else None
+    )
+
+    return (
+        {
+            "media_ids": media_ids,
+            "angles": angles,
+            "angle_errors": angle_errors,
+            "partial_error": partial_error,
+            "media_entries": [],  # already ingested
+        },
+        None,
+    )
+
+
+# Late-bind the handler now that its function is defined.
+_DEFAULT_HANDLERS["gen_multiview"] = _handle_gen_multiview
+
+
+# ── Part / Variant (Concepta fork) ─────────────────────────────────────────
+# Both Part and Variant share the same dispatch shape: edit_image from
+# an upstream Concept (or Concept-derived) node. The difference is the
+# prompt composition + the activity-feed type tag, which lets the user
+# distinguish between "isolate weapon" (Part) and "weapon recolour"
+# (Variant) in the activity bell history.
+#
+# Params shape (set by the frontend dispatch path):
+#   gen_part:    { project_id, source_media_id, region_key (str),
+#                  aspect_ratio, paygate_tier, image_model }
+#   gen_variant: { project_id, source_media_id, axis_key (str),
+#                  instruction (str), variant_count (1..4),
+#                  aspect_ratio, paygate_tier, image_model }
+#
+# Variant supports `variant_count > 1` so the user gets multiple
+# alternates in one click. We dispatch N×1 edit_image (parallel chunks
+# of 4) for the same reason gen_multiview does — Flow's batch
+# edit_image doesn't preserve order between request[i] and output[i]
+# when per-variant prompts differ.
+
+
+async def _handle_gen_part(params: dict) -> tuple[dict, Optional[str]]:
+    from flowboard.services.concept import get_part_prompt
+    from flowboard.services.flow_sdk import is_valid_project_id
+
+    project_id = params.get("project_id")
+    source_media_id = params.get("source_media_id")
+    region_key = params.get("region_key")
+    aspect = params.get("aspect_ratio") or "IMAGE_ASPECT_RATIO_SQUARE"
+    tier = params.get("paygate_tier") or flow_client.paygate_tier
+    image_model = params.get("image_model")
+
+    if not isinstance(project_id, str) or not is_valid_project_id(project_id):
+        return {}, "invalid_project_id"
+    if not isinstance(source_media_id, str) or not source_media_id:
+        return {}, "missing_source_media_id"
+    if not isinstance(region_key, str) or not region_key:
+        return {}, "missing_region_key"
+    if tier is None:
+        return {}, "paygate_tier_unknown"
+    if not isinstance(image_model, str) or not image_model.strip():
+        image_model = None
+
+    prompt = get_part_prompt(region_key)
+    if prompt is None:
+        return {}, f"unknown_region:{region_key}"
+
+    # Dispatch — single edit_image. No batching for parts (one zoom per
+    # node — the user should drop another Part node for a different
+    # region, not crank up variant count).
+    sdk = get_flow_sdk()
+    try:
+        resp = await sdk.edit_image(
+            prompt=prompt,
+            project_id=project_id,
+            source_media_id=source_media_id,
+            ref_media_ids=None,
+            aspect_ratio=aspect,
+            paygate_tier=tier,
+            image_model=image_model,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("gen_part dispatch failed")
+        return {}, f"edit_image:{exc}"[:200]
+    if (resp or {}).get("error"):
+        return resp, str(resp["error"])[:200]
+
+    # Persist media bytes + return the resolved single mediaId. We
+    # mirror gen_image's response shape so the frontend can reuse the
+    # poll handler.
+    entries_with_urls = [
+        e for e in (resp.get("media_entries") or [])
+        if isinstance(e, dict) and e.get("url")
+    ]
+    if entries_with_urls:
+        try:
+            media_service.ingest_urls(entries_with_urls)
+        except Exception:  # noqa: BLE001
+            logger.exception("auto-ingest from gen_part failed")
+
+    return resp, None
+
+
+async def _handle_gen_variant(params: dict) -> tuple[dict, Optional[str]]:
+    from flowboard.services.concept import build_variant_prompt
+    from flowboard.services.flow_sdk import is_valid_project_id
+
+    project_id = params.get("project_id")
+    source_media_id = params.get("source_media_id")
+    axis_key = params.get("axis_key")
+    instruction = params.get("instruction") or ""
+    aspect = params.get("aspect_ratio") or "IMAGE_ASPECT_RATIO_PORTRAIT"
+    tier = params.get("paygate_tier") or flow_client.paygate_tier
+    image_model = params.get("image_model")
+
+    raw_count = params.get("variant_count")
+    n = max(1, min(int(raw_count) if isinstance(raw_count, int) else 1, 4))
+
+    if not isinstance(project_id, str) or not is_valid_project_id(project_id):
+        return {}, "invalid_project_id"
+    if not isinstance(source_media_id, str) or not source_media_id:
+        return {}, "missing_source_media_id"
+    if not isinstance(axis_key, str) or not axis_key:
+        return {}, "missing_axis_key"
+    if tier is None:
+        return {}, "paygate_tier_unknown"
+    if not isinstance(image_model, str) or not image_model.strip():
+        image_model = None
+
+    # Per-variant prompts: when the user requests N variants of the
+    # SAME axis, we synthesise N slightly-perturbed instructions so
+    # the outputs are actually different. Frontend can pass
+    # `instructions: list[str]` to override (1 instruction per
+    # variant); else we just dispatch the same instruction N times
+    # and rely on Flow's seed variation.
+    raw_instructions = params.get("instructions")
+    instructions: list[str] = []
+    if isinstance(raw_instructions, list):
+        instructions = [
+            i for i in raw_instructions if isinstance(i, str) and i.strip()
+        ]
+    if not instructions:
+        instructions = [instruction] * n
+    elif len(instructions) < n:
+        instructions += [instructions[-1]] * (n - len(instructions))
+
+    sdk = get_flow_sdk()
+    media_ids: list[Optional[str]] = [None] * n
+    angle_errors: list[Optional[str]] = [None] * n
+    media_entries_acc: list[dict] = []
+
+    async def _edit_one(k: int) -> None:
+        prompt = build_variant_prompt(axis_key, instructions[k])
+        if prompt is None:
+            angle_errors[k] = f"unknown_axis:{axis_key}"
+            return
+        try:
+            resp = await sdk.edit_image(
+                prompt=prompt,
+                project_id=project_id,
+                source_media_id=source_media_id,
+                ref_media_ids=None,
+                aspect_ratio=aspect,
+                paygate_tier=tier,
+                image_model=image_model,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("gen_variant slot %d failed", k)
+            angle_errors[k] = f"edit_image:{exc}"[:200]
+            return
+        if (resp or {}).get("error"):
+            angle_errors[k] = str(resp["error"])[:200]
+            return
+        ids = (resp or {}).get("media_ids") or []
+        mid = next((m for m in ids if isinstance(m, str) and m), None)
+        if not mid:
+            angle_errors[k] = "filtered_or_missing"
+            return
+        media_ids[k] = mid
+        for e in (resp.get("media_entries") or []):
+            if isinstance(e, dict) and e.get("url"):
+                media_entries_acc.append(e)
+
+    # Chunk dispatch so we stay under Flow's 4-call concurrent cap.
+    CHUNK = 4
+    for start in range(0, n, CHUNK):
+        chunk = list(range(start, min(start + CHUNK, n)))
+        await asyncio.gather(*(_edit_one(k) for k in chunk))
+
+    if media_entries_acc:
+        try:
+            media_service.ingest_urls(media_entries_acc)
+        except Exception:  # noqa: BLE001
+            logger.exception("auto-ingest from gen_variant failed")
+
+    failed_idx = [k for k, e in enumerate(angle_errors) if e]
+    partial_error = (
+        f"variants_failed:{','.join(str(i) for i in failed_idx[:3])}"
+        if failed_idx
+        else None
+    )
+
+    return (
+        {
+            "media_ids": media_ids,
+            "axis_key": axis_key,
+            "slot_errors": angle_errors,
+            "partial_error": partial_error,
+            "media_entries": [],  # already ingested
+        },
+        None,
+    )
+
+
+# Late-bind these too — same forward-ref pattern as gen_multiview.
+_DEFAULT_HANDLERS["gen_part"] = _handle_gen_part
+_DEFAULT_HANDLERS["gen_variant"] = _handle_gen_variant
 
 
 class WorkerController:

@@ -19,16 +19,59 @@ import { useBoardStore, type FlowNode, type NodeType } from "../store/board";
 import { NodeCard } from "./NodeCard";
 import { VariantEdge } from "./VariantEdge";
 import { useGenerationStore } from "../store/generation";
+import { getUiVersion } from "../lib/utils";
+import { ReferenceNode } from "./v2/ReferenceNode";
+import { ConceptNode } from "./v2/ConceptNode";
+import { MultiviewNode } from "./v2/MultiviewNode";
+import { PartNode } from "./v2/PartNode";
+import { VariantNode } from "./v2/VariantNode";
 
-const nodeTypes = {
-  character: NodeCard,
-  image: NodeCard,
-  video: NodeCard,
-  prompt: NodeCard,
-  note: NodeCard,
-  visual_asset: NodeCard,
-  Storyboard: NodeCard,
-};
+// V2 components are opt-in via `localStorage.flowboard_ui = "v2"`. For
+// the Concepta fork, V2 introduces the new `reference` and `concept`
+// node types — legacy types still render via the old NodeCard until
+// (and unless) we migrate them. The map below routes EVERY type
+// React Flow knows about so an old board with `character` nodes still
+// renders without crashing the canvas.
+const useV2 = getUiVersion() === "v2";
+
+const nodeTypes = useV2
+  ? {
+      // Legacy types — keep rendering with the old NodeCard so old
+      // boards still load. Palette doesn't surface these in V2 mode.
+      character: NodeCard,
+      image: NodeCard,
+      video: NodeCard,
+      prompt: NodeCard,
+      note: NodeCard,
+      visual_asset: ReferenceNode, // alias old type to new node body
+      Storyboard: NodeCard,
+      // Concepta fork V2
+      reference: ReferenceNode,
+      style_pack: NodeCard, // TODO Phase 1 polish
+      concept: ConceptNode,
+      multiview: MultiviewNode,
+      part: PartNode,
+      variant: VariantNode,
+      pose: NodeCard, // TODO Phase 3
+      turntable: NodeCard, // TODO Phase 3
+    }
+  : {
+      character: NodeCard,
+      image: NodeCard,
+      video: NodeCard,
+      prompt: NodeCard,
+      note: NodeCard,
+      visual_asset: NodeCard,
+      Storyboard: NodeCard,
+      reference: NodeCard,
+      style_pack: NodeCard,
+      concept: NodeCard,
+      multiview: NodeCard,
+      part: NodeCard,
+      variant: NodeCard,
+      pose: NodeCard,
+      turntable: NodeCard,
+    };
 
 // Single edge type used for everything — VariantEdge renders the
 // default bezier line and additionally surfaces a `v{N}` chip when the
@@ -38,9 +81,11 @@ const edgeTypes = {
 };
 
 const defaultEdgeOptions = {
-  // Bump the visible stroke + a wider transparent hit area so the edge is
-  // easy to *select*. Selected edge is then deleted via Backspace/Delete.
-  style: { stroke: "var(--border)", strokeWidth: 2, cursor: "pointer" },
+  // Violet accent stroke so edges read as "data flowing" instead of
+  // blending into the canvas dot grid. Wider transparent hit area
+  // (24px) keeps selection forgiving. Selected edge gets a glow via
+  // the CSS rule in globals.css.
+  style: { stroke: "rgba(124, 92, 255, 0.45)", strokeWidth: 2, cursor: "pointer" },
   interactionWidth: 24,
 };
 
@@ -94,11 +139,14 @@ function DropAddPopover({
       role="menu"
       aria-label="Add connected node"
     >
-      <button type="button" className="drop-popover__btn" onClick={() => handle("image")}>
-        <span className="drop-popover__icon">▣</span> Image
+      <button type="button" className="drop-popover__btn" onClick={() => handle("multiview")}>
+        <span className="drop-popover__icon">▦</span> Multi-view
       </button>
-      <button type="button" className="drop-popover__btn" onClick={() => handle("video")}>
-        <span className="drop-popover__icon">▶</span> Video
+      <button type="button" className="drop-popover__btn" onClick={() => handle("part")}>
+        <span className="drop-popover__icon">◐</span> Part
+      </button>
+      <button type="button" className="drop-popover__btn" onClick={() => handle("variant")}>
+        <span className="drop-popover__icon">◇</span> Variant
       </button>
     </div>
   );
@@ -295,7 +343,7 @@ export function Board() {
         fitView
         proOptions={{ hideAttribution: true }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#2a2e38" />
+        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="rgba(255,255,255,0.04)" />
         <MiniMap pannable zoomable />
         <Controls />
         <DropAddPopover

@@ -229,7 +229,18 @@ class PromptSynthError(RuntimeError):
 # frontend's ``REF_SOURCE_TYPES`` set in ``store/generation.ts`` so the
 # ``ref_image_N`` numbering we hand the LLM aligns with the actual
 # positional slot Flow sees on the wire.
-_REF_SOURCE_TYPES = {"character", "image", "visual_asset", "Storyboard"}
+# Ref-source node types — the ones whose mediaId becomes a position
+# entry in the request's ``imageInputs`` array. Includes both legacy
+# (character / visual_asset / image / Storyboard) and the Concepta
+# fork's new types (reference / concept / multiview / part / variant
+# / pose) so all of them can feed downstream concept/multiview/part
+# nodes as positional refs.
+_REF_SOURCE_TYPES = {
+    # legacy
+    "character", "image", "visual_asset", "Storyboard",
+    # Concepta
+    "reference", "concept", "multiview", "part", "variant", "pose",
+}
 
 
 def _collect_upstream(node_id: int) -> tuple[list[dict], Optional[Node]]:
@@ -469,6 +480,105 @@ def _format_user_message(records: list[dict], target: Node) -> str:
     if not parts:
         # No upstream context — fall back to the node title alone.
         return f"Target: {target_title or 'image'}\n\nWrite a generic photoreal product or scene prompt."
+    return "\n\n".join(parts) + "\n\nReturn only the prompt sentence."
+
+
+def _format_concept_user_message(records: list[dict], target: Node) -> str:
+    """Concepta-specific user message builder.
+
+    The default `_format_user_message` is fashion-oriented: its empty
+    fallback says "Write a generic photoreal product or scene prompt"
+    which is exactly the wrong direction for a concept-art asset
+    pipeline. The empty-upstream case here instead nudges the LLM to
+    fall back on the user's `styleKey` + `typeKey` choices, which
+    `subject.py` has already injected into the system prompt's
+    TYPE/STYLE blocks — so the output stays a canonical asset sheet
+    even when nothing is connected to the node yet.
+    """
+    target_data = target.data or {}
+    target_title = (
+        target_data.get("title") if isinstance(target_data.get("title"), str) else None
+    )
+    user_prompt = target_data.get("prompt")
+    style_key = target_data.get("styleKey") if isinstance(target_data.get("styleKey"), str) else None
+    type_key = target_data.get("typeKey") if isinstance(target_data.get("typeKey"), str) else None
+
+    parts: list[str] = []
+
+    # User's free-text intent (typed into the dialog or persisted on
+    # the node) is the most authoritative signal. Surface it first so
+    # Claude treats it as the subject brief, not "extra context".
+    # Reinforce the anti-environment rule because user briefs often
+    # mention habitats ("forest elf", "desert warrior") which the LLM
+    # can misinterpret as a scene to render.
+    if isinstance(user_prompt, str) and user_prompt.strip():
+        parts.append(
+            f"Subject brief (user intent):\n  {user_prompt.strip()}\n\n"
+            "IMPORTANT: If the brief above mentions an environment, "
+            "habitat, or setting (forest, desert, underwater, city, etc.), "
+            "treat it as FLAVOUR for the character's design language — NOT "
+            "as a backdrop to render. The output background MUST remain "
+            "plain neutral grey (#808080). The subject stands isolated."
+        )
+
+    # Reference images, if any, are positional ref_image_N inputs that
+    # Flow will bind. Same rendering logic as the legacy formatter so
+    # the LLM gets familiar labels.
+    if records:
+        by_type: dict[str, list[str]] = {}
+        for r in records:
+            text = r["brief"] or r["prompt"] or r["title"] or "(no description)"
+            ref_index = r.get("ref_index")
+            line = (
+                f"ref_image_{ref_index}: {text}"
+                if ref_index is not None
+                else f"- {text}"
+            )
+            by_type.setdefault(r["type"], []).append(line)
+        if by_type.get("reference"):
+            parts.append(
+                "Reference inputs (textures / sketches / photos):\n  - "
+                + "\n  - ".join(by_type["reference"])
+            )
+        # Style pack nodes carry `styleKey` only — surface as direction
+        # rather than visual ref since they have no media payload.
+        if by_type.get("style_pack"):
+            parts.append("Style anchors:\n  - " + "\n  - ".join(by_type["style_pack"]))
+        # A concept upstream means a previously-generated sheet; treat
+        # it as identity reference for variants.
+        if by_type.get("concept"):
+            parts.append(
+                "Existing concept reference(s):\n  - "
+                + "\n  - ".join(by_type["concept"])
+            )
+
+    # Empty upstream + no user prompt — explicit fallback: tell the
+    # LLM to lean on the system prompt's TYPE/STYLE blocks. The
+    # default formatter would say "photoreal product / scene" here,
+    # which is the wrong frame for asset concept art.
+    if not parts:
+        bits = []
+        if target_title and target_title.lower() not in {"concept", "untitled"}:
+            bits.append(f"the node title '{target_title}'")
+        if type_key:
+            bits.append(f"a {type_key} subject")
+        if style_key:
+            bits.append(f"in the {style_key} style")
+        seed = " and ".join(bits) if bits else "a generic asset concept"
+        parts.append(
+            f"Subject: {seed}.\n\n"
+            "There are no reference images upstream — invent a SPECIFIC "
+            "subject design that fits the TYPE and STYLE blocks in the "
+            "system prompt. Output a concept-sheet prompt: canonical "
+            "pose, PLAIN NEUTRAL BACKGROUND (solid grey or white, NO "
+            "environment, NO scene, NO ground texture, NO foliage, NO "
+            "sky), design clarity. The subject stands isolated on the "
+            "neutral backdrop — even if the subject is a 'forest elf' "
+            "or 'desert warrior', the background is PLAIN GREY. Do NOT "
+            "default to environmental scenes, matte paintings, or any "
+            "scenic backdrop."
+        )
+
     return "\n\n".join(parts) + "\n\nReturn only the prompt sentence."
 
 
@@ -727,8 +837,10 @@ async def auto_prompt(node_id: int, *, camera: Optional[str] = None) -> str:
     configured Auto-Prompt provider.
 
     Branch by target type:
-    - ``image`` (or anything else default) → photorealistic composition prompt
-      that combines all upstream briefs.
+    - ``concept`` → Concepta fork: canonical asset-sheet prompt
+      (T-pose / orthographic, neutral lighting, design clarity).
+    - ``image`` (legacy + default fallback) → photorealistic composition
+      prompt combining upstream briefs in fashion-editorial style.
     - ``video`` → motion/camera prompt for the single source image brief
       (i2v has exactly one upstream image — multi-ref isn't a thing). The
       ``camera`` arg (e.g. ``"static"``) selects a system-prompt variant so
@@ -739,12 +851,32 @@ async def auto_prompt(node_id: int, *, camera: Optional[str] = None) -> str:
         raise PromptSynthError(f"node {node_id} not found")
 
     is_video = target.type == "video"
+    is_concept = target.type == "concept"
     subject_count = len(_distinct_subjects(records))
     if is_video:
         system_prompt = _video_system_prompt(camera, subject_count)
+        user_msg = _format_user_message(records, target)
+    elif is_concept:
+        # Lazy import to avoid circular: services.concept imports from
+        # .presets which is fine, but pulling at module top would mean
+        # editing the file's import block every time we add a Concepta
+        # node type. Local import keeps the surface localised.
+        from flowboard.services.concept import build_concept_system_prompt
+
+        target_data = target.data or {}
+        style_key = target_data.get("styleKey") if isinstance(target_data.get("styleKey"), str) else None
+        type_key = target_data.get("typeKey") if isinstance(target_data.get("typeKey"), str) else None
+        system_prompt = build_concept_system_prompt(
+            style_key=style_key, type_key=type_key,
+        )
+        # Concept-specific user-message builder. The legacy formatter
+        # (used for fashion `image` targets) defaults to "photoreal
+        # product / scene" prose when upstream is empty — wrong frame
+        # for an asset-pipeline concept sheet.
+        user_msg = _format_concept_user_message(records, target)
     else:
         system_prompt = _image_system_prompt(subject_count)
-    user_msg = _format_user_message(records, target)
+        user_msg = _format_user_message(records, target)
 
     async with record_activity(
         "auto_prompt",
