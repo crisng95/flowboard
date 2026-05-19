@@ -248,3 +248,18 @@
 .react-flow__nodes {
   z-index: 2 !important;
 }
+
+/* Image Generator prompt textarea - thin subtle scrollbar */
+.img-gen-prompt::-webkit-scrollbar {
+  width: 4px;
+}
+.img-gen-prompt::-webkit-scrollbar-track {
+  background: transparent;
+}
+.img-gen-prompt::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+}
+.img-gen-prompt::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}

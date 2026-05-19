@@ -75,7 +75,7 @@ export function UploadNode(props: NodeProps<FlowNode>) {
       <div
         data-selected={selected || undefined}
         className={cn(
-          "relative overflow-hidden transition-all duration-150",
+          "relative overflow-hidden transition-all duration-300 ease-out",
           "border-[3px] border-white/[0.14] shadow-lg",
           selected && "ring-2 ring-accent/50",
           flow.dragOver && "ring-2 ring-accent/40",
@@ -89,7 +89,7 @@ export function UploadNode(props: NodeProps<FlowNode>) {
           onDragLeave={flow.onDragLeave}
           className={cn(
             "relative flex items-center justify-center cursor-pointer",
-            "transition-all duration-150",
+            "transition-all duration-300 ease-out",
             !mediaId && "min-h-[180px]",
           )}
           style={{
@@ -164,14 +164,14 @@ export function UploadNode(props: NodeProps<FlowNode>) {
         </div>
 
         {/* Replace button bottom left hover only */}
-        {showControls && mediaId && (
-          <div className="absolute bottom-3 left-3 z-10">
+        {mediaId && (
+          <div className={cn("absolute bottom-3 left-3 z-10 transition-all duration-300 ease-out", showControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1 pointer-events-none")}>
             <button
               onClick={flow.pickFile}
               className={cn(
                 "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg",
                 "text-2xs font-medium text-ink-primary",
-                "transition-all duration-150 cursor-pointer",
+                "transition-all duration-300 ease-out cursor-pointer",
                 "hover:bg-white/[0.12]",
               )}
               style={{ backgroundColor: "rgba(0,0,0,0.65)", backdropFilter: "blur(8px)" }}
@@ -190,12 +190,12 @@ export function UploadNode(props: NodeProps<FlowNode>) {
         id="source"
         className={cn(
           "!absolute !-right-0 !top-[48px] !h-7 !w-7 !border-0 !bg-transparent",
-          "transition-opacity duration-150",
+          "transition-opacity duration-300 ease-out",
           showHandle ? "!opacity-100" : "!opacity-0 !pointer-events-none",
         )}
       >
         <div
-          className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full border transition-all duration-150"
+          className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full border transition-all duration-300 ease-out"
           style={{
             backgroundColor: "#2b2b2b",
             borderColor: hasConnectedEdge ? "rgba(124,92,255,0.7)" : "rgba(124,92,255,0.4)",

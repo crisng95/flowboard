@@ -26,6 +26,7 @@ import { MultiviewNode } from "./v2/MultiviewNode";
 import { PartNode } from "./v2/PartNode";
 import { VariantNode } from "./v2/VariantNode";
 import { UploadNode } from "./v2/UploadNode";
+import { ImageGeneratorNode } from "./v2/ImageGeneratorNode";
 import { DashedConnectionLine } from "./DashedConnectionLine";
 
 // V2 components are opt-in via `localStorage.flowboard_ui = "v2"`. For
@@ -48,7 +49,7 @@ const nodeTypes = useV2
       visual_asset: ReferenceNode, // alias old type to new node body
       Storyboard: NodeCard,
       // Concepta fork V2
-      reference: ReferenceNode,
+      reference: ImageGeneratorNode,
       style_pack: NodeCard, // TODO Phase 1 polish
       concept: ConceptNode,
       multiview: MultiviewNode,

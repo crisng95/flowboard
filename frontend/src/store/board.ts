@@ -186,7 +186,7 @@ const TYPE_TITLE: Record<NodeType, string> = {
   visual_asset: "Visual asset",
   Storyboard: "Storyboard",
   // Concepta fork
-  reference: "Reference",
+  reference: "Image Generator",
   style_pack: "Style pack",
   concept: "Concept",
   multiview: "Multi-view",
