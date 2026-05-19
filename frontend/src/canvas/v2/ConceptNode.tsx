@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ConceptNode - Concepta-fork canonical asset sheet.
  *
  * Backend node type: `concept`. Replaces the legacy `character` node
@@ -34,6 +34,10 @@ import { cn } from "../../lib/utils";
 import { NodeShell } from "./NodeShell";
 import { CaptionRow } from "./shared/CaptionRow";
 import { ChipPicker } from "./shared/ChipPicker";
+import { SettingsButton } from "./shared/SettingsButton";
+import { SettingsDrawer } from "./shared/SettingsDrawer";
+import { SelectField, TextAreaField } from "./shared/SettingsFields";
+import { persistNodeData } from "./shared/persistNodeData";
 import { EmptyState } from "./shared/EmptyState";
 import { ErrorOverlay } from "./shared/ErrorOverlay";
 import { IconChip } from "./shared/IconChip";
@@ -226,6 +230,7 @@ export function ConceptNode(props: NodeProps<FlowNode>) {
                 disabled={flow.uploading}
               />
               <div className="flex-1" />
+              <SettingsButton nodeId={rfId} label="Concept settings" />
               <RunButton
                 onClick={openGenerate}
                 disabled={flow.uploading}
@@ -253,6 +258,33 @@ export function ConceptNode(props: NodeProps<FlowNode>) {
             onResizeEnd={onResizeEnd}
           />
         </NodeShell>
+
+        <SettingsDrawer
+          nodeId={rfId}
+          title="Concept settings"
+          hint="Override aspect ratio + add a custom system prompt note for power users."
+        >
+          <SelectField<string>
+            label="Aspect ratio"
+            value={(data.aspectRatioOverride as string | undefined) ?? "auto"}
+            options={[
+              { value: "auto", label: "Auto (use canvas default)" },
+              { value: "IMAGE_ASPECT_RATIO_PORTRAIT", label: "Portrait 3:4" },
+              { value: "IMAGE_ASPECT_RATIO_SQUARE", label: "Square 1:1" },
+              { value: "IMAGE_ASPECT_RATIO_LANDSCAPE", label: "Landscape 4:3" },
+            ]}
+            onChange={(next) => persistNodeData(rfId, { aspectRatioOverride: next === "auto" ? null : next })}
+            hint="Auto picks portrait for characters, square for props."
+          />
+          <TextAreaField
+            label="Custom system prompt"
+            value={(data.customSystemPrompt as string | undefined) ?? ""}
+            onChange={(next) => persistNodeData(rfId, { customSystemPrompt: next || null })}
+            placeholder="Optional. Appended to the auto-prompt - e.g. extra style notes, anatomy hints."
+            rows={4}
+            hint="Backend wiring lands in a follow-up; the value persists today."
+          />
+        </SettingsDrawer>
       </div>
     </>
   );

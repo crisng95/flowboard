@@ -31,6 +31,10 @@ import { cn } from "../../lib/utils";
 import { NodeShell } from "./NodeShell";
 import { ChipPicker } from "./shared/ChipPicker";
 import { EmptyState } from "./shared/EmptyState";
+import { SettingsButton } from "./shared/SettingsButton";
+import { SettingsDrawer } from "./shared/SettingsDrawer";
+import { RadioField, TextAreaField } from "./shared/SettingsFields";
+import { persistNodeData } from "./shared/persistNodeData";
 import { IconChip } from "./shared/IconChip";
 import { PickerDropdown } from "./shared/PickerDropdown";
 import { ResizeHandle } from "./shared/ResizeHandle";
@@ -172,11 +176,8 @@ export function MultiviewNode(props: NodeProps<FlowNode>) {
             <span className="text-2xs text-ink-muted">
               {angles.length} angles
             </span>
-            <ModeToggle
-              value={mvMode}
-              onChange={persistMode}
-              disabled={isProcessing}
-            />
+            <div className="flex-1" />
+            <SettingsButton nodeId={rfId} label="Multi-view settings" />
             {hasFilled && (
               <IconChip icon={Copy} label="Copy media ids" onClick={onCopySheet} />
             )}
@@ -217,6 +218,31 @@ export function MultiviewNode(props: NodeProps<FlowNode>) {
           onResizeEnd={onResizeEnd}
         />
       </NodeShell>
+
+      <SettingsDrawer
+        nodeId={rfId}
+        title="Multi-view settings"
+        hint="Pick how the turnaround is dispatched. Edit chain is the cheap default; Sheet regen runs a 2-phase pipeline (1 sheet + N angle gens) for tighter identity."
+      >
+        <RadioField<"edit_chain" | "sheet_regen">
+          label="Dispatch mode"
+          value={mvMode}
+          options={[
+            { value: "edit_chain", label: "Edit chain", hint: "4 Flow calls. Cheaper, faster, slight identity drift." },
+            { value: "sheet_regen", label: "Sheet regen", hint: "5 Flow calls. Generates a sheet first, then re-gens each angle from it. Tighter identity." },
+          ]}
+          onChange={persistMode}
+        />
+
+        <TextAreaField
+          label="Custom system prompt"
+          value={(data.customSystemPrompt as string | undefined) ?? ""}
+          onChange={(next) => persistNodeData(rfId, { customSystemPrompt: next || null })}
+          placeholder="Optional. Appended to the per-angle prompt - e.g. extra style notes, anatomy hints, lighting overrides."
+          rows={4}
+          hint="Backend wiring for this field ships in a follow-up; the value persists today so saved overrides survive page reload."
+        />
+      </SettingsDrawer>
     </div>
   );
 }
@@ -291,56 +317,5 @@ function AngleTile({
         {isRoot && <span className="ml-1 text-[8px]">*</span>}
       </div>
     </button>
-  );
-}
-
-
-function ModeToggle({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: "edit_chain" | "sheet_regen";
-  onChange: (next: "edit_chain" | "sheet_regen") => void;
-  disabled?: boolean;
-}) {
-  // Compact 2-state pill toggle. Reusing the picker chip style would
-  // imply a dropdown; this is a binary choice so we render the two
-  // options side by side and tint the active one.
-  const opts: { key: "edit_chain" | "sheet_regen"; label: string }[] = [
-    { key: "edit_chain", label: "Edit chain" },
-    { key: "sheet_regen", label: "Sheet regen" },
-  ];
-  return (
-    <div
-      role="group"
-      aria-label="Multi-view dispatch mode"
-      className="inline-flex items-center gap-0.5 h-7 p-0.5 rounded-full border border-white/[0.08]"
-      style={{ backgroundColor: "rgba(255,255,255,0.02)" }}
-    >
-      {opts.map((opt) => {
-        const active = opt.key === value;
-        return (
-          <button
-            key={opt.key}
-            type="button"
-            disabled={disabled || active}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!active) onChange(opt.key);
-            }}
-            className={cn(
-              "inline-flex items-center px-2.5 h-6 rounded-full text-2xs font-medium transition-colors",
-              active
-                ? "bg-accent/15 text-white"
-                : "text-ink-muted hover:text-ink-primary hover:bg-white/[0.05]",
-              disabled && "opacity-50 cursor-not-allowed",
-            )}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
   );
 }

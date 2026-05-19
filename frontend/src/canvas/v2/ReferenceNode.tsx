@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ReferenceNode - Concepta-fork rename of VisualAsset.
  *
  * Role in the Concepta pipeline: input layer. Holds a single image
@@ -26,6 +26,10 @@ import { EmptyState } from "./shared/EmptyState";
 import { ErrorOverlay } from "./shared/ErrorOverlay";
 import { IconChip } from "./shared/IconChip";
 import { ResizeHandle } from "./shared/ResizeHandle";
+import { SettingsButton } from "./shared/SettingsButton";
+import { SettingsDrawer } from "./shared/SettingsDrawer";
+import { TextAreaField } from "./shared/SettingsFields";
+import { persistNodeData } from "./shared/persistNodeData";
 import { RevealBar } from "./shared/RevealBar";
 import { UploadingOverlay } from "./shared/UploadingOverlay";
 import { cssAspect, defaultEmptyAspect } from "./shared/aspect";
@@ -159,6 +163,8 @@ export function ReferenceNode(props: NodeProps<FlowNode>) {
             {mediaId && (
               <IconChip icon={Copy} label="Copy media id" onClick={onCopyId} />
             )}
+            <div className="flex-1" />
+            <SettingsButton nodeId={rfId} label="Reference settings" />
           </div>
         </RevealBar>
 
@@ -180,6 +186,21 @@ export function ReferenceNode(props: NodeProps<FlowNode>) {
           onResizeEnd={onResizeEnd}
         />
       </NodeShell>
+
+      <SettingsDrawer
+        nodeId={rfId}
+        title="Reference settings"
+        hint="Add notes that downstream Concept / Multi-view nodes will see when composing prompts."
+      >
+        <TextAreaField
+          label="Custom note"
+          value={(data.customNote as string | undefined) ?? ""}
+          onChange={(next) => persistNodeData(rfId, { customNote: next || null })}
+          placeholder="Optional. e.g. style intent, era, palette intent. Picked up by downstream auto-prompt."
+          rows={3}
+          hint="Backend pickup ships in a follow-up; the value persists today."
+        />
+      </SettingsDrawer>
     </div>
   );
 }

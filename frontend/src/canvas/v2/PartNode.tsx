@@ -1,4 +1,4 @@
-﻿/**
+/**
  * PartNode - Concepta-fork zoom-isolation card.
  *
  * Backend node type: `part`. Takes a single upstream Concept (or
@@ -31,6 +31,10 @@ import { cn } from "../../lib/utils";
 import { NodeShell } from "./NodeShell";
 import { CaptionRow } from "./shared/CaptionRow";
 import { ChipPicker } from "./shared/ChipPicker";
+import { SettingsButton } from "./shared/SettingsButton";
+import { SettingsDrawer } from "./shared/SettingsDrawer";
+import { TextAreaField } from "./shared/SettingsFields";
+import { persistNodeData } from "./shared/persistNodeData";
 import { EmptyState } from "./shared/EmptyState";
 import { PickerDropdown } from "./shared/PickerDropdown";
 import { ResizeHandle } from "./shared/ResizeHandle";
@@ -150,6 +154,7 @@ export function PartNode(props: NodeProps<FlowNode>) {
               onToggle={() => setPickerOpen(!pickerOpen)}
             />
             <div className="flex-1" />
+            <SettingsButton nodeId={rfId} label="Part settings" />
             <RunButton
               onClick={generate}
               disabled={!regionKey || isProcessing}
@@ -186,6 +191,21 @@ export function PartNode(props: NodeProps<FlowNode>) {
           onResizeEnd={onResizeEnd}
         />
       </NodeShell>
+
+      <SettingsDrawer
+        nodeId={rfId}
+        title="Part settings"
+        hint="Override the region prompt with extra notes specific to this Part."
+      >
+        <TextAreaField
+          label="Custom system prompt"
+          value={(data.customSystemPrompt as string | undefined) ?? ""}
+          onChange={(next) => persistNodeData(rfId, { customSystemPrompt: next || null })}
+          placeholder="Optional. Appended to the region template - e.g. zoom level, lighting, material focus."
+          rows={3}
+          hint="Backend pickup ships in a follow-up; the value persists today."
+        />
+      </SettingsDrawer>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * VariantNode - Magnific-style Variations card.
  *
  * Backend node type: `variant`. Takes a single upstream Concept (or
@@ -21,6 +21,10 @@ import { useGenerationStore } from "../../store/generation";
 import { cn } from "../../lib/utils";
 import { NodeShell } from "./NodeShell";
 import { ChipPicker } from "./shared/ChipPicker";
+import { SettingsButton } from "./shared/SettingsButton";
+import { SettingsDrawer } from "./shared/SettingsDrawer";
+import { TextAreaField } from "./shared/SettingsFields";
+import { persistNodeData } from "./shared/persistNodeData";
 import { EmptyState } from "./shared/EmptyState";
 import { CountStepper } from "./shared/CountStepper";
 import { IconChip } from "./shared/IconChip";
@@ -246,6 +250,7 @@ export function VariantNode(props: NodeProps<FlowNode>) {
                 if (e.key === "Enter" && axisKey && !isProcessing) generate();
               }}
             />
+            <SettingsButton nodeId={rfId} label="Variant settings" />
             <RunButton
               onClick={generate}
               disabled={!axisKey || isProcessing}
@@ -263,6 +268,21 @@ export function VariantNode(props: NodeProps<FlowNode>) {
           onResizeEnd={onResizeEnd}
         />
       </NodeShell>
+
+      <SettingsDrawer
+        nodeId={rfId}
+        title="Variant settings"
+        hint="Override the axis prompt with extra notes specific to this Variant batch."
+      >
+        <TextAreaField
+          label="Custom system prompt"
+          value={(data.customSystemPrompt as string | undefined) ?? ""}
+          onChange={(next) => persistNodeData(rfId, { customSystemPrompt: next || null })}
+          placeholder="Optional. Appended to the axis template - e.g. tone, era, palette, finish."
+          rows={3}
+          hint="Backend pickup ships in a follow-up; the value persists today."
+        />
+      </SettingsDrawer>
     </div>
   );
 }
