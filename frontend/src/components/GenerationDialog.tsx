@@ -17,7 +17,7 @@ import {
   type VibeKey,
 } from "../constants/character";
 
-const REF_SOURCE_TYPES = new Set(["character", "image", "visual_asset"]);
+const REF_SOURCE_TYPES = new Set(["character", "image", "visual_asset", "upload"]);
 
 function buildCharacterPrompt(
   gender: GenderKey | null,

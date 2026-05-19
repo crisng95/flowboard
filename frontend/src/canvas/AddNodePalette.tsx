@@ -27,6 +27,7 @@ interface Chip {
 
 // Concepta core — always visible.
 const CORE_CHIPS: Chip[] = [
+  { type: "upload", icon: "\u2191", label: "Upload" },
   { type: "reference", icon: "◇", label: "Reference" },
   { type: "concept", icon: "◆", label: "Concept" },
   { type: "multiview", icon: "▦", label: "Multi-view" },

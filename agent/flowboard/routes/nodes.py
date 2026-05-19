@@ -32,6 +32,7 @@ NodeType = Literal[
     "variant",     # alternate states (color / material / damage / equipment)
     "pose",        # pose change keeping identity (Phase 3)
     "turntable",   # Veo i2v with orbit camera prompt (Phase 3)
+    "upload",      # minimal input-only image node
 ]
 NodeStatus = Literal["idle", "queued", "running", "done", "error"]
 

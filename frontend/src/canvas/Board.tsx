@@ -25,6 +25,8 @@ import { ConceptNode } from "./v2/ConceptNode";
 import { MultiviewNode } from "./v2/MultiviewNode";
 import { PartNode } from "./v2/PartNode";
 import { VariantNode } from "./v2/VariantNode";
+import { UploadNode } from "./v2/UploadNode";
+import { DashedConnectionLine } from "./DashedConnectionLine";
 
 // V2 components are opt-in via `localStorage.flowboard_ui = "v2"`. For
 // the Concepta fork, V2 introduces the new `reference` and `concept`
@@ -52,6 +54,7 @@ const nodeTypes = useV2
       multiview: MultiviewNode,
       part: PartNode,
       variant: VariantNode,
+      upload: UploadNode,
       pose: NodeCard, // TODO Phase 3
       turntable: NodeCard, // TODO Phase 3
     }
@@ -69,6 +72,7 @@ const nodeTypes = useV2
       multiview: NodeCard,
       part: NodeCard,
       variant: NodeCard,
+      upload: NodeCard,
       pose: NodeCard,
       turntable: NodeCard,
     };
@@ -340,6 +344,7 @@ export function Board() {
         // Larger connection-drop radius so users don't have to land
         // pixel-perfect on the handle to complete an edge.
         connectionRadius={32}
+        connectionLineComponent={DashedConnectionLine}
         fitView
         proOptions={{ hideAttribution: true }}
       >

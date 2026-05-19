@@ -2,25 +2,23 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
+  useNodes,
   type EdgeProps,
 } from "@xyflow/react";
+
+import type { FlowNode } from "../store/board";
 
 /**
  * Edge variant: draws the standard bezier line plus a small chip at the
  * midpoint when the edge has a variant pin.
  *
- * The pin (`data.sourceVariantIdx`) records which variant of the
- * upstream multi-variant node this edge consumes — set when the user
- * clicks a specific variant tile to bind it to a downstream. The label
- * surfaces that binding so it stays visible on the graph instead of
- * being hidden in node data.
- *
- * Edges without a pin (single-variant sources, or unconfigured
- * multi-variant edges still defaulting to mediaId) render exactly the
- * way the previous default edge did — only the chip is additive.
+ * When the TARGET node is running/queued, the edge renders as an
+ * animated dashed line to indicate data is flowing.
  */
 export function VariantEdge({
   id,
+  source: _source,
+  target,
   sourceX,
   sourceY,
   targetX,
@@ -40,17 +38,34 @@ export function VariantEdge({
     targetPosition,
   });
 
+  const nodes = useNodes<FlowNode>();
+  const targetNode = nodes.find((n) => n.id === target);
+  const isRunning =
+    targetNode?.data.status === "running" ||
+    targetNode?.data.status === "queued";
+
   const pin = (data?.sourceVariantIdx ?? null) as number | null;
+
+  const edgeStyle = isRunning
+    ? {
+        ...style,
+        strokeDasharray: "8 6",
+        strokeLinecap: "round" as const,
+      }
+    : style;
 
   return (
     <>
-      <BaseEdge id={id} path={edgePath} style={style} markerEnd={markerEnd} />
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        style={edgeStyle}
+        markerEnd={markerEnd}
+        className={isRunning ? "animated-dash" : undefined}
+      />
       {pin !== null && pin >= 0 && (
         <EdgeLabelRenderer>
           <div
-            // The chip sits centered on the bezier midpoint and ignores
-            // pointer events so it doesn't shadow the edge's invisible
-            // hit area (selection / delete still work as before).
             className="variant-edge-pin"
             style={{
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,

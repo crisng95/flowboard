@@ -194,6 +194,7 @@ const TYPE_TITLE: Record<NodeType, string> = {
   variant: "Variant",
   pose: "Pose",
   turntable: "Turntable",
+  upload: "Upload",
 };
 
 /**

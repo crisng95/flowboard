@@ -19,7 +19,7 @@ function humanizeBackendError(token: string): string | null {
   const t = token.toLowerCase();
   if (t === "paygate_tier_unknown") {
     return (
-      "Flowboard doesn't know your Google Flow plan tier yet — the "
+      "Flowboard doesn't know your Google Flow plan tier yet â€” the "
       + "extension hasn't seen a Flow request that exposes it. Open "
       + "https://labs.google/fx/tools/flow in a tab and reload it once, "
       + "then retry. Flowboard refuses to dispatch in this state to "
@@ -28,7 +28,7 @@ function humanizeBackendError(token: string): string | null {
   }
   if (t === "no_media_id_in_upload_response") {
     return (
-      "Google Flow accepted the upload but didn't return a media handle — "
+      "Google Flow accepted the upload but didn't return a media handle â€” "
       + "this usually means the image was silently rejected by Flow's "
       + "content filter (logos, watermarks, copyrighted brand imagery). "
       + "Try a different image or download it locally and upload as a file. "
@@ -38,17 +38,17 @@ function humanizeBackendError(token: string): string | null {
   if (t.includes("captcha_failed: no current window")) {
     return (
       "Chrome has no open windows for the extension to attach a Flow tab to. "
-      + "Open any Chrome window (or click the extension's '⋯ → Open Flow') "
-      + "and retry — Flowboard will reuse the existing window automatically."
+      + "Open any Chrome window (or click the extension's 'â‹¯ â†’ Open Flow') "
+      + "and retry â€” Flowboard will reuse the existing window automatically."
     );
   }
   if (t.startsWith("captcha_failed:")) {
-    // CAPTCHA failures are rarely the user's fault — surface the underlying
+    // CAPTCHA failures are rarely the user's fault â€” surface the underlying
     // reason verbatim but keep the prefix so power-users can grep for it.
     return token;
   }
   if (t.startsWith("public_error_")) {
-    // Veo / Imagen content filters are returned verbatim by Flow — these
+    // Veo / Imagen content filters are returned verbatim by Flow â€” these
     // are already self-describing, just prettify the prefix.
     return token.replace(/^PUBLIC_ERROR_/i, "Flow rejected: ").replace(/_/g, " ");
   }
@@ -108,10 +108,10 @@ export function getHealth() {
   return api<HealthResponse>("/api/health");
 }
 
-// ── DTOs ────────────────────────────────────────────────────────────────────
+// â”€â”€ DTOs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export type NodeType =
-  // legacy (Flowboard upstream — still creatable for backward compat)
+  // legacy (Flowboard upstream â€” still creatable for backward compat)
   | "character"
   | "image"
   | "video"
@@ -119,7 +119,7 @@ export type NodeType =
   | "note"
   | "visual_asset"
   | "Storyboard"
-  // Concepta fork — game / arch / illustration asset pipeline
+  // Concepta fork â€” game / arch / illustration asset pipeline
   | "reference"
   | "style_pack"
   | "concept"
@@ -127,7 +127,8 @@ export type NodeType =
   | "part"
   | "variant"
   | "pose"
-  | "turntable";
+  | "turntable"
+  | "upload";
 export type NodeStatus = "idle" | "queued" | "running" | "done" | "error" | "partial";
 
 export interface Board {
@@ -157,7 +158,7 @@ export interface EdgeDTO {
   target_id: number;
   kind: string;
   // null when the upstream is single-variant (or the edge hasn't been
-  // pinned yet — natural fallback to source.mediaId at dispatch time).
+  // pinned yet â€” natural fallback to source.mediaId at dispatch time).
   // 0-based index into the source node's `data.mediaIds[]` when the
   // user has explicitly picked a variant.
   source_variant_idx: number | null;
@@ -169,7 +170,7 @@ export interface BoardDetail {
   edges: EdgeDTO[];
 }
 
-// ── API methods ──────────────────────────────────────────────────────────────
+// â”€â”€ API methods â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function listBoards(): Promise<Board[]> {
   return api<Board[]>("/api/boards");
@@ -211,7 +212,7 @@ export function createNode(input: {
 }
 
 /**
- * Shallow-merge patch for `node.data` — the backend (see
+ * Shallow-merge patch for `node.data` â€” the backend (see
  * agent/flowboard/routes/nodes.py::update_node) merges this dict into
  * the existing JSON column instead of replacing it.
  *
@@ -221,7 +222,7 @@ export function createNode(input: {
  *     guarantees over a wholesale replace).
  *   - A value of `null` is the explicit "delete this key" sentinel.
  *     Use it instead of `undefined` to clear fields like `aiBrief`
- *     after a regen — `undefined` gets dropped by JSON.stringify and
+ *     after a regen â€” `undefined` gets dropped by JSON.stringify and
  *     would leave the stale value in place after the merge.
  *   - Merge depth is ONE LEVEL. Nested dict values are wholesale-
  *     replaced, not deep-merged. None of FlowboardNodeData's current
@@ -289,7 +290,7 @@ export function deleteEdge(id: number): Promise<{ ok: true }> {
   });
 }
 
-// ── Chat ─────────────────────────────────────────────────────────────────────
+// â”€â”€ Chat â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export type ChatRole = "user" | "assistant" | "system";
 
@@ -335,7 +336,7 @@ export function sendChatMessage(
   });
 }
 
-// ── Generation ───────────────────────────────────────────────────────────────
+// â”€â”€ Generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface BoardProject {
   flow_project_id: string;
@@ -362,7 +363,7 @@ export function getBoardProject(boardId: number) {
   return api<BoardProject>(`/api/boards/${boardId}/project`).catch(() => null);
 }
 
-// ── Auth / profile ───────────────────────────────────────────────────────
+// â”€â”€ Auth / profile â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface AuthMe {
   // Each field is null until the extension resolves the Bearer token
@@ -371,15 +372,15 @@ export interface AuthMe {
   name: string | null;
   picture: string | null;
   verified_email: boolean | null;
-  // Paygate tier — primary source is the agent's own /v1/credits fetch
+  // Paygate tier â€” primary source is the agent's own /v1/credits fetch
   // triggered when the extension pushes a Bearer token. Falls back to
   // the legacy passive sniff (extension reading userPaygateTier out of
   // outgoing Flow request bodies) if the agent fetch fails.
   paygate_tier: "PAYGATE_TIER_ONE" | "PAYGATE_TIER_TWO" | null;
-  // Subscription SKU from /v1/credits — e.g. "WS_ULTRA" / "WS_PRO".
+  // Subscription SKU from /v1/credits â€” e.g. "WS_ULTRA" / "WS_PRO".
   // Available alongside paygate_tier; null until the credits fetch lands.
   sku: string | null;
-  // Subscription credits remaining — bonus info from /v1/credits.
+  // Subscription credits remaining â€” bonus info from /v1/credits.
   // Frontend can display under the tier badge if desired.
   credits: number | null;
 }
@@ -391,7 +392,7 @@ export function getAuthMe() {
 export interface AuthLogoutResult {
   ok: boolean;
   // Whether the agent could push a `logout` message to the extension
-  // over its open WebSocket. False when no extension is connected —
+  // over its open WebSocket. False when no extension is connected â€”
   // agent-side caches were still cleared so the dashboard reflects
   // the logged-out state immediately.
   extension_notified: boolean;
@@ -436,7 +437,7 @@ export function getRequest(id: number) {
   return api<RequestDTO>(`/api/requests/${id}`);
 }
 
-// ── Plans + Pipeline runs ────────────────────────────────────────────────────
+// â”€â”€ Plans + Pipeline runs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface PipelineRunDTO {
   id: number;
@@ -459,7 +460,7 @@ export function getPipelineRun(runId: number) {
   return api<PipelineRunDTO>(`/api/pipeline-runs/${runId}`);
 }
 
-// ── Media ────────────────────────────────────────────────────────────────────
+// â”€â”€ Media â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface MediaStatus {
   available: boolean;
@@ -478,7 +479,7 @@ export function mediaUrl(mediaId: string): string {
   return `/media/${encodeURIComponent(clean)}`;
 }
 
-// ── Upload ───────────────────────────────────────────────────────────────────
+// â”€â”€ Upload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface UploadResponse {
   media_id: string;
@@ -502,7 +503,7 @@ export async function uploadImage(
   if (nodeId !== undefined) form.append("node_id", String(nodeId));
   form.append("file", file);
 
-  // Don't set Content-Type — the browser sets it with the correct boundary.
+  // Don't set Content-Type â€” the browser sets it with the correct boundary.
   const res = await fetch("/api/upload", { method: "POST", body: form });
   if (!res.ok) {
     throw new Error(await extractErrorMessage(res));
@@ -556,7 +557,7 @@ export async function autoPrompt(
   return res.json() as Promise<AutoPromptResponse>;
 }
 
-// ── Multi-view (Concepta fork) ───────────────────────────────────────────
+// â”€â”€ Multi-view (Concepta fork) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export type MultiviewMode = "edit_chain" | "sheet_regen";
 
 export interface AutoPromptMultiviewResponse {
@@ -615,7 +616,7 @@ export async function autoPromptSheet(
   return res.json() as Promise<AutoPromptSheetResponse>;
 }
 
-// ── Part / Variant metadata (Concepta) ───────────────────────────────────
+// â”€â”€ Part / Variant metadata (Concepta) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export interface PartRegionDTO {
   key: string;
   label: string;
@@ -671,8 +672,8 @@ export async function uploadImageFromUrl(
 }
 
 
-// ── LLM provider Settings ─────────────────────────────────────────────────
-// See .omc/plans/multi-llm-provider-legacy.md → UI Specification → Frontend ↔
+// â”€â”€ LLM provider Settings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// See .omc/plans/multi-llm-provider-legacy.md â†’ UI Specification â†’ Frontend â†”
 // backend contract for the full shape.
 
 export type LLMProviderName = "claude" | "gemini" | "openai";
@@ -703,13 +704,13 @@ export interface LLMConfig {
   auto_prompt: LLMProviderName | null;
   vision: LLMProviderName | null;
   planner: LLMProviderName | null;
-  // True only when all 3 features are pinned at the same provider —
+  // True only when all 3 features are pinned at the same provider â€”
   // the single-provider UI invariant. Drives the forced-setup dialog.
   configured: boolean;
 }
 
 export async function getLlmProviders(): Promise<LLMProviderInfo[]> {
-  // Backend returns snake-case keys mapped from Python — but the route
+  // Backend returns snake-case keys mapped from Python â€” but the route
   // already emits camelCase for the public surface. Re-typed here so
   // the spread/destructure pattern in the UI components stays clean.
   const res = await fetch("/api/llm/providers");
@@ -770,7 +771,7 @@ export async function testLlmProvider(
 }
 
 
-// ── Activity feed ─────────────────────────────────────────────────────────
+// â”€â”€ Activity feed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Read-only surface over the Request table. Captures every backend op:
 // gen_image / gen_video / edit_image (worker), auto_prompt /
 // auto_prompt_batch / vision / planner (LLM layer via record_activity).
@@ -830,3 +831,4 @@ export async function cancelActivity(id: number): Promise<void> {
     throw new Error(`cancelActivity: ${res.status} ${detail}`);
   }
 }
+

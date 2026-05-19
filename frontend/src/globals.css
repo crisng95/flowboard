@@ -1,4 +1,4 @@
-﻿/*
+/*
  * globals.css â€” Tailwind layers + canvas/typography refinements.
  *
  * IMPORTANT: this file is loaded BEFORE legacy styles.css in main.tsx.
@@ -12,7 +12,8 @@
    imports to come before any other statement. Inter is loaded from
    Google Fonts with `display=swap` to keep initial paint snappy.
    If we later self-host, swap this for a local @font-face. */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+/* Geist font loaded via <link> in index.html for preconnect performance.
+   Inter kept as fallback in the font-family stack below. */
 
 @tailwind base;
 @tailwind components;
@@ -24,13 +25,13 @@
        this file is loaded first. The v1 var names stay so existing CSS
        keeps working; values change to match the Magnific-inspired
        darker scheme. */
-    --bg: #0a0b0f;
-    --panel: #14161c;
-    --panel-high: #1a1d25;
-    --panel-higher: #21252e;
-    --border: rgba(255, 255, 255, 0.06);
-    --text: #e8e8ed;
-    --muted: #8a8f99;
+    --bg: #0f0f0f;
+    --panel: #141414;
+    --panel-high: #1a1a1a;
+    --panel-higher: #262626;
+    --border: #2a2a2a;
+    --text: #f5f5f5;
+    --muted: #ababab;
     --accent: #7c5cff;
   }
 
@@ -38,7 +39,7 @@
   body,
   #root {
     font-family:
-      "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
       sans-serif;
     /* Numeric tabular alignment â€” useful for variant counters / metrics
        columns where the legacy CSS sets `font-variant-numeric: tabular-nums`
@@ -54,7 +55,7 @@
      with a soft edge highlight gives the "floating panel" depth that
      Magnific's chrome relies on. */
   .surface-glass {
-    background-color: rgba(20, 22, 28, 0.8);
+    background-color: rgba(20, 20, 20, 0.85);
     @apply backdrop-blur-xl border border-line-subtle shadow-glass;
   }
 
@@ -64,20 +65,20 @@
      bloated at small scales). Tone tuned to fade into the canvas dot
      grid yet stay clearly opaque. */
   .node-surface {
-    background-color: #16181d;
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    background-color: #1a1a1a;
+    border: 1.5px solid #2a2a2a;
     border-radius: 16px;
     box-shadow:
-      0 1px 0 0 rgba(255, 255, 255, 0.03) inset,
-      0 8px 28px -10px rgba(0, 0, 0, 0.55);
+      0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
+      0 8px 28px -10px rgba(0, 0, 0, 0.6);
     transition: box-shadow 150ms ease, border-color 150ms ease, background-color 150ms ease;
   }
   .node-surface:hover {
-    background-color: #181b22;
-    border-color: rgba(255, 255, 255, 0.09);
+    background-color: #1f1f1f;
+    border-color: #333333;
     box-shadow:
       0 1px 0 0 rgba(255, 255, 255, 0.05) inset,
-      0 14px 40px -10px rgba(0, 0, 0, 0.7);
+      0 14px 40px -10px rgba(0, 0, 0, 0.75);
   }
   .node-surface[data-selected="true"] {
     border-color: rgba(124, 92, 255, 0.55);
@@ -226,3 +227,24 @@
   opacity: 1 !important;
 }
 
+
+/* Dashed connection line animation */
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+.animated-dash {
+  animation: dash-flow 0.6s linear infinite;
+}
+
+/* Connection line and edges below handles */
+.react-flow__connectionline {
+  z-index: 1 !important;
+}
+.react-flow__edges {
+  z-index: 1 !important;
+}
+.react-flow__nodes {
+  z-index: 2 !important;
+}

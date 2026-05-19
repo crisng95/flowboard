@@ -133,7 +133,7 @@ interface GenerationState {
 // One ref per edge means one Flow API call regardless of how many
 // variants the upstream has — the user picks which variant feeds
 // which downstream by clicking the variant tile (Stage 2 UX).
-const REF_SOURCE_TYPES = new Set(["character", "image", "visual_asset", "Storyboard"]);
+const REF_SOURCE_TYPES = new Set(["character", "image", "visual_asset", "Storyboard", "upload"]);
 
 function collectUpstreamRefMediaIds(targetRfId: string): string[] {
   const { nodes, edges } = useBoardStore.getState();
