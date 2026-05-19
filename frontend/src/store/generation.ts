@@ -4,7 +4,7 @@ import {
   createRequest,
   getRequest,
   patchNode,
-  autoPromptMultiview,
+  autoPromptSheet,
 } from "../api/client";
 import { useBoardStore, type NodeStatus } from "./board";
 import { useSettingsStore } from "./settings";
@@ -77,13 +77,10 @@ interface GenerationState {
   dispatchMultiview(
     rfId: string,
     opts: {
+      // Multi-view v1.5: this node only generates the multi-panel
+      // sheet image. Tile extraction (cropping into N standalone
+      // views) lives in a downstream node consuming this sheet.
       preset: string; // "4view" | "prop_4view" | future presets
-      // 2-phase pipeline opt-in. "edit_chain" (default) preserves the
-      // legacy root + edit_image flow. "sheet_regen" runs Phase 1
-      // (multi-panel sheet) + Phase 2 (N gen_image with the sheet as
-      // primary reference). Costs +1 Flow request but holds identity
-      // tighter for Nano Banana 2 (no seed control).
-      mode?: "edit_chain" | "sheet_regen";
       aspectRatio?: string;
       paygateTier?: string;
     },
@@ -1306,24 +1303,22 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     // returns angles + prompts in lock-step. This is sequential
     // because the prompts depend on each other's role (root vs
     // rotation), and the round-trip is small (~5-8s per call).
+    // Multi-view v1.5: this node generates only the multi-panel
+    // sheet image. Tile extraction (cropping into N standalone
+    // views) lives in a downstream node fed by this sheet output.
+    // Why one /auto-sheet call: the sheet prompt is deterministic
+    // (built from preset angles + identity), no LLM round-trip.
     let angles: string[] = [];
-    let prompts: string[] = [];
-    let sheetPrompt: string | null = null;
-    const mode = opts.mode ?? "edit_chain";
+    let sheetPrompt = "";
     useBoardStore.getState().updateNodeData(rfId, {
       autoPromptStatus: "pending",
       status: "queued",
       error: undefined,
     });
     try {
-      const resp = await autoPromptMultiview(
-        parseInt(rfId, 10),
-        preset,
-        mode,
-      );
+      const resp = await autoPromptSheet(parseInt(rfId, 10), preset);
       angles = resp.angles;
-      prompts = resp.prompts;
-      sheetPrompt = resp.sheet_prompt ?? null;
+      sheetPrompt = resp.sheet_prompt;
     } catch (err) {
       useBoardStore.getState().updateNodeData(rfId, {
         autoPromptStatus: "failed",
@@ -1336,36 +1331,29 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       set({
         error:
           err instanceof Error
-            ? `Multi-view prompt synth failed: ${err.message}`
-            : "Multi-view prompt synth failed",
+            ? `Multi-view sheet prompt failed: ${err.message}`
+            : "Multi-view sheet prompt failed",
       });
       return;
     }
     useBoardStore.getState().updateNodeData(rfId, {
       autoPromptStatus: undefined,
       angles,
-      mediaIds: Array.from({ length: angles.length }, () => null),
+      mediaIds: undefined,
     });
 
-    // Step 2 — dispatch the gen_multiview request. Backend handler
-    // fans out as one root + N-1 edits. This stays in a single
-    // Request row; we poll it like any other.
+    // Sheet output is landscape regardless of caller hint - the panels
+    // need horizontal real estate. We keep aspectRatio for the result
+    // blob (downstream tile-extract node will respect it per-tile).
     const params: Record<string, unknown> = {
       project_id: projectId,
       angles,
-      prompts,
       concept_media_id: conceptMediaId,
-      aspect_ratio: aspectRatio,
+      sheet_prompt: sheetPrompt,
+      aspect_ratio: "IMAGE_ASPECT_RATIO_LANDSCAPE",
       paygate_tier: knownTier,
       image_model: useSettingsStore.getState().imageModel,
-      mode,
     };
-    if (mode === "sheet_regen" && sheetPrompt) {
-      // Worker uses sheet_prompt to dispatch the Phase-1 sheet
-      // before fanning out the per-angle gen_image calls. Without
-      // a sheet_prompt the worker will return missing_sheet_prompt.
-      params.sheet_prompt = sheetPrompt;
-    }
 
     let reqDto;
     try {
@@ -1417,36 +1405,27 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           }));
         } else if (req.status === "done") {
           const result = (req.result ?? {}) as Record<string, unknown>;
-          const mediaIds = (result["media_ids"] as (string | null)[]) ?? [];
-          const angleErrors = (result["angle_errors"] as (string | null)[]) ?? [];
+          // Multi-view v1.5: result blob carries sheet_media_id only.
+          // mediaId points at the sheet for previews + downstream tile node.
           const partialError = (result["partial_error"] as string | undefined) ?? null;
           const sheetMediaId = (result["sheet_media_id"] as string | null | undefined) ?? null;
-          const firstMid = mediaIds.find(
-            (m): m is string => typeof m === "string" && !!m,
-          );
           useBoardStore.getState().updateNodeData(rfId, {
             status: "done",
-            mediaIds,
-            mediaId: firstMid,
-            angleErrors,
+            mediaId: sheetMediaId ?? undefined,
             sheetMediaId,
-            multiviewMode: mode,
             renderedAt: new Date().toISOString(),
             error: partialError ?? undefined,
           });
           // Persist
           const dbId = parseInt(rfId, 10);
-          if (!isNaN(dbId) && firstMid) {
+          if (!isNaN(dbId) && sheetMediaId) {
             patchNode(dbId, {
               status: "done",
               data: {
-                mediaIds,
-                mediaId: firstMid,
-                angles,
-                angleErrors,
-                multiviewPreset: preset,
-                multiviewMode: mode,
+                mediaId: sheetMediaId,
                 sheetMediaId,
+                angles,
+                multiviewPreset: preset,
                 aspectRatio,
                 renderedAt: new Date().toISOString(),
                 error: partialError ?? null,

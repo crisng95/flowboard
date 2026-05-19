@@ -832,67 +832,57 @@ _DEFAULT_HANDLERS: dict[str, Handler] = {
 
 
 async def _handle_gen_multiview(params: dict) -> tuple[dict, Optional[str]]:
-    """Multi-view dispatch — single batched gen_image with N per-variant
-    prompts + the upstream Concept as a positional reference.
+    """Multi-view dispatch - single sheet generation.
 
-    Why one batched gen_image (not a chain of gen_image + N edit_image):
-      Earlier iterations chained: angle 1 → gen_image, angles 2..N →
-      edit_image with base = angle 1's output. The premise was that
-      edit_image preserves identity better than re-sampling.
+    Concepta v1.5 split: Multi-view''s job is now ONLY to generate the
+    multi-panel character sheet image. Tile extraction (cropping the
+    sheet into N standalone view images) lives in a downstream node
+    that consumes this sheet as input. Decoupling these two phases
+    lets the user inspect / re-roll the sheet before paying for tile
+    splits, and matches the upstream-pipeline workflow professional
+    illustrators / 3D modelers actually use.
 
-      In practice Flow's edit_image takes the prompt as authoritative
-      and re-generates the entire scene, dropping background context
-      and frequently mis-mapping the requested angle. The output for
-      "back view" was a grey-studio shot of a different character;
-      "left profile" returned a back-of-head; "right profile" looped
-      back to the front view. The chained approach failed.
+    The handler dispatches one `gen_image` call:
+      prompt = sheet_prompt (built by /api/prompt/auto-sheet)
+      ref    = concept_media_id (+ optional extras)
+      output = single landscape image with N panels side-by-side
 
-      The fix: dispatch a single `gen_image` with `variant_count = N`,
-      each variant getting its own angle-specific prompt. The upstream
-      Concept's mediaId is passed as `IMAGE_INPUT_TYPE_REFERENCE`, so
-      Flow conditions ALL variants on the same identity reference.
-      This is the same pattern Magnific / Midjourney use for
-      turnarounds — one batch, N prompts, one shared reference image.
-      Identity stays consistent because the reference is the same; the
-      prompts only differ in camera angle.
-
-    Params shape (set by the frontend dispatch path):
+    Params shape:
       {
-        "project_id":   str,
-        "angles":       list[str]    (4..8),
-        "concept_media_id": str,     # upstream Concept mediaId (ref)
-        "ref_media_ids":   list[str]?,  # optional extra refs
-        "aspect_ratio":    str,
-        "paygate_tier":    str,
-        "image_model":     str,
-        "prompts":         list[str], # parallel to angles[]
+        "project_id":       str,
+        "sheet_prompt":     str,    # full Phase-1 prompt
+        "angles":           list[str],   # for the result blob only
+        "concept_media_id": str,    # primary identity reference
+        "ref_media_ids":    list[str]?,  # optional style packs
+        "aspect_ratio":     str?,        # default LANDSCAPE
+        "paygate_tier":     str,
+        "image_model":      str,
+      }
+
+    Result shape:
+      {
+        "sheet_media_id": str | None,
+        "angles":         list[str],
+        "media_entries":  [],   # already ingested
+        "partial_error":  None,
       }
     """
     from flowboard.services.flow_sdk import is_valid_project_id
 
     project_id = params.get("project_id")
+    sheet_prompt = (params.get("sheet_prompt") or "").strip()
     angles = params.get("angles") or []
-    prompts = params.get("prompts") or []
     concept_media_id = params.get("concept_media_id")
-    aspect = params.get("aspect_ratio") or "IMAGE_ASPECT_RATIO_PORTRAIT"
+    aspect = params.get("aspect_ratio") or "IMAGE_ASPECT_RATIO_LANDSCAPE"
     tier = params.get("paygate_tier") or flow_client.paygate_tier
     image_model = params.get("image_model")
-    # 2-phase pipeline params (optional, default = legacy edit_chain mode).
-    # When mode == "sheet_regen", the worker first generates a multi-panel
-    # sheet from "sheet_prompt", then uses the resulting media_id as the
-    # primary reference for every per-angle gen_image. This implements the
-    # premium SHEET_REGEN flow defined by /api/prompt/auto-sheet.
-    mode = (params.get("mode") or "edit_chain").strip()
-    sheet_prompt = params.get("sheet_prompt") or ""
 
     if not isinstance(project_id, str) or not is_valid_project_id(project_id):
         return {}, "invalid_project_id"
     if not isinstance(concept_media_id, str) or not concept_media_id:
         return {}, "missing_concept_media_id"
-    if not isinstance(angles, list) or not (4 <= len(angles) <= 8):
-        return {}, "invalid_angles_count"
-    if not isinstance(prompts, list) or len(prompts) != len(angles):
-        return {}, "prompts_angle_mismatch"
+    if not sheet_prompt:
+        return {}, "missing_sheet_prompt"
     if tier is None:
         return {}, "paygate_tier_unknown"
     if not isinstance(image_model, str) or not image_model.strip():
@@ -903,144 +893,46 @@ async def _handle_gen_multiview(params: dict) -> tuple[dict, Optional[str]]:
     if isinstance(raw_refs, list):
         extra_refs = [m for m in raw_refs if isinstance(m, str) and m]
 
-    # Refs passed to Flow.
-    #
-    #   edit_chain mode (default):
-    #     Concept goes first as the IDENTITY anchor (Flow's reference
-    #     attention biases harder toward earlier entries), optional
-    #     style packs after.
-    #
-    #   sheet_regen mode:
-    #     Phase 1 - generate one multi-panel character sheet from
-    #     sheet_prompt, conditioned on the Concept reference.
-    #     Phase 2 - run N angle gen_image calls with the freshly
-    #     generated sheet as the primary reference, demoting the
-    #     original Concept (if any) to a secondary anchor.
-    #
-    # The Phase 1 dispatch lives here (synchronous within this handler)
-    # so the per-angle gens can chain off the sheet's media_id without
-    # frontend coordination. The sheet's media_id is also returned in
-    # the result blob ("sheet_media_id") so the frontend can preview it.
-    sdk_for_sheet = get_flow_sdk()
+    ref_chain = [concept_media_id, *extra_refs]
+
+    sdk = get_flow_sdk()
     sheet_media_id: Optional[str] = None
     sheet_entries: list[dict] = []
-    if mode == "sheet_regen":
-        if not sheet_prompt.strip():
-            return {}, "missing_sheet_prompt"
+    try:
+        sheet_resp = await sdk.gen_image(
+            prompt=sheet_prompt,
+            project_id=project_id,
+            aspect_ratio=aspect,
+            paygate_tier=tier,
+            ref_media_ids=ref_chain,
+            variant_count=1,
+            image_model=image_model,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("gen_multiview sheet dispatch failed")
+        return {}, f"sheet_dispatch:{exc}"[:200]
+    if (sheet_resp or {}).get("error"):
+        return {}, str(sheet_resp["error"])[:200]
+    sheet_ids = (sheet_resp or {}).get("media_ids") or []
+    sheet_media_id = next((m for m in sheet_ids if isinstance(m, str) and m), None)
+    if not sheet_media_id:
+        return {}, "sheet_filtered_or_missing"
+    for e in (sheet_resp.get("media_entries") or []):
+        if isinstance(e, dict) and e.get("url"):
+            sheet_entries.append(e)
+
+    if sheet_entries:
         try:
-            sheet_resp = await sdk_for_sheet.gen_image(
-                prompt=sheet_prompt.strip(),
-                project_id=project_id,
-                aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE",
-                paygate_tier=tier,
-                ref_media_ids=[concept_media_id, *extra_refs],
-                variant_count=1,
-                image_model=image_model,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("gen_multiview sheet phase failed")
-            return {}, f"sheet_dispatch:{exc}"[:200]
-        if (sheet_resp or {}).get("error"):
-            return {}, str(sheet_resp["error"])[:200]
-        sheet_ids = (sheet_resp or {}).get("media_ids") or []
-        sheet_media_id = next((m for m in sheet_ids if isinstance(m, str) and m), None)
-        if not sheet_media_id:
-            return {}, "sheet_filtered_or_missing"
-        for e in (sheet_resp.get("media_entries") or []):
-            if isinstance(e, dict) and e.get("url"):
-                sheet_entries.append(e)
-
-    if mode == "sheet_regen" and sheet_media_id:
-        # Sheet leads, Concept becomes a secondary anchor.
-        ref_chain = [sheet_media_id, concept_media_id, *extra_refs]
-    else:
-        ref_chain = [concept_media_id, *extra_refs]
-
-    # Dispatch ONE gen_image call per angle (parallel chunks of 4 to
-    # respect Flow's per-call cap). Each call uses the same ref_chain
-    # for identity preservation.
-    #
-    # Why N×1 instead of one batch with `prompts=[…]`: Flow's batch
-    # gen_image does NOT preserve order between request[i] and
-    # output[i] when per-variant prompts differ. The response's
-    # `data.media[]` arrives in arbitrary order and there's no
-    # field on the entry that lets us back-map to the prompt that
-    # produced it (no sessionId, no seed echoed). Symptom: the
-    # "back" tile got the right-profile image, "left profile" got
-    # back, etc — every tile mis-mapped except the root.
-    #
-    # The fix: one Flow call per angle. Each call is small (1
-    # variant), the response → one mediaId belonging to a known
-    # angle by construction. Cost: N captcha solves + N HTTP
-    # roundtrips, but throughput stays acceptable because we
-    # parallelise via asyncio.gather within Flow's 4-call cap.
-    sdk = get_flow_sdk()
-    media_ids: list[Optional[str]] = [None] * len(angles)
-    angle_errors: list[Optional[str]] = [None] * len(angles)
-    media_entries_acc: list[dict] = []
-
-    async def _gen_one(k: int) -> None:
-        try:
-            resp = await sdk.gen_image(
-                prompt=(prompts[k] or "").strip() or angles[k],
-                project_id=project_id,
-                aspect_ratio=aspect,
-                paygate_tier=tier,
-                ref_media_ids=ref_chain,
-                variant_count=1,
-                image_model=image_model,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("gen_multiview angle %d (%s) dispatch failed", k, angles[k])
-            angle_errors[k] = f"dispatch:{exc}"[:200]
-            return
-        if (resp or {}).get("error"):
-            angle_errors[k] = str(resp["error"])[:200]
-            return
-        ids = (resp or {}).get("media_ids") or []
-        mid = next((m for m in ids if isinstance(m, str) and m), None)
-        if not mid:
-            angle_errors[k] = "filtered_or_missing"
-            return
-        media_ids[k] = mid
-        # Collect entries for ingest. Append to the shared list under
-        # the GIL — append is atomic in CPython, no extra lock needed.
-        for e in (resp.get("media_entries") or []):
-            if isinstance(e, dict) and e.get("url"):
-                media_entries_acc.append(e)
-
-    # Flow caps in-flight gen requests at 4 per project. Dispatch in
-    # chunks of 4 to stay within bounds; each chunk runs in parallel.
-    CHUNK = 4
-    for start in range(0, len(angles), CHUNK):
-        chunk = list(range(start, min(start + CHUNK, len(angles))))
-        await asyncio.gather(*(_gen_one(k) for k in chunk))
-
-    # Ingest all media at the end so the cache fills before the
-    # frontend's poll lands. Sheet entries (if any) are batched in.
-    all_entries = media_entries_acc + sheet_entries
-    if all_entries:
-        try:
-            media_service.ingest_urls(all_entries)
+            media_service.ingest_urls(sheet_entries)
         except Exception:  # noqa: BLE001
             logger.exception("auto-ingest from gen_multiview failed")
 
-    failed_angles = [angles[k] for k, e in enumerate(angle_errors) if e]
-    partial_error = (
-        f"angles_failed:{','.join(failed_angles[:3])}"
-        if failed_angles
-        else None
-    )
-
     return (
         {
-            "media_ids": media_ids,
-            "angles": angles,
-            "angle_errors": angle_errors,
-            "partial_error": partial_error,
-            "media_entries": [],  # already ingested
             "sheet_media_id": sheet_media_id,
-            "mode": mode,
+            "angles": angles,
+            "media_entries": [],
+            "partial_error": None,
         },
         None,
     )
