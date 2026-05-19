@@ -195,6 +195,7 @@ const TYPE_TITLE: Record<NodeType, string> = {
   pose: "Pose",
   turntable: "Turntable",
   upload: "Upload",
+  text: "Text",
 };
 
 /**
@@ -316,7 +317,7 @@ interface BoardState {
   addNodeOfType(type: NodeType, position: { x: number; y: number }): Promise<string | null>;
   persistNodePosition(rfId: string, position: { x: number; y: number }): Promise<void>;
   deleteNodeByRfId(rfId: string): Promise<void>;
-  addEdgeFromConnection(source: string, target: string): Promise<void>;
+  addEdgeFromConnection(source: string, target: string, sourceHandle?: string, targetHandle?: string): Promise<void>;
   deleteEdgeByRfId(rfId: string): Promise<void>;
   // Spawn an empty sibling node next to `rfId` with the same type and the
   // same upstream edges. Returns the new node's rfId so callers can focus
@@ -586,7 +587,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     }
   },
 
-  async addEdgeFromConnection(source, target) {
+  async addEdgeFromConnection(source, target, sourceHandle?, targetHandle?) {
     const { boardId } = get();
     if (boardId === null) return;
     const sourceId = parseInt(source, 10);
@@ -594,7 +595,10 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     if (isNaN(sourceId) || isNaN(targetId)) return;
     try {
       const dto = await createEdge({ board_id: boardId, source_id: sourceId, target_id: targetId });
-      set((s) => ({ edges: [...s.edges, edgeFromDto(dto)] }));
+      const edge = edgeFromDto(dto);
+      if (sourceHandle) edge.sourceHandle = sourceHandle;
+      if (targetHandle) edge.targetHandle = targetHandle;
+      set((s) => ({ edges: [...s.edges, edge] }));
     } catch {
       // ignore
     }

@@ -9,6 +9,7 @@ import {
   applyNodeChanges,
   useReactFlow,
   type Connection,
+  type Edge,
   type EdgeChange,
   type NodeChange,
   type OnConnectStartParams,
@@ -27,6 +28,7 @@ import { PartNode } from "./v2/PartNode";
 import { VariantNode } from "./v2/VariantNode";
 import { UploadNode } from "./v2/UploadNode";
 import { ImageGeneratorNode } from "./v2/ImageGeneratorNode";
+import { TextNode } from "./v2/TextNode";
 import { DashedConnectionLine } from "./DashedConnectionLine";
 
 // V2 components are opt-in via `localStorage.flowboard_ui = "v2"`. For
@@ -56,6 +58,7 @@ const nodeTypes = useV2
       part: PartNode,
       variant: VariantNode,
       upload: UploadNode,
+      text: TextNode,
       pose: NodeCard, // TODO Phase 3
       turntable: NodeCard, // TODO Phase 3
     }
@@ -74,6 +77,7 @@ const nodeTypes = useV2
       part: NodeCard,
       variant: NodeCard,
       upload: NodeCard,
+      text: NodeCard,
       pose: NodeCard,
       turntable: NodeCard,
     };
@@ -201,10 +205,37 @@ export function Board() {
     [persistNodePosition],
   );
 
+
+  // Connection validation: only allow compatible handle types
+  // Text nodes (type="text") can only connect to "target-text" handles
+  // Image nodes (type="upload"/"reference"/etc) can only connect to "target-image" handles
+  // If target has no specific handle id (legacy nodes), allow any connection
+  const TEXT_SOURCE_TYPES = new Set(["text"]);
+  const IMAGE_SOURCE_TYPES = new Set(["upload", "reference", "image", "visual_asset", "character", "concept", "multiview", "part", "variant", "Storyboard"]);
+
+  const isValidConnection = useCallback(
+    (connection: Connection | Edge) => {
+      if (!connection.source || !connection.target) return false;
+      if (connection.source === connection.target) return false;
+      const targetHandle = connection.targetHandle;
+      if (!targetHandle || targetHandle === "target") return true;
+      const sourceNode = nodes.find((n) => n.id === connection.source);
+      if (!sourceNode) return true;
+      const sourceType = sourceNode.data.type;
+      if (targetHandle === "target-text") {
+        return TEXT_SOURCE_TYPES.has(sourceType);
+      }
+      if (targetHandle === "target-image") {
+        return IMAGE_SOURCE_TYPES.has(sourceType);
+      }
+      return true;
+    },
+    [nodes],
+  );
   const onConnect = useCallback(
     (connection: Connection) => {
       if (connection.source && connection.target) {
-        addEdgeFromConnection(connection.source, connection.target);
+        addEdgeFromConnection(connection.source, connection.target, connection.sourceHandle ?? undefined, connection.targetHandle ?? undefined);
         connectStateRef.current.didConnect = true;
       }
     },
@@ -345,6 +376,7 @@ export function Board() {
         // Larger connection-drop radius so users don't have to land
         // pixel-perfect on the handle to complete an edge.
         connectionRadius={32}
+        isValidConnection={isValidConnection}
         connectionLineComponent={DashedConnectionLine}
         fitView
         proOptions={{ hideAttribution: true }}

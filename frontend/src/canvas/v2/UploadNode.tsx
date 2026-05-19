@@ -7,14 +7,22 @@ import { useGenerationStore } from "../../store/generation";
 import { cn } from "../../lib/utils";
 import { useUploadFlow, mediaUrl } from "./shared/useUploadFlow";
 import { UploadingOverlay } from "./shared/UploadingOverlay";
+import { ResizeHandle } from "./shared/ResizeHandle";
+import { useNodeWidth } from "./shared/useNodeWidth";
 
-const NODE_WIDTH = 280;
+const MIN_WIDTH = 200;
+const MAX_WIDTH = 500;
+const DEFAULT_WIDTH = 280;
 const BORDER_RADIUS = 16;
 const HOVER_LEAVE_DELAY = 200;
 
 export function UploadNode(props: NodeProps<FlowNode>) {
   const { id: rfId, data, selected } = props;
   const flow = useUploadFlow(rfId, data);
+    const { width: nodeWidth, onResize, onResizeEnd } = useNodeWidth({
+    nodeId: rfId, data, min: MIN_WIDTH, max: MAX_WIDTH, fallback: DEFAULT_WIDTH,
+  });
+
   const mediaId = data.mediaId as string | undefined;
   const fileName = data.fileName as string | undefined;
   const aspectRatio = data.aspectRatio as string | undefined;
@@ -61,7 +69,7 @@ export function UploadNode(props: NodeProps<FlowNode>) {
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       className="relative font-sans"
-      style={{ width: NODE_WIDTH, padding: "0 16px 0 0" }}
+      style={{ width: nodeWidth, padding: "0 16px 0 0" }}
     >
       {/* External header - outside card, Magnific style */}
       <div className="flex items-center gap-1.5 mb-2 pl-1">
@@ -75,7 +83,7 @@ export function UploadNode(props: NodeProps<FlowNode>) {
       <div
         data-selected={selected || undefined}
         className={cn(
-          "relative overflow-hidden transition-all duration-300 ease-out",
+          "relative overflow-visible transition-all duration-300 ease-out",
           "border-[3px] border-white/[0.14] shadow-lg",
           selected && "ring-2 ring-accent/50",
           flow.dragOver && "ring-2 ring-accent/40",
@@ -88,12 +96,13 @@ export function UploadNode(props: NodeProps<FlowNode>) {
           onDragOver={flow.onDragOver}
           onDragLeave={flow.onDragLeave}
           className={cn(
-            "relative flex items-center justify-center cursor-pointer",
+            "relative flex items-center justify-center cursor-pointer overflow-hidden",
             "transition-all duration-300 ease-out",
             !mediaId && "min-h-[180px]",
           )}
           style={{
             aspectRatio: mediaId ? aspectRatio || "1 / 1" : "4 / 3",
+            borderRadius: BORDER_RADIUS - 3,
           }}
         >
           {/* Filled state */}
@@ -181,6 +190,17 @@ export function UploadNode(props: NodeProps<FlowNode>) {
             </button>
           </div>
         )}
+
+        {/* Resize handle - relative to card border, visible when selected + hover on handle */}
+        <ResizeHandle
+            minWidth={MIN_WIDTH}
+            maxWidth={MAX_WIDTH}
+            currentWidth={nodeWidth}
+            onResize={onResize}
+            onResizeEnd={onResizeEnd}
+            forceVisible={!!selected}
+          />
+
       </div>
 
       {/* Source handle (output only) - right side fixed 48px from top */}

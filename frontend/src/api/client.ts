@@ -128,7 +128,8 @@ export type NodeType =
   | "variant"
   | "pose"
   | "turntable"
-  | "upload";
+  | "upload"
+  | "text";
 export type NodeStatus = "idle" | "queued" | "running" | "done" | "error" | "partial";
 
 export interface Board {
@@ -780,7 +781,8 @@ export type ActivityType =
   | "auto_prompt" | "auto_prompt_batch"
   | "vision" | "planner"
   | "gen_image" | "gen_video" | "edit_image"
-  | "upload" | "upload_url";
+  | "upload"
+  | "text" | "upload_url";
 export type ActivityStatus = "queued" | "running" | "done" | "failed";
 
 export interface ActivityListItem {

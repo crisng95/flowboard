@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ResizeHandle â€” DOM-anchored corner resize affordance.
  *
  * Why custom (not @xyflow/react NodeResizeControl):
@@ -43,6 +43,8 @@ import { useReactFlow } from "@xyflow/react";
 import { cn } from "../../../lib/utils";
 
 export interface ResizeHandleProps {
+  /** When true, show the arc without requiring hover on the handle itself. */
+  forceVisible?: boolean;
   minWidth: number;
   maxWidth: number;
   /** Live width during drag â€” called every pointermove. */
@@ -59,6 +61,7 @@ export function ResizeHandle({
   onResize,
   onResizeEnd,
   currentWidth,
+  forceVisible = false,
 }: ResizeHandleProps) {
   // RF zoom â€” read from the same hook the canvas uses so we get the
   // live value, not a snapshot from render time. Hook is called once
@@ -129,7 +132,7 @@ export function ResizeHandle({
         // Fade EVERY path inside on wrapper hover. The invisible
         // hit-stroke is rgba(0,0,0,0) so its opacity transition is
         // a no-op visually; only the white 3px decoration responds.
-        "[&_path]:opacity-0 group-hover:[&_path]:opacity-100",
+        isDragging ? "[&_path]:opacity-100" : forceVisible ? "[&_path]:opacity-30 group-hover:[&_path]:opacity-100" : "[&_path]:opacity-0",
         "[&_path]:transition-opacity [&_path]:duration-100",
         // !important keeps the arc visible during drag jitter (the
         // cursor briefly leaves the 36Ã—36 wrapper while the user is
@@ -145,8 +148,8 @@ export function ResizeHandle({
         // showed. With 36px, anywhere within the corner region
         // triggers the fade, and the inner 12px hit stroke is still
         // forgiving enough to grab without pixel-hunting.
-        width: 36,
-        height: 36,
+        width: 48,
+        height: 48,
         transform: "translate(50%, 50%)",
         // Default cursor â€” no mode-swap to nwse-resize. The arc
         // itself is the grab affordance; the cursor doesn't repeat it.
@@ -175,7 +178,7 @@ export function ResizeHandle({
         </div>
       )}
       <svg
-        viewBox="0 0 36 36"
+        viewBox="0 0 48 48"
         style={{
           width: "100%",
           height: "100%",
@@ -191,7 +194,7 @@ export function ResizeHandle({
             12px stroke around a 9-radius arc = generous grab zone
             hugging the curve, no pixel-hunt. */}
         <path
-          d="M 28 18 A 10 10 0 0 1 18 28"
+          d="M 36 22 A 14 14 0 0 1 22 36"
           stroke="rgba(0,0,0,0)"
           strokeWidth="14"
           strokeLinecap="round"
@@ -205,7 +208,7 @@ export function ResizeHandle({
         {/* Visible decoration â€” pointer events disabled so the wide
             hit path above always wins. */}
         <path
-          d="M 28 18 A 10 10 0 0 1 18 28"
+          d="M 36 22 A 14 14 0 0 1 22 36"
           stroke="rgba(255,255,255,0.95)"
           strokeWidth="3"
           strokeLinecap="round"

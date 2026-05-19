@@ -8,8 +8,12 @@ import { useGenerationStore } from "../../store/generation";
 import { cn } from "../../lib/utils";
 import { mediaUrl } from "./shared/useUploadFlow";
 import { persistNodeData } from "./shared/persistNodeData";
+import { ResizeHandle } from "./shared/ResizeHandle";
+import { useNodeWidth } from "./shared/useNodeWidth";
 
-const NODE_WIDTH = 400;
+const MIN_WIDTH = 300;
+const MAX_WIDTH = 600;
+const DEFAULT_WIDTH = 400;
 const BORDER_RADIUS = 16;
 const HOVER_LEAVE_DELAY = 200;
 
@@ -46,6 +50,10 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
   const shortId = data.shortId as string | undefined;
   const status = data.status as string | undefined;
 
+    const { width: nodeWidth, onResize, onResizeEnd } = useNodeWidth({
+    nodeId: rfId, data, min: MIN_WIDTH, max: MAX_WIDTH, fallback: DEFAULT_WIDTH,
+  });
+
   const [hovered, setHovered] = useState(false);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onMouseEnter = useCallback(() => {
@@ -63,12 +71,22 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
   const connection = useConnection();
   const isConnecting = connection.inProgress && connection.fromNode?.id === rfId;
   const showSourceHandle = showControls || hasSourceEdge || isConnecting;
-  const showTargetHandles = showControls || hasTargetEdge;
+  const anyConnectionInProgress = connection.inProgress;
+  const showTargetHandles = showControls || hasTargetEdge || anyConnectionInProgress;
 
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [showAspectPicker, setShowAspectPicker] = useState(false);
   const [promptFocused, setPromptFocused] = useState(false);
   const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null);
+
+    const upstreamTextEdge = edges.find(
+    (e) => e.target === rfId && e.targetHandle === "target-text"
+  );
+  const hasTextConnection = !!upstreamTextEdge;
+  const upstreamTextNode = hasTextConnection
+    ? useBoardStore.getState().nodes.find((n) => n.id === upstreamTextEdge!.source)
+    : null;
+  const upstreamText = ((upstreamTextNode?.data.prompt as string) ?? "").trim();
 
   const currentModel = MODEL_OPTIONS.find((m) => m.key === modelKey) ?? MODEL_OPTIONS[0];
 
@@ -92,9 +110,11 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     setShowModelPicker(false);
   }
   function handleGenerate() {
-    if (!prompt.trim()) return;
+    // Use local prompt, or fall back to upstream text node prompt
+    const finalPrompt = hasTextConnection ? upstreamText : prompt.trim();
+    if (!finalPrompt) return;
     useGenerationStore.getState().dispatchGeneration(rfId, {
-      prompt,
+      prompt: finalPrompt,
       aspectRatio: ASPECT_TO_FLOW[aspectKey],
       kind: "image",
       variantCount: imageCount,
@@ -112,7 +132,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       className="relative font-sans"
-      style={{ width: NODE_WIDTH, padding: "0 20px 0 20px" }}
+      style={{ width: nodeWidth, padding: "0 20px 0 20px" }}
     >
       {/* External header */}
       <div className="flex items-center gap-1.5 mb-2 pl-1">
@@ -169,9 +189,11 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
             {/* Prompt - always visible */}
             <div className={cn("px-4 pb-1 transition-all duration-300 ease-out", promptFocused ? "pt-4" : "pt-6")}>
               <textarea
-                value={prompt}
+                value={hasTextConnection ? upstreamText : prompt}
                 onChange={(e) => setPrompt(e.target.value)}
+                spellCheck={false}
                 placeholder="Describe the image you want to generate..."
+                disabled={hasTextConnection}
                 rows={promptFocused ? 6 : 2}
                 onFocus={() => setPromptFocused(true)}
                 onBlur={() => setPromptFocused(false)}
@@ -250,6 +272,17 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
             </div>
           </div>
         </div>
+
+        {/* Resize handle - relative to card, visible when selected */}
+        <ResizeHandle
+            minWidth={MIN_WIDTH}
+            maxWidth={MAX_WIDTH}
+            currentWidth={nodeWidth}
+            onResize={onResize}
+            onResizeEnd={onResizeEnd}
+            forceVisible={!!selected}
+          />
+
       </div>
 
       {/* Source handle (output) - right side, 48px from top */}
