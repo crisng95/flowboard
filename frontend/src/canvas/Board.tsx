@@ -28,6 +28,7 @@ import { PartNode } from "./v2/PartNode";
 import { VariantNode } from "./v2/VariantNode";
 import { UploadNode } from "./v2/UploadNode";
 import { ImageGeneratorNode } from "./v2/ImageGeneratorNode";
+import { AddNodePanel } from "./AddNodePalette";
 import { TextNode } from "./v2/TextNode";
 import { DashedConnectionLine } from "./DashedConnectionLine";
 
@@ -173,6 +174,8 @@ export function Board() {
   const deleteEdgeByRfId = useBoardStore((s) => s.deleteEdgeByRfId);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
+    const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
   const [dropPopover, setDropPopover] = useState<
     { clientX: number; clientY: number; sourceId: string } | null
   >(null);
@@ -286,6 +289,19 @@ export function Board() {
     [dropPopover, addNodeOfType, addEdgeFromConnection],
   );
 
+      // Close context menu on any pane click
+  const onPaneClick = useCallback(() => {
+    setContextMenu(null);
+  }, []);
+
+  const onPaneContextMenu = useCallback(
+    (event: MouseEvent | React.MouseEvent) => {
+      event.preventDefault();
+      setContextMenu({ x: event.clientX, y: event.clientY });
+    },
+    [],
+  );
+
   const onNodesDelete = useCallback(
     (deletedNodes: FlowNode[]) => {
       deletedNodes.forEach((n) => deleteNodeByRfId(n.id));
@@ -376,6 +392,8 @@ export function Board() {
         // Larger connection-drop radius so users don't have to land
         // pixel-perfect on the handle to complete an edge.
         connectionRadius={32}
+        onPaneContextMenu={onPaneContextMenu}
+        onPaneClick={onPaneClick}
         isValidConnection={isValidConnection}
         connectionLineComponent={DashedConnectionLine}
         fitView
@@ -384,6 +402,11 @@ export function Board() {
         <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="rgba(255,255,255,0.04)" />
         <MiniMap pannable zoomable />
         <Controls />
+        {contextMenu && (
+        <div style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y, zIndex: 100 }}>
+          <AddNodePanel onClose={() => setContextMenu(null)} position={contextMenu} />
+        </div>
+      )}
         <DropAddPopover
           popover={dropPopover}
           onPick={handlePickAdd}
