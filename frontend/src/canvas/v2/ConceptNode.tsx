@@ -53,7 +53,7 @@ import { mediaUrl, useUploadFlow } from "./shared/useUploadFlow";
 
 const MIN_WIDTH = 240;
 const MAX_WIDTH = 720;
-const DEFAULT_WIDTH = 300;
+const DEFAULT_WIDTH = 320;
 
 export function ConceptNode(props: NodeProps<FlowNode>) {
   const { id: rfId, data, selected } = props;
@@ -256,6 +256,7 @@ export function ConceptNode(props: NodeProps<FlowNode>) {
             currentWidth={width}
             onResize={onResize}
             onResizeEnd={onResizeEnd}
+            forceVisible={!!selected}
           />
         </NodeShell>
 

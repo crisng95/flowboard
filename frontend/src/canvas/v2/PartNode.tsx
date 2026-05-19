@@ -47,7 +47,7 @@ import { mediaUrl } from "./shared/useUploadFlow";
 
 const MIN_WIDTH = 240;
 const MAX_WIDTH = 600;
-const DEFAULT_WIDTH = 280;
+const DEFAULT_WIDTH = 300;
 
 export function PartNode(props: NodeProps<FlowNode>) {
   const { id: rfId, data, selected } = props;
@@ -189,7 +189,8 @@ export function PartNode(props: NodeProps<FlowNode>) {
           currentWidth={width}
           onResize={onResize}
           onResizeEnd={onResizeEnd}
-        />
+            forceVisible={!!selected}
+          />
       </NodeShell>
 
       <SettingsDrawer

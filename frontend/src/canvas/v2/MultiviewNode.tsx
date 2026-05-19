@@ -211,7 +211,8 @@ export function MultiviewNode(props: NodeProps<FlowNode>) {
           currentWidth={width}
           onResize={onResize}
           onResizeEnd={onResizeEnd}
-        />
+            forceVisible={!!selected}
+          />
       </NodeShell>
 
       <SettingsDrawer
