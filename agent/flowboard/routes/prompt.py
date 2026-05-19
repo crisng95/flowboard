@@ -232,11 +232,16 @@ _STYLE_SUFFIX_PROP = (
 )
 
 _REFERENCE_ANCHOR = (
-    "Use the provided character sheet as the sole visual reference. "
-    "Preserve every design detail: colours, materials, accessories, "
-    "hair style, and body proportions. Do not invent or alter any "
-    "design element. Generate ONLY the specified angle view from this "
-    "exact subject."
+    "REFERENCE IMAGE USAGE - critical: the provided image is a "
+    "multi-panel character design sheet. EXTRACT the subject identity "
+    "only from this sheet (face, hair, costume, colours, accessories, "
+    "silhouette, proportions). DO NOT replicate the sheet layout. "
+    "OUTPUT MUST BE A SINGLE STANDALONE FULL-BODY IMAGE - one subject, "
+    "one camera angle, one rectangular frame. NO panels, NO grids, "
+    "NO multi-view layout, NO side-by-side composition, NO vertical "
+    "or horizontal dividers. Treat the reference as a costume + face "
+    "reference only; the camera, framing and composition come from "
+    "this prompt, not from the reference."
 )
 
 # Map preset key -> (angle_table, style_suffix). When a new preset ships,
@@ -269,13 +274,28 @@ def _compose_per_view_prompt(
 ) -> str:
     """Compose one angle prompt from the layered building blocks.
 
-    Order: identity, optional reference anchor, angle camera/pose, style
-    suffix. Reference anchor is inserted right after identity so the
-    model is told WHAT subject to lock onto before being told HOW to
-    frame it.
+    Layout (top of prompt = strongest attention weight in Flow):
+        [LEAD]      single-image directive (sheet_regen only)
+        identity    short subject blurb
+        reference   reference-usage instruction (sheet_regen only)
+        camera      per-angle pose / framing
+        style       trailing constraints
+
+    The LEAD line is critical for sheet_regen: without an explicit
+    "single image, not a sheet" directive at the top, Flow tends to
+    replicate the multi-panel layout of the reference image. Putting
+    it before identity makes the model commit to the composition
+    before it commits to the subject.
     """
     camera = angle_table.get(angle, f"{angle} view of the subject.")
     parts: list[str] = []
+    if with_reference:
+        parts.append(
+            f"Single standalone full-body image of one subject from a "
+            f"single camera angle ({angle}). Output is ONE rectangular "
+            f"frame, NOT a multi-panel sheet, NOT a grid, NOT a "
+            f"side-by-side composition."
+        )
     if identity:
         parts.append(identity if identity.endswith(".") else identity + ".")
     if with_reference:
@@ -283,7 +303,6 @@ def _compose_per_view_prompt(
     parts.append(camera)
     parts.append(style_suffix)
     return " ".join(p.strip() for p in parts if p)
-
 
 def _compose_sheet_prompt(
     identity: str,
