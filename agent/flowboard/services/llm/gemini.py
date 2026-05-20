@@ -210,13 +210,20 @@ class GeminiProvider:
         compatibility with the semaphore pattern, but internally uses
         synchronous subprocess.run() which avoids asyncio subprocess
         issues on Windows."""
-        try:
-            result = subprocess.run(
+        # Synchronous `subprocess.run` is the Windows-friendly path,
+        # but we have to call it on a worker thread so the event loop
+        # keeps serving other HTTP handlers while gemini works
+        # (cold-start ~15s + inference up to a minute).
+        def _invoke() -> subprocess.CompletedProcess[bytes]:
+            return subprocess.run(
                 args,
                 capture_output=True,
                 timeout=timeout,
                 text=False,  # Keep as bytes for .decode() below
             )
+
+        try:
+            result = await asyncio.to_thread(_invoke)
         except FileNotFoundError as exc:
             raise LLMError("gemini CLI not found on PATH") from exc
         except subprocess.TimeoutExpired as exc:

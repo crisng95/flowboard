@@ -71,7 +71,11 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   aspectRatio?: string;
   // AI-generated factual description of mediaId (set by /api/vision/describe).
   // Spliced into auto-prompts on downstream nodes for richer context.
-  aiBrief?: string;
+  // `null` is the explicit "clear this key" sentinel - undefined would
+  // be dropped by JSON.stringify and leave the stale brief in place.
+  // Used by uploads and by `setRefType` (clear-on-tag-change) to
+  // force a fresh re-describe under the new vision profile.
+  aiBrief?: string | null;
   aiBriefStatus?: "pending" | "done" | "failed";
   // Transient status while the GenerationDialog runs `autoPrompt` /
   // `autoPromptBatch` against this node — set to "pending" while the
@@ -196,6 +200,7 @@ const TYPE_TITLE: Record<NodeType, string> = {
   turntable: "Turntable",
   upload: "Upload",
   text: "Text",
+    add_reference: "Add Reference",
 };
 
 /**
@@ -482,13 +487,24 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     const { boardId, nodes } = get();
     if (boardId === null) return null;
     const title = TYPE_TITLE[type];
+    // Per-type seed data. `add_reference` MUST land with an explicit
+    // `refType` so the auto-brief vision call routes through the
+    // material-mode prompt for material tags. Without this, freshly
+    // created nodes fall through `data.refType === undefined` and
+    // the brief gets the default annotator prompt that names the
+    // pictured object ("daggers", "sword") - which then leaks into
+    // auto-prompt synth.
+    const seedData: Record<string, unknown> = { title };
+    if (type === "add_reference") {
+      seedData.refType = "texture";
+    }
     try {
       const dto = await createNode({
         board_id: boardId,
         type,
         x: Math.round(position.x),
         y: Math.round(position.y),
-        data: { title },
+        data: seedData,
       });
       const node: FlowNode = {
         id: String(dto.id),
@@ -499,6 +515,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           shortId: dto.short_id,
           title: (dto.data["title"] as string | undefined) ?? title,
           status: dto.status,
+          refType: (dto.data["refType"] as string | undefined) ?? (type === "add_reference" ? "texture" : undefined),
         },
       };
       set((s) => ({ nodes: [...s.nodes, node] }));

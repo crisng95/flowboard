@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useGenerationStore } from "../store/generation";
+import {
+  useGenerationStore,
+  REF_DISPATCH_TYPES,
+  isMaterialRefDemoted,
+  targetHasStructuralRef,
+} from "../store/generation";
 import { useBoardStore } from "../store/board";
 import { useSettingsStore } from "../store/settings";
 import { getMediaStatus, mediaUrl, type MediaStatus } from "../api/client";
@@ -127,13 +132,20 @@ export function ResultViewer() {
   // logic as `collectUpstreamRefMediaIds` at dispatch. The chip then
   // shows the exact thumbnail Flow will receive instead of always
   // defaulting to the source's "active" mediaId.
-  const REF_TYPES = new Set(["character", "image", "visual_asset"]);
+  // Use the dispatch set so `add_reference` thumbnails surface in the
+  // result viewer too; the burn-and-bake filter below mirrors the
+  // dispatcher and hides material refs that won't be sent to Flow.
+  const REF_TYPES = REF_DISPATCH_TYPES;
   const refSourceNodes = rfId
     ? edges
         .filter((e) => e.target === rfId)
         .map((e) => {
           const n = nodes.find((node) => node.id === e.source);
           if (!n || !REF_TYPES.has(n.data.type)) return null;
+          // Burn-and-bake: hide material `add_reference` thumbnails
+          // when a structural ref is also upstream. Mirrors the
+          // dispatcher's filter in `collectUpstreamRefMediaIds`.
+          if (rfId && isMaterialRefDemoted(n, targetHasStructuralRef(rfId))) return null;
           const variants = Array.isArray(n.data.mediaIds) ? n.data.mediaIds : [];
           const pin = (e.data?.sourceVariantIdx ?? null) as number | null;
           let mediaId: string | undefined;

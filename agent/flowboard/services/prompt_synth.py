@@ -239,7 +239,7 @@ _REF_SOURCE_TYPES = {
     # legacy
     "character", "image", "visual_asset", "Storyboard",
     # Concepta
-    "reference", "concept", "multiview", "part", "variant", "pose",
+    "reference", "concept", "multiview", "part", "variant", "pose", "add_reference",
 }
 
 
@@ -320,6 +320,14 @@ def _collect_upstream(node_id: int) -> tuple[list[dict], Optional[Node]]:
             if n.type in _REF_SOURCE_TYPES and has_media:
                 ref_index = next_ref_index
                 next_ref_index += 1
+            # `add_reference` nodes carry a user-chosen tag in
+            # `data.refType` (e.g. "sketch", "texture") that drives the
+            # role-aware system-prompt builder below. Surface it on the
+            # record so `_build_reference_system_prompt` and
+            # `_format_user_message` can read it directly without
+            # re-querying the DB.
+            ref_type = data.get("refType") if isinstance(data.get("refType"), str) else None
+            custom_note = data.get("customNote") if isinstance(data.get("customNote"), str) else None
             records.append(
                 {
                     "type": n.type,
@@ -330,9 +338,82 @@ def _collect_upstream(node_id: int) -> tuple[list[dict], Optional[Node]]:
                     "title": data.get("title") if isinstance(data.get("title"), str) else None,
                     "has_media": has_media,
                     "subject_chars": subject_chars,
+                    "refType": ref_type,
+                    "customNote": custom_note,
                 }
             )
+        # Material-as-text: when the upstream graph mixes structural
+        # and material reference tags, drop the ref_index on every
+        # material record. The unset ref_index re-routes those
+        # records through the "non-positional" branch of
+        # `_format_user_message`, which renders them as text
+        # directives instead of `ref_image_N: ...` slot mentions.
+        # The slot-aware system prompt then never names them as
+        # image inputs, so Claude bakes the material/palette into
+        # the structural subject's description as prose - no second
+        # image is implied.
+        #
+        # NOTE: this only edits the auto-prompt TEXT. The actual
+        # `ref_media_ids` array dispatched to Flow is built
+        # independently by the frontend
+        # (`collectUpstreamRefMediaIds`); image-gen still receives
+        # both images, but with no positional anchor in the prompt,
+        # the model treats the unmentioned ref as a soft style
+        # influence rather than a separate subject to composite.
+        _burn_material_refs_in_place(records)
         return records, target
+
+
+def _burn_material_refs_in_place(records: list[dict]) -> None:
+    """Demote material refs to text-only when mixed with structure refs.
+
+    Mutates ``records`` in place: when the upstream graph contains at
+    least one strict structural ``add_reference`` (``sketch`` / ``pose``
+    / ``blueprint``) AND at least one material ``add_reference``
+    (``texture`` / ``material`` / ``style`` / ``lighting`` / ``mood``),
+    every material record has its ``ref_index`` cleared and a
+    ``burned_for_text`` flag set.
+
+    Why mutate instead of returning a new list:
+      - All downstream consumers (`_format_user_message`,
+        `_build_reference_system_prompt`, `_distinct_subjects`)
+        already iterate the same `records` list. Mutation keeps the
+        single-source-of-truth invariant intact - no second list to
+        keep in sync.
+      - The dropped slot is propagated automatically: lines without
+        `ref_index` render through the "text directive" branch of
+        `_format_user_message`, and the slot-aware system prompt
+        skips them when listing positional anchors.
+
+    Skipped (returns early without mutating):
+      - Pure-material upstream (no structural tag) - no composite
+        risk because there is only one image for the model to look at.
+      - Pure-structural upstream (no material tag) - nothing to burn.
+      - Hybrid-only upstream (only ``photo`` / ``3d_render`` /
+        ``environment``) - hybrids are role-classified at prompt-build
+        time; we don't pre-empt that decision here.
+    """
+    has_structure = False
+    material_records: list[dict] = []
+    for r in records:
+        if r.get("type") != "add_reference":
+            continue
+        rt = r.get("refType")
+        if not isinstance(rt, str):
+            continue
+        if rt in _STRUCTURE_TAGS:
+            has_structure = True
+        elif rt in _MATERIAL_TAGS:
+            material_records.append(r)
+    if not has_structure or not material_records:
+        return
+    for r in material_records:
+        # Preserve the original index for diagnostics / logs even
+        # though the prompt-building path will treat the record as
+        # non-positional. The flag is what callers should check.
+        r["original_ref_index"] = r.get("ref_index")
+        r["ref_index"] = None
+        r["burned_for_text"] = True
 
 
 def _distinct_subjects(records: list[dict]) -> list[str]:
@@ -355,6 +436,364 @@ def _distinct_subjects(records: list[dict]) -> list[str]:
                 seen_set.add(sid)
                 ordered.append(sid)
     return ordered
+
+
+
+
+# ---------------------------------------------------------------------------
+# Reference-driven system prompt builder (non-fashion, multi-domain).
+# Used when upstream contains add_reference nodes with refType tags.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Reference-driven system prompt builder (multi-domain).
+# Handles intelligent combination of multiple reference types.
+# ---------------------------------------------------------------------------
+
+# Reference tags are bucketed into three roles so the system prompt can
+# tell the LLM HOW to use each upstream image. The split mirrors the
+# user-facing REFERENCE_TYPES constant in
+# frontend/src/constants/concept.ts.
+#
+#   STRUCTURE  - defines WHAT is drawn: form, silhouette, proportions,
+#                pose. These references must be preserved as the
+#                primary subject; never demoted to background detail.
+#   MATERIAL   - defines HOW the surface looks: material, palette,
+#                rendering treatment, lighting feel. These references
+#                must be projected ONTO the structure subject, not
+#                placed beside it.
+#   HYBRID     - can play either role depending on what else is
+#                present. photo and 3d_render lean structural when a
+#                sketch is missing, but lean material when a sketch is
+#                also present. environment slots in as a setting hint
+#                for the final composition.
+_STRUCTURE_TAGS = {"sketch", "pose", "blueprint"}
+_MATERIAL_TAGS = {"texture", "material", "style", "lighting", "mood"}
+_HYBRID_TAGS = {"photo", "3d_render", "environment"}
+# Back-compat alias for older callers that imported _STYLE_TAGS.
+_STYLE_TAGS = _MATERIAL_TAGS
+
+_REF_TAG_INSTRUCTIONS: dict[str, str] = {
+    "sketch": (
+        "Use as primary structure, composition, and pose guide. "
+        "Preserve proportions, layout, and silhouette from this reference."
+    ),
+    "pose": (
+        "Use as character pose and body language reference. "
+        "Maintain exact gesture, stance, and weight distribution."
+    ),
+    "photo": (
+        "Use as strong photographic reference for realism, lighting, and detail. "
+        "Match the framing, perspective, and level of detail."
+    ),
+    "texture": (
+        "Extract material quality, surface finish, color palette, and "
+        "rendering style and APPLY them onto the primary structural "
+        "subject. The literal objects pictured here are NOT to be drawn "
+        "in the output - only their material language transfers."
+    ),
+    "material": (
+        "Use as a surface / shader sample. Transfer the material "
+        "behaviour (sheen, translucency, roughness, sub-surface glow) "
+        "onto the primary structural subject. Do not depict the source "
+        "object itself."
+    ),
+    "lighting": (
+        "Use as lighting direction, quality, intensity, and shadow reference. "
+        "Match the light setup, color temperature, and contrast."
+    ),
+    "mood": (
+        "Apply overall atmosphere, emotional tone, color grading, and ambiance. "
+        "The mood should permeate the entire output image."
+    ),
+    "style": (
+        "Adopt the artistic style, rendering technique, brush/stroke quality, "
+        "and visual language. Apply this style to whatever subject is being drawn."
+    ),
+    "environment": (
+        "Place the subject into the environment/scene shown in this reference. "
+        "Match the setting, depth, and spatial context."
+    ),
+    "3d_render": (
+        "Respect 3D form, volume, shading, and material definition. "
+        "Use as shape and form reference for accurate 3D appearance."
+    ),
+    "blueprint": (
+        "Use as technical/orthographic reference for accurate proportions, "
+        "measurements, and structural correctness."
+    ),
+}
+
+
+def _classify_reference_role(ref_type: str, *, has_structure: bool) -> str:
+    """Resolve a ref tag into one of `structure` / `material` / `setting`.
+
+    Hybrid tags (`photo`, `3d_render`, `environment`) flip role based on
+    what else is in the graph:
+      - `photo` / `3d_render` lean STRUCTURE when no sketch/pose/blueprint
+        is present, otherwise lean MATERIAL (their lighting + finish
+        become a style sample on top of the explicit structural ref).
+      - `environment` always represents the SETTING (background /
+        scene context); it is never the primary subject.
+    Unknown tags default to STRUCTURE so the LLM at least preserves the
+    pictured subject.
+    """
+    if ref_type in _STRUCTURE_TAGS:
+        return "structure"
+    if ref_type in _MATERIAL_TAGS:
+        return "material"
+    if ref_type == "environment":
+        return "setting"
+    if ref_type in {"photo", "3d_render"}:
+        return "material" if has_structure else "structure"
+    return "structure"
+
+
+def _build_reference_system_prompt(records: list[dict]) -> str:
+    """Build a system prompt tailored to the reference mix upstream.
+
+    The function runs three passes over the upstream records:
+
+    1. **Tag survey** - collect every ``refType`` that appears, plus the
+       positional ``ref_image_N`` slot it occupies. We need both so the
+       per-tag instructions can name the exact slot the LLM should
+       reach for (e.g. "use ref_image_1 as the structural form").
+    2. **Role classification** - bucket each tag into
+       ``structure`` / ``material`` / ``setting`` via
+       :func:`_classify_reference_role`. The buckets drive both the
+       grouped tag listing AND the COMBINATION STRATEGY section.
+    3. **Prompt assembly** - emit four blocks: role-grouped tag
+       instructions, an explicit COMBINATION STRATEGY tuned to the
+       roles present, anti-composite guard rails, and final output
+       rules.
+
+    The big behavioural change vs. the previous implementation is the
+    Sketch + Texture case. Before, the LLM tended to read both refs as
+    "things to include" and produced a composite (skull next to glowing
+    blob). The new prompt forces it to treat material refs as a SHADER
+    applied onto the structural subject, and explicitly forbids placing
+    the source material object in the output.
+    """
+    # ---- Pass 1: tag survey -------------------------------------------------
+    # Each entry is (ref_type, ref_index|None, brief_or_title|None) so
+    # the per-tag instructions can name the exact slot. Order matches
+    # the upstream walk so labels stay deterministic.
+    tagged_refs: list[tuple[str, Optional[int], Optional[str]]] = []
+    # Burned material refs are tracked separately. They have no
+    # positional `ref_image_N` slot; the system prompt should mention
+    # them under MATERIAL DIRECTIVE instead of pretending they have an
+    # imageInput. Element shape mirrors `tagged_refs` minus the slot.
+    burned_material_refs: list[tuple[str, Optional[str]]] = []
+    for r in records:
+        if r.get("type") != "add_reference":
+            continue
+        rt = r.get("refType")
+        if not isinstance(rt, str) or not rt:
+            continue
+        descriptor = r.get("brief") or r.get("prompt") or r.get("title")
+        if isinstance(descriptor, str):
+            descriptor = descriptor.strip() or None
+        else:
+            descriptor = None
+        if r.get("burned_for_text"):
+            # Demoted by `_burn_material_refs_in_place` - skip the
+            # positional bucket so the role-grouped tag block doesn't
+            # claim a slot that no longer exists.
+            burned_material_refs.append((rt, descriptor))
+            continue
+        tagged_refs.append((rt, r.get("ref_index"), descriptor))
+
+    # No tagged add_reference nodes (positional or burned) -> nothing
+    # structured to say. Hand back a minimal prompt so the caller still
+    # gets a sensible result.
+    if not tagged_refs and not burned_material_refs:
+        return (
+            "You are an image-generation prompt builder for a professional "
+            "creative pipeline. Output ONE concise paragraph (max 300 "
+            "chars) describing the final desired image. No preamble, no "
+            "explanation."
+        )
+
+    # ---- Pass 2: role classification ---------------------------------------
+    # `has_structure` is computed first because hybrid tags resolve
+    # against it. We only count strict structural tags here so that a
+    # photo reference doesn't accidentally claim the structural role
+    # when a real sketch is also present.
+    has_strict_structure = any(rt in _STRUCTURE_TAGS for rt, _, _ in tagged_refs)
+
+    grouped: dict[str, list[tuple[str, Optional[int], Optional[str]]]] = {
+        "structure": [],
+        "material": [],
+        "setting": [],
+    }
+    for rt, idx, descriptor in tagged_refs:
+        role = _classify_reference_role(rt, has_structure=has_strict_structure)
+        grouped[role].append((rt, idx, descriptor))
+
+    has_structure = bool(grouped["structure"])
+    has_material = bool(grouped["material"])
+    has_setting = bool(grouped["setting"])
+
+    # ---- Pass 3a: grouped tag instructions ---------------------------------
+    def _slot(idx: Optional[int]) -> str:
+        return f"ref_image_{idx}" if idx else "the matching reference"
+
+    def _format_group(title: str, items: list[tuple[str, Optional[int], Optional[str]]]) -> str:
+        lines = [f"{title}:"]
+        for rt, idx, _descriptor in items:
+            instruction = _REF_TAG_INSTRUCTIONS.get(
+                rt, "Treat as visual reference for the assigned role."
+            )
+            lines.append(
+                f"  - {_slot(idx)} [{rt.upper()}]: {instruction}"
+            )
+        return "\n".join(lines)
+
+    role_blocks: list[str] = []
+    if has_structure:
+        role_blocks.append(_format_group("STRUCTURAL REFERENCES (define WHAT)", grouped["structure"]))
+    if has_material:
+        role_blocks.append(_format_group("MATERIAL / STYLE REFERENCES (define HOW it looks)", grouped["material"]))
+    if has_setting:
+        role_blocks.append(_format_group("SETTING REFERENCES (define WHERE)", grouped["setting"]))
+    if burned_material_refs:
+        # Burned refs are text-only - render them as directives so the
+        # LLM doesn't expect a positional `ref_image_N` slot.
+        burned_lines = ["MATERIAL DIRECTIVE (text-only - NO image input):"]
+        for rt, descriptor in burned_material_refs:
+            instruction = _REF_TAG_INSTRUCTIONS.get(
+                rt, "Treat as material / palette / lighting guidance."
+            )
+            descriptor_suffix = f" Source brief: {descriptor}" if descriptor else ""
+            burned_lines.append(
+                f"  - [{rt.upper()}]: {instruction}{descriptor_suffix}"
+            )
+        role_blocks.append("\n".join(burned_lines))
+    tag_block = "\n\n".join(role_blocks)
+
+    # ---- Pass 3b: combination strategy -------------------------------------
+    # The key user-visible behaviour lives here. Each branch below
+    # tells the LLM how to weigh the buckets against each other.
+    structure_slots = ", ".join(_slot(idx) for _, idx, _ in grouped["structure"]) or "the structural reference"
+    material_slots = ", ".join(_slot(idx) for _, idx, _ in grouped["material"]) or "the material reference"
+
+    if has_structure and has_material:
+        combination_rules = (
+            "COMBINATION STRATEGY (read carefully):\n"
+            f"  1. Treat {structure_slots} as the PRIMARY subject. Keep its "
+            "silhouette, proportions, anatomy, and design details intact - "
+            "this is the form the output must show.\n"
+            f"  2. Treat {material_slots} as a SHADER / surface sample. "
+            "Project its material properties (finish, palette, translucency, "
+            "sub-surface glow, brushwork, lighting feel) ONTO the structural "
+            "subject. Describe the subject AS IF it were re-rendered with "
+            "that material language.\n"
+            "  3. DO NOT composite. The literal objects pictured in the "
+            "material reference must NOT appear in the output - only their "
+            "material and visual treatment transfer.\n"
+            "  4. DO NOT relegate the material reference to background "
+            "decoration or props.\n"
+            "  5. Worked example: structural ref = a skull in a tall "
+            "helmet; material ref = a glowing translucent green organism. "
+            "Correct output describes the helmeted skull rendered with "
+            "glowing translucent green organic surfaces, sub-surface light, "
+            "and the same palette - NOT a skull next to green blobs.\n"
+        )
+    elif has_structure:
+        if burned_material_refs:
+            # Burn-and-bake: structure ref is the only image input,
+            # material lives in MATERIAL DIRECTIVE as text. The LLM
+            # must NOT mention any other ref_image_N slot, and must
+            # fuse the directive into the structural subject's prose.
+            combination_rules = (
+                "COMBINATION STRATEGY (burn-and-bake):\n"
+                f"  1. The ONLY image input is {structure_slots}. There "
+                "is no second ref_image; do not invent one.\n"
+                f"  2. Anchor the description on {structure_slots} - keep "
+                "its silhouette, proportions, anatomy, and design "
+                "intact.\n"
+                "  3. Bake every line under MATERIAL DIRECTIVE into "
+                "the structural subject's surface description: "
+                "finish, palette, translucency, sub-surface glow, "
+                "brushwork, lighting feel. Describe the subject AS IF "
+                "it were re-rendered with that material language.\n"
+                "  4. DO NOT introduce a second object beside the "
+                "subject. The material directive is a shader, not a "
+                "prop.\n"
+                "  5. CRITICAL - STRIP OBJECT NOUNS FROM THE "
+                "DIRECTIVE: the MATERIAL DIRECTIVE source brief was "
+                "vision-captioned and may name the original object "
+                "(e.g. 'two ornate fantasy daggers', 'a glowing "
+                "organism', 'a polished sword'). You MUST discard "
+                "every such object noun (daggers, swords, weapons, "
+                "objects, blades, tools, creature, organism, etc.) "
+                "and lift ONLY the material/finish/palette/lighting "
+                "adjectives off them. The final prompt MUST NOT "
+                "contain any noun referring to the directive's source "
+                "object - those words leak structure into the image "
+                "and re-introduce the composite bug. Example: directive "
+                "reads 'two glowing cyan daggers with bone-white hilts' "
+                "-> use 'glowing cyan crystalline material with "
+                "bone-white finish' (no 'daggers', no 'hilts', no "
+                "'two').\n"
+                "  6. Worked example: structural ref = a skull in a "
+                "tall helmet; MATERIAL DIRECTIVE = glowing translucent "
+                "green organism. Correct output: 'a helmeted skull "
+                "rendered with glowing translucent green organic "
+                "surfaces and sub-surface light' - NOT 'a skull next "
+                "to a green organism' (the noun 'organism' must NOT "
+                "appear in the final prompt).\n"
+            )
+        else:
+            combination_rules = (
+                "COMBINATION STRATEGY:\n"
+                f"  Anchor the description on {structure_slots}. Preserve its "
+                "form, proportions, and composition. Pick rendering details "
+                "that are consistent with the reference's medium.\n"
+            )
+    elif has_material:
+        combination_rules = (
+            "COMBINATION STRATEGY:\n"
+            f"  No explicit structural reference is present. Use {material_slots} "
+            "to drive the visual language - material, palette, lighting, and "
+            "rendering style - and describe a subject that fits the target "
+            "node's title/intent rendered with these qualities.\n"
+        )
+    else:
+        # Only setting refs (rare). Fall back to a soft hint.
+        combination_rules = (
+            "COMBINATION STRATEGY:\n"
+            "  Use the setting reference as the scene context for whatever "
+            "subject the target node implies.\n"
+        )
+
+    if has_setting:
+        setting_slots = ", ".join(_slot(idx) for _, idx, _ in grouped["setting"]) or "the setting reference"
+        combination_rules += (
+            f"  Place the resulting subject INTO the scene from {setting_slots}. "
+            "Match its perspective, depth, and ambient light; never silently "
+            "drop the location.\n"
+        )
+
+    # ---- Pass 3c: assemble final prompt ------------------------------------
+    return (
+        "You are an image-generation prompt builder for a professional "
+        "creative pipeline (game art, illustration, concept design, "
+        "product visualisation). Output ONE concise paragraph (max 300 "
+        "chars) that describes the FINAL desired image - not the "
+        "references themselves.\n\n"
+        "REFERENCE INPUTS BY ROLE:\n"
+        f"{tag_block}\n\n"
+        f"{combination_rules}\n"
+        "OUTPUT RULES:\n"
+        "  - Describe the final image; do not narrate the references.\n"
+        "  - Be specific about material, lighting, and rendering quality.\n"
+        "  - Never describe two separate objects sitting next to each "
+        "other when one ref is structural and another is material - they "
+        "must fuse into one rendered subject.\n"
+        "  - No preamble, no explanation - output the generation prompt only."
+    )
+
 
 
 def _image_system_prompt(subject_count: int) -> str:
@@ -394,10 +833,35 @@ def _format_user_message(records: list[dict], target: Node) -> str:
             label_for_short_id[r["shortId"]] = f"ref_image_{r['ref_index']}"
 
     by_type: dict[str, list[str]] = {}
+    # Burned material directives live in their own bucket so the user
+    # message can render them under a dedicated "MATERIAL DIRECTIVE"
+    # header. Without the separate bucket they'd merge into the regular
+    # `add_reference` bullet list and Claude wouldn't know they are
+    # text-only (no positional image input).
+    material_directives: list[str] = []
     for r in records:
         # Prefer the AI-generated brief; fall back to the user-typed prompt
         # or title so a node with no brief still contributes something.
         text = r["brief"] or r["prompt"] or r["title"] or "(no description)"
+
+        # Inject reference type context for add_reference nodes
+        ref_type = r.get("refType")
+        if ref_type and r["type"] == "add_reference":
+            _REF_TYPE_HINTS = {
+                "sketch": "SKETCH/LINEWORK",
+                "pose": "POSE",
+                "photo": "PHOTO",
+                "texture": "TEXTURE/MATERIAL",
+                "lighting": "LIGHTING",
+                "mood": "MOOD/ATMOSPHERE",
+                "style": "STYLE",
+                "environment": "ENVIRONMENT/SCENE",
+                "3d_render": "3D RENDER",
+                "blueprint": "BLUEPRINT/TECHNICAL",
+                "concept_art": "CONCEPT ART/STYLE",
+            }
+            hint = _REF_TYPE_HINTS.get(ref_type, ref_type.upper())
+            text = f"[{hint} REFERENCE] {text}"
 
         # Cross-reference an image record to the character it embodies,
         # if that character is also upstream as a ref. Translates each
@@ -415,6 +879,20 @@ def _format_user_message(records: list[dict], target: Node) -> str:
                 suffix = f"  [same subject as {', '.join(translated)}]"
 
         ref_index = r.get("ref_index")
+        if r.get("burned_for_text") and r.get("type") == "add_reference":
+            # Material ref demoted by `_burn_material_refs_in_place`.
+            # The directive bucket renders under its own header so the
+            # LLM knows there is no positional ref_image_N to look at -
+            # the visual language must be baked into prose.
+            tag = (r.get("refType") or "material").upper()
+            descriptor = (
+                r.get("brief")
+                or r.get("prompt")
+                or r.get("title")
+                or "(no description)"
+            )
+            material_directives.append(f"[{tag}] {descriptor}")
+            continue
         if ref_index is not None:
             line = f"ref_image_{ref_index}: {text}{suffix}"
         else:
@@ -449,6 +927,29 @@ def _format_user_message(records: list[dict], target: Node) -> str:
                 "scene that places the subject INTO any setting reference "
                 "present — never silently drop a location reference."
             )
+    if by_type.get("add_reference"):
+        # `add_reference` nodes carry an explicit refType tag. Surface
+        # the bucket in the user message so the LLM sees the same
+        # `ref_image_N: [TAG REFERENCE] ...` lines that the role-aware
+        # system prompt (`_build_reference_system_prompt`) is
+        # commenting on. Without this flush the system prompt would
+        # talk about ref_image slots the user message never names.
+        parts.append(
+            "Tagged references (refType-driven — follow the role-aware "
+            "strategy from the system prompt):\n  - "
+            + "\n  - ".join(by_type["add_reference"])
+        )
+    if material_directives:
+        # Material refs demoted to text-only. Frame the section as a
+        # "directive" not a "reference" so Claude doesn't try to
+        # describe a separate object - the visual language listed here
+        # must fuse into the structural subject's description.
+        parts.append(
+            "MATERIAL DIRECTIVE (text-only \u2014 NO image input "
+            "provided; bake into the structural subject's description "
+            "as material / palette / lighting prose):\n  - "
+            + "\n  - ".join(material_directives)
+        )
     if by_type.get("prompt"):
         # Prompt nodes carry reusable style/scene direction (e.g. brand
         # tone, mood reference). Treat as authoritative styling guidance —
@@ -526,8 +1027,51 @@ def _format_concept_user_message(records: list[dict], target: Node) -> str:
     # the LLM gets familiar labels.
     if records:
         by_type: dict[str, list[str]] = {}
+        # Mirror the burn-and-bake bucket from `_format_user_message`
+        # so concept-targeted dispatches respect the same demotion
+        # rule. Without this, mixed structural+material upstream on a
+        # concept node would still ship the material ref as a
+        # positional ref_image_N to Claude.
+        material_directives: list[str] = []
         for r in records:
             text = r["brief"] or r["prompt"] or r["title"] or "(no description)"
+
+            # Inject reference type context for add_reference nodes.
+            # The whole block must live inside the `for r in records`
+            # loop - earlier versions had it dedented, which meant the
+            # tag prefix + line emit only ran for the LAST record
+            # (Python loop variable leak). Indented back where it
+            # belongs.
+            ref_type = r.get("refType")
+            if ref_type and r["type"] == "add_reference":
+                _REF_TYPE_HINTS = {
+                    "sketch": "SKETCH/LINEWORK",
+                    "pose": "POSE",
+                    "photo": "PHOTO",
+                    "texture": "TEXTURE/MATERIAL",
+                    "lighting": "LIGHTING",
+                    "mood": "MOOD/ATMOSPHERE",
+                    "style": "STYLE",
+                    "environment": "ENVIRONMENT/SCENE",
+                    "3d_render": "3D RENDER",
+                    "blueprint": "BLUEPRINT/TECHNICAL",
+                    "concept_art": "CONCEPT ART/STYLE",
+                }
+                hint = _REF_TYPE_HINTS.get(ref_type, ref_type.upper())
+                if r.get("burned_for_text"):
+                    # Material demoted upstream - render as text-only
+                    # directive, NOT as a positional ref_image_N. Skip
+                    # the per-record by_type append entirely.
+                    descriptor = (
+                        r.get("brief")
+                        or r.get("prompt")
+                        or r.get("title")
+                        or "(no description)"
+                    )
+                    material_directives.append(f"[{hint}] {descriptor}")
+                    continue
+                text = f"[{hint} REFERENCE] {text}"
+
             ref_index = r.get("ref_index")
             line = (
                 f"ref_image_{ref_index}: {text}"
@@ -535,6 +1079,19 @@ def _format_concept_user_message(records: list[dict], target: Node) -> str:
                 else f"- {text}"
             )
             by_type.setdefault(r["type"], []).append(line)
+        if by_type.get("add_reference"):
+            parts.append(
+                "Reference inputs (tagged):\n  - "
+                + "\n  - ".join(by_type["add_reference"])
+            )
+        if material_directives:
+            parts.append(
+                "MATERIAL DIRECTIVE (text-only \u2014 NO image input "
+                "provided; bake material/palette/lighting prose into "
+                "the structural subject; STRIP every object noun from "
+                "the source brief):\n  - "
+                + "\n  - ".join(material_directives)
+            )
         if by_type.get("reference"):
             parts.append(
                 "Reference inputs (textures / sketches / photos):\n  - "
@@ -915,7 +1472,11 @@ async def auto_prompt(node_id: int, *, camera: Optional[str] = None) -> str:
         # for an asset-pipeline concept sheet.
         user_msg = _format_concept_user_message(records, target)
     else:
-        system_prompt = _image_system_prompt(subject_count)
+        has_add_ref = any(r["type"] == "add_reference" for r in records)
+        if has_add_ref:
+            system_prompt = _build_reference_system_prompt(records)
+        else:
+            system_prompt = _image_system_prompt(subject_count)
         user_msg = _format_user_message(records, target)
 
     async with record_activity(

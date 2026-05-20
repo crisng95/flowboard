@@ -129,7 +129,8 @@ export type NodeType =
   | "pose"
   | "turntable"
   | "upload"
-  | "text";
+  | "text"
+    | "add_reference";
 export type NodeStatus = "idle" | "queued" | "running" | "done" | "error" | "partial";
 
 export interface Board {
@@ -644,11 +645,25 @@ export async function getVariantAxes(): Promise<VariantAxisDTO[]> {
   return res.json() as Promise<VariantAxisDTO[]>;
 }
 
-export async function describeMedia(mediaId: string): Promise<VisionDescribeResponse> {
+export async function describeMedia(
+  mediaId: string,
+  refType?: string | null,
+  forceMaterialMode?: boolean,
+): Promise<VisionDescribeResponse> {
   const res = await fetch("/api/vision/describe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ media_id: mediaId }),
+    // `ref_type` lets the backend pick the matching vision profile
+    // (texture/material vs. lighting/mood vs. style). `force_material_mode`
+    // is the hybrid demotion flag - set when this `add_reference`
+    // is `photo` / `3d_render` AND its target also has a structural
+    // ref upstream, so the brief must strip subject nouns just like
+    // a real material ref.
+    body: JSON.stringify({
+      media_id: mediaId,
+      ref_type: refType ?? null,
+      force_material_mode: forceMaterialMode ?? false,
+    }),
   });
   if (!res.ok) {
     throw new Error(await extractErrorMessage(res));

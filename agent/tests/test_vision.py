@@ -100,7 +100,7 @@ async def test_describe_media_propagates_provider_failure(monkeypatch, tmp_path)
 def test_describe_route_happy_path(client, monkeypatch):
     media_id = "44444444-2222-3333-4444-555555555555"
 
-    async def stub_describe(mid):
+    async def stub_describe(mid, **_kwargs):
         assert mid == media_id
         return "young Korean woman, neutral expression, dark hair tied back"
 
@@ -113,7 +113,7 @@ def test_describe_route_happy_path(client, monkeypatch):
 
 
 def test_describe_route_502_on_vision_error(client, monkeypatch):
-    async def stub_describe(mid):
+    async def stub_describe(mid, **_kwargs):
         raise vision_service.VisionError("media not cached and could not be fetched")
 
     monkeypatch.setattr(vision_service, "describe_media", stub_describe)
@@ -123,3 +123,145 @@ def test_describe_route_502_on_vision_error(client, monkeypatch):
     )
     assert r.status_code == 502
     assert "not cached" in r.json()["detail"]
+
+
+# -- material-mode prompt switching ----------------------------------------
+
+@pytest.mark.asyncio
+async def test_describe_media_material_ref_uses_material_prompt(monkeypatch, tmp_path):
+    """When `ref_type` is a material tag, the vision call must use the
+    material-only system prompt and the matching object-stripping
+    user prompt. Without this, vision-captioned briefs leak object
+    nouns ('daggers', 'sword') into the auto-prompt synthesiser and
+    re-introduce the composite bug fixed in `prompt_synth.py`.
+    """
+    media_id = "66666666-2222-3333-4444-555555555555"
+    fake_cached = tmp_path / f"{media_id}.png"
+    fake_cached.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    from flowboard.services import media as media_service
+    monkeypatch.setattr(media_service, "cached_path", lambda mid: fake_cached)
+
+    captured: dict = {}
+
+    async def stub_run_llm(feature, prompt, *, system_prompt=None, attachments=None, timeout=0):
+        captured["prompt"] = prompt
+        captured["system_prompt"] = system_prompt
+        return "glowing cyan crystalline material with bone-white finish"
+
+    monkeypatch.setattr(vision_service, "run_llm", stub_run_llm)
+
+    out = await vision_service.describe_media(media_id, ref_type="texture")
+    assert "crystalline" in out
+    assert "texture and material analyzer" in (captured["system_prompt"] or "").lower()
+    assert "do not name the object" in (captured["prompt"] or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_describe_media_unknown_ref_keeps_default_prompt(monkeypatch, tmp_path):
+    """Unknown / non-tagged references must fall through to the legacy
+    annotator. The structural tags now have their own profiles, so the
+    fallback path is now reserved for callers that don't pass a refType
+    or pass one we don't recognise.
+    """
+    media_id = "77777777-2222-3333-4444-555555555555"
+    fake_cached = tmp_path / f"{media_id}.png"
+    fake_cached.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    from flowboard.services import media as media_service
+    monkeypatch.setattr(media_service, "cached_path", lambda mid: fake_cached)
+
+    captured: dict = {}
+
+    async def stub_run_llm(feature, prompt, *, system_prompt=None, attachments=None, timeout=0):
+        captured["system_prompt"] = system_prompt
+        return "young Korean woman, neutral expression"
+
+    monkeypatch.setattr(vision_service, "run_llm", stub_run_llm)
+
+    await vision_service.describe_media(media_id, ref_type=None)
+    assert "annotator" in (captured["system_prompt"] or "").lower()
+    assert "analyzer" not in (captured["system_prompt"] or "").lower()
+
+
+# -- per-profile prompt selection ------------------------------------------
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ref_type, expected_phrase",
+    [
+        ("material", "texture and material analyzer"),
+        ("lighting", "lighting and atmosphere analyzer"),
+        ("mood", "lighting and atmosphere analyzer"),
+        ("style", "artistic style analyzer"),
+        ("pose", "skeletal and pose analyzer"),
+        ("sketch", "linework and composition analyzer"),
+        ("blueprint", "linework and composition analyzer"),
+    ],
+)
+async def test_describe_media_picks_per_tag_profile(
+    monkeypatch, tmp_path, ref_type, expected_phrase
+):
+    """Each material tag must route through its tag-specific profile.
+    `material` shares with `texture`; `lighting`/`mood` share the
+    atmosphere analyzer; `style` is its own profile. Locking these
+    in keeps the dispatcher honest as profiles evolve.
+    """
+    media_id = "88888888-2222-3333-4444-555555555555"
+    fake_cached = tmp_path / f"{media_id}.png"
+    fake_cached.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    from flowboard.services import media as media_service
+    monkeypatch.setattr(media_service, "cached_path", lambda mid: fake_cached)
+
+    captured: dict = {}
+
+    async def stub_run_llm(feature, prompt, *, system_prompt=None, attachments=None, timeout=0):
+        captured["system_prompt"] = system_prompt
+        return "profile fixture brief"
+
+    monkeypatch.setattr(vision_service, "run_llm", stub_run_llm)
+
+    await vision_service.describe_media(media_id, ref_type=ref_type)
+    assert expected_phrase in (captured["system_prompt"] or "").lower(), (
+        f"ref_type={ref_type} did not pick the {expected_phrase!r} profile"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ref_type, force, expected",
+    [
+        ("photo", False, "annotator"),                # default
+        ("photo", True, "surface-and-detail analyzer"),
+        ("3d_render", False, "annotator"),
+        ("3d_render", True, "surface-and-detail analyzer"),
+    ],
+)
+async def test_describe_media_hybrid_demotion(
+    monkeypatch, tmp_path, ref_type, force, expected
+):
+    """Hybrid refs only swap to the material profile when
+    `force_material_mode` is set; otherwise they keep the default
+    annotator. The flag flips them in lockstep with the burn-and-bake
+    rule applied in `prompt_synth.py`.
+    """
+    media_id = "99999999-2222-3333-4444-555555555555"
+    fake_cached = tmp_path / f"{media_id}.png"
+    fake_cached.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    from flowboard.services import media as media_service
+    monkeypatch.setattr(media_service, "cached_path", lambda mid: fake_cached)
+
+    captured: dict = {}
+
+    async def stub_run_llm(feature, prompt, *, system_prompt=None, attachments=None, timeout=0):
+        captured["system_prompt"] = system_prompt
+        return "hybrid fixture brief"
+
+    monkeypatch.setattr(vision_service, "run_llm", stub_run_llm)
+
+    await vision_service.describe_media(
+        media_id, ref_type=ref_type, force_material_mode=force
+    )
+    assert expected in (captured["system_prompt"] or "").lower()

@@ -151,15 +151,22 @@ async def run_claude(
                 args += ["--add-dir", parent]
         args += ["--permission-mode", "bypassPermissions"]
 
-    # Use synchronous subprocess.run() to avoid asyncio subprocess issues on Windows.
-    try:
-        result = subprocess.run(
+    # Synchronous `subprocess.run` (rather than asyncio subprocess)
+    # because Windows .cmd shims behave better with the cmd.exe path,
+    # but call it on a worker thread so we don't block the event
+    # loop. Claude inference can take 30-90s per call; running it
+    # inline would freeze every other HTTP handler for that long.
+    def _invoke() -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(
             args,
             input=full_prompt.encode("utf-8"),
             capture_output=True,
             timeout=timeout,
             text=False,
         )
+
+    try:
+        result = await asyncio.to_thread(_invoke)
     except FileNotFoundError as exc:
         raise ClaudeCliError("claude CLI not found on PATH") from exc
     except subprocess.TimeoutExpired as exc:

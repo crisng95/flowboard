@@ -263,13 +263,20 @@ class OpenAIProvider:
             for path in attachments:
                 args += [self._cli_image_flag, os.path.abspath(path)]
 
-        try:
-            result = subprocess.run(
+        # Synchronous `subprocess.run` is needed for the Windows .cmd
+        # shim path (see claude_cli.py for the long-form rationale),
+        # but we run it on a worker thread so the event loop stays
+        # responsive during a 30-90s inference call.
+        def _invoke() -> subprocess.CompletedProcess[bytes]:
+            return subprocess.run(
                 args,
                 input=user_prompt.encode("utf-8"),
                 capture_output=True,
                 timeout=timeout,
             )
+
+        try:
+            result = await asyncio.to_thread(_invoke)
         except FileNotFoundError as exc:
             raise LLMError("codex CLI not found on PATH") from exc
         except subprocess.TimeoutExpired as exc:

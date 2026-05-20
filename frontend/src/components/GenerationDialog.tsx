@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useGenerationStore } from "../store/generation";
+import {
+  useGenerationStore,
+  REF_DISPATCH_TYPES,
+  isMaterialRefDemoted,
+  targetHasStructuralRef,
+} from "../store/generation";
 import { useBoardStore } from "../store/board";
 import {
   autoPrompt as autoPromptApi,
@@ -17,7 +22,11 @@ import {
   type VibeKey,
 } from "../constants/character";
 
-const REF_SOURCE_TYPES = new Set(["character", "image", "visual_asset", "upload", "reference"]);
+// Use the same dispatch set as `collectUpstreamRefMediaIds` so the
+// chip preview lists every ref that will actually be sent to Flow,
+// including `add_reference` nodes that the burn-and-bake rule may
+// later filter out below.
+const REF_SOURCE_TYPES = REF_DISPATCH_TYPES;
 
 function buildCharacterPrompt(
   gender: GenderKey | null,
@@ -249,6 +258,12 @@ export function GenerationDialog() {
         .map((e) => {
           const n = nodes.find((node) => node.id === e.source);
           if (!n || !REF_SOURCE_TYPES.has(n.data.type)) return null;
+          // Burn-and-bake: when at least one structural `add_reference`
+          // is upstream, the dispatcher drops every material
+          // `add_reference` from `ref_media_ids`. Hide them in the
+          // chip preview too so the UI matches what Flow receives.
+          // The directive lives in the auto-prompt text instead.
+          if (rfId && isMaterialRefDemoted(n, targetHasStructuralRef(rfId))) return null;
           const variants = (Array.isArray(n.data.mediaIds) ? n.data.mediaIds : [])
             .filter((m): m is string => typeof m === "string" && m.length > 0);
           const pin = (e.data?.sourceVariantIdx ?? null) as number | null;

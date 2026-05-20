@@ -133,15 +133,104 @@ interface GenerationState {
 // One ref per edge means one Flow API call regardless of how many
 // variants the upstream has — the user picks which variant feeds
 // which downstream by clicking the variant tile (Stage 2 UX).
-const REF_SOURCE_TYPES = new Set(["character", "image", "visual_asset", "Storyboard", "upload", "reference"]);
+// Source types that contribute media ids to a downstream Flow request.
+// Exported so chip-preview components in `GenerationDialog` /
+// `ResultViewer` can build their lists from the same source of truth
+// as the dispatcher; otherwise the preview drifts (or, worse, hides
+// refs that we actually ship).
+export const REF_DISPATCH_TYPES = new Set([
+  "character",
+  "image",
+  "visual_asset",
+  "Storyboard",
+  "upload",
+  "reference",
+  "add_reference",
+]);
+const REF_SOURCE_TYPES = REF_DISPATCH_TYPES;
+
+// Reference-tag classification mirrors the backend split in
+// `flowboard/agent/flowboard/services/prompt_synth.py`. We keep the
+// two sets in sync by hand because the frontend constants file
+// (`src/constants/concept.ts`) doesn't tag each ref with its role
+// directly, and copy-pasting the small set is cheaper than threading
+// a shared schema through the build.
+//
+// When the upstream graph mixes structural and material refs, the
+// material refs are demoted to text-only directives by the auto-
+// prompt synthesiser. If we still ship their media ids to Flow, the
+// image-gen vision encoder sees both images and treats the material
+// ref as a second subject to composite. Skipping them on the wire
+// leaves Flow with a single image input, which is what the burn-and-
+// bake combination strategy in the system prompt assumes.
+export const REF_STRUCTURAL_TAGS = new Set(["sketch", "pose", "blueprint"]);
+export const REF_MATERIAL_TAGS = new Set(["texture", "material", "style", "lighting", "mood"]);
+
+// Returns true when this target's upstream contains at least one
+// strict structural `add_reference` (sketch / pose / blueprint).
+// Mirrors the first pass in `collectUpstreamRefMediaIds` so callers
+// can short-circuit the same way without duplicating the loop.
+export function targetHasStructuralRef(targetRfId: string): boolean {
+  const { nodes, edges } = useBoardStore.getState();
+  for (const e of edges) {
+    if (e.target !== targetRfId) continue;
+    const src = nodes.find((n) => n.id === e.source);
+    if (!src || src.data.type !== "add_reference") continue;
+    const refType = typeof src.data.refType === "string" ? src.data.refType : null;
+    if (refType && REF_STRUCTURAL_TAGS.has(refType)) return true;
+  }
+  return false;
+}
+
+// Predicate used by chip-preview components: returns true when the
+// given source node should be hidden from the preview because the
+// dispatcher will skip it under the burn-and-bake rule. Keeping this
+// in the same module as `collectUpstreamRefMediaIds` guarantees both
+// surfaces evaluate the same condition.
+export function isMaterialRefDemoted(
+  src: { data: { type?: string; refType?: unknown } },
+  hasStructuralRef: boolean,
+): boolean {
+  if (!hasStructuralRef) return false;
+  if (src.data.type !== "add_reference") return false;
+  const refType = typeof src.data.refType === "string" ? src.data.refType : null;
+  return Boolean(refType && REF_MATERIAL_TAGS.has(refType));
+}
 
 function collectUpstreamRefMediaIds(targetRfId: string): string[] {
   const { nodes, edges } = useBoardStore.getState();
   const ids: string[] = [];
+
+  // First pass: detect whether the upstream of this target carries
+  // any strict structural `add_reference`. We need this answer before
+  // we start picking media ids so the second pass can drop material
+  // refs in the same target's edge list.
+  let hasStructuralRef = false;
+  for (const e of edges) {
+    if (e.target !== targetRfId) continue;
+    const src = nodes.find((n) => n.id === e.source);
+    if (!src || src.data.type !== "add_reference") continue;
+    const refType = typeof src.data.refType === "string" ? src.data.refType : null;
+    if (refType && REF_STRUCTURAL_TAGS.has(refType)) {
+      hasStructuralRef = true;
+      break;
+    }
+  }
+
   for (const e of edges) {
     if (e.target !== targetRfId) continue;
     const src = nodes.find((n) => n.id === e.source);
     if (!src || !REF_SOURCE_TYPES.has(src.data.type)) continue;
+
+    // Burn-and-bake: when at least one structural `add_reference` is
+    // upstream, skip every material `add_reference` so the image-gen
+    // backend only receives the structural slot. The material ref's
+    // visual language is already baked into the prompt text by the
+    // auto-prompt synthesiser.
+    if (hasStructuralRef && src.data.type === "add_reference") {
+      const refType = typeof src.data.refType === "string" ? src.data.refType : null;
+      if (refType && REF_MATERIAL_TAGS.has(refType)) continue;
+    }
 
     const variants = Array.isArray(src.data.mediaIds) ? src.data.mediaIds : [];
     const pinned = (e.data?.sourceVariantIdx ?? null) as number | null;
