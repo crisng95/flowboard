@@ -16,6 +16,7 @@ import {
   type OnNodeDrag,
 } from "@xyflow/react";
 
+import { deleteNode as apiDeleteNode } from "../api/client";
 import { useBoardStore, type FlowNode, type NodeType } from "../store/board";
 import { NodeCard } from "./NodeCard";
 import { VariantEdge } from "./VariantEdge";
@@ -170,7 +171,6 @@ export function Board() {
   const persistNodePosition = useBoardStore((s) => s.persistNodePosition);
   const addEdgeFromConnection = useBoardStore((s) => s.addEdgeFromConnection);
   const addNodeOfType = useBoardStore((s) => s.addNodeOfType);
-  const deleteNodeByRfId = useBoardStore((s) => s.deleteNodeByRfId);
   const deleteEdgeByRfId = useBoardStore((s) => s.deleteEdgeByRfId);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -304,9 +304,12 @@ export function Board() {
 
   const onNodesDelete = useCallback(
     (deletedNodes: FlowNode[]) => {
-      deletedNodes.forEach((n) => deleteNodeByRfId(n.id));
+      deletedNodes.forEach((n) => {
+        const dbId = parseInt(n.id, 10);
+        if (!isNaN(dbId)) apiDeleteNode(dbId).catch(() => {});
+      });
     },
-    [deleteNodeByRfId],
+    [],
   );
 
   const onEdgesDelete = useCallback(
