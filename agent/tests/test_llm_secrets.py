@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,16 @@ def test_write_creates_parent_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert json.loads(nested.read_text()) == {"apiKeys": {"openai": "sk-1"}}
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "POSIX mode bits are not honoured by NTFS - st_mode reports "
+        "0o666 for every newly created file. Windows file privacy is "
+        "enforced via DACLs, not POSIX mode; that needs a separate "
+        "platform-specific test (pywin32 + ICACLS) which is out of "
+        "scope here."
+    ),
+)
 def test_write_sets_mode_0600(tmp_secrets_path: Path):
     """Critical — file must not be group/world readable. API keys live here."""
     secrets.write({"apiKeys": {"openai": "sk-secret"}})

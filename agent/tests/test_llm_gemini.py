@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import subprocess as _subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -266,7 +267,17 @@ async def test_run_attachments_use_absolute_paths(monkeypatch, tmp_path):
     await p.run("describe", attachments=[str(img)])
     argv = list(state["calls"][0][0][0])
     prompt = argv[argv.index("-p") + 1]
-    assert "@/" in prompt
+    # Locate the `@<path>` token, then verify it points at an absolute
+    # path. Using `Path.is_absolute()` keeps the assertion cross-
+    # platform: on POSIX it accepts `/tmp/...`, on Windows it accepts
+    # `C:\Users\...`. Hard-coding `"@/"` only worked on POSIX and
+    # silently failed every Windows CI run.
+    at_index = prompt.rfind("@")
+    assert at_index >= 0, f"no @<path> token in prompt: {prompt!r}"
+    attachment_path = prompt[at_index + 1 :].strip()
+    assert Path(attachment_path).is_absolute(), (
+        f"attachment path is not absolute: {attachment_path!r}"
+    )
 
 
 # ── run — error paths ─────────────────────────────────────────────────
