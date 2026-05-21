@@ -849,8 +849,16 @@ async def test_worker_gen_video_omni_happy_path(client, monkeypatch):
     """Omni Flash dispatches to gen_video_omni with the cURL-confirmed
     body shape: referenceImages[] + duration-keyed model + V2 config."""
     from flowboard.worker import processor as proc
+    from flowboard.services import media_project_sync as sync_mod
 
     monkeypatch.setattr(proc, "VIDEO_POLL_INTERVAL_S", 0.05)
+
+    # Bypass the cross-project re-upload — the test fixture has no
+    # real cached bytes for "ref-aaa". Pin the identity passthrough so
+    # the dispatch path still receives the original mediaIds.
+    async def _stub_sync(ids, project_id):
+        return list(ids), []
+    monkeypatch.setattr(sync_mod, "ensure_media_ids_in_project", _stub_sync)
 
     captured: dict = {}
 

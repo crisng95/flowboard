@@ -840,6 +840,10 @@ async def _handle_retry_storyboard_shot(params: dict) -> tuple[dict, Optional[st
 
 async def _handle_gen_video_omni(params: dict) -> tuple[dict, Optional[str]]:
     from flowboard.services.flow_sdk import is_valid_project_id
+    from flowboard.services.media_project_sync import (
+        MediaSyncError,
+        ensure_media_ids_in_project,
+    )
 
     prompt = params.get("prompt")
     project_id = params.get("project_id")
@@ -872,11 +876,39 @@ async def _handle_gen_video_omni(params: dict) -> tuple[dict, Optional[str]]:
     if tier is None:
         return {}, "paygate_tier_unknown"
 
+    # ── Cross-project ref sync ────────────────────────────────────────
+    # Flow scopes mediaIds to the project they were uploaded in. When
+    # the user references media generated under another board's project
+    # (the cross-board Reference library case), Flow returns 404 because
+    # the asset is unknown in this project. Re-upload bytes from the
+    # local cache and substitute the project-local id before dispatch.
+    # First sync hits the Flow upload endpoint per ref; subsequent
+    # syncs use the MediaProjectMapping cache and are free.
+    try:
+        synced_refs, sync_failures = await ensure_media_ids_in_project(
+            ref_media_ids, project_id
+        )
+    except MediaSyncError as exc:
+        return {}, f"sync_failed: {exc}"[:200]
+    if not synced_refs:
+        # Every ref failed to sync — surface the first reason.
+        first = sync_failures[0][1] if sync_failures else "no_refs_synced"
+        return (
+            {"sync_failures": sync_failures},
+            f"sync_failed: {first}"[:200],
+        )
+    if sync_failures:
+        # Partial sync — log; proceed with the refs that worked.
+        logger.warning(
+            "gen_video_omni: %d ref(s) failed to sync, proceeding with %d",
+            len(sync_failures), len(synced_refs),
+        )
+
     sdk = get_flow_sdk()
     dispatch = await sdk.gen_video_omni(
         prompt=prompt.strip(),
         project_id=project_id,
-        ref_media_ids=ref_media_ids,
+        ref_media_ids=synced_refs,
         duration_s=duration_s,
         aspect_ratio=aspect,
         paygate_tier=tier,

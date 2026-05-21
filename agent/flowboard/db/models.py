@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel, Column, JSON
 
 
@@ -87,6 +88,34 @@ class Asset(SQLModel, table=True):
     local_path: Optional[str] = None
     mime: Optional[str] = None
     created_at: datetime = Field(default_factory=_utcnow)
+
+
+class MediaProjectMapping(SQLModel, table=True):
+    """Cross-project media re-upload cache.
+
+    Flow scopes mediaIds to the project they were uploaded in — a
+    ref_media_id from project A is unknown to project B even though we
+    have the bytes cached locally. When a dispatch needs to reference
+    media from another project (e.g. a cross-board Reference reused on
+    a different board), we re-upload the bytes under the target project
+    and record the (original, project) → project-local mapping here so
+    subsequent dispatches skip the upload round-trip.
+
+    Each row says: "bytes of `original_media_id` are also available
+    under `project_id` as `project_local_media_id`". Unique on
+    (original_media_id, project_id) — composite index in __table_args__.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    original_media_id: str = Field(index=True)
+    project_id: str = Field(index=True)
+    project_local_media_id: str
+    created_at: datetime = Field(default_factory=_utcnow)
+    __table_args__ = (
+        UniqueConstraint(
+            "original_media_id", "project_id",
+            name="uq_media_project_mapping",
+        ),
+    )
 
 
 class Reference(SQLModel, table=True):
