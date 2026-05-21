@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import ipaddress
 import logging
+import math
 import socket
 from typing import Optional
 from urllib.parse import urlparse
@@ -75,14 +76,20 @@ def _classify_aspect(width: int, height: int) -> str:
     if width <= 0 or height <= 0:
         return "IMAGE_ASPECT_RATIO_LANDSCAPE"
     ratio = width / height
-    # 10% tolerance band around 1:1 → square. flowkit / Veo's enums only
-    # have square / portrait / landscape — anything ratio-close maps to
-    # the nearest bucket.
-    if 0.91 <= ratio <= 1.1:
-        return "IMAGE_ASPECT_RATIO_SQUARE"
-    if ratio > 1.1:
-        return "IMAGE_ASPECT_RATIO_LANDSCAPE"
-    return "IMAGE_ASPECT_RATIO_PORTRAIT"
+    # Flow image gen accepts five aspect-ratio buckets. We pick the
+    # nearest one by log-distance so 1.4 maps to 4:3 (1.333) instead
+    # of 16:9 (1.778). Order of entries does not matter; the
+    # min-distance scan picks the closest.
+    candidates = (
+        ("IMAGE_ASPECT_RATIO_SQUARE", 1.0),
+        ("IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE", 4 / 3),
+        ("IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR", 3 / 4),
+        ("IMAGE_ASPECT_RATIO_LANDSCAPE", 16 / 9),
+        ("IMAGE_ASPECT_RATIO_PORTRAIT", 9 / 16),
+    )
+    log_ratio = math.log(ratio)
+    best_key, _ = min(candidates, key=lambda c: abs(log_ratio - math.log(c[1])))
+    return best_key
 
 
 def _sniff_image_dimensions(raw: bytes) -> Optional[tuple[int, int]]:

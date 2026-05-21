@@ -185,3 +185,35 @@ def type_clause(key: str | None) -> str:
         f"  FRAMING: {preset['framing']}\n"
         f"  PRIORITY: {preset['extra']}"
     )
+
+
+# ── Reference type hints ──────────────────────────────────────────────────────
+#
+# Backend mirror of frontend `constants/concept.ts > REFERENCE_TYPES`.
+# Keep keys in lock-step with the frontend constant — every key in
+# REFERENCE_TYPES must have an entry here so the LLM gets a usage hint
+# instead of falling through to the generic "Use as visual reference".
+
+REFERENCE_TYPE_HINTS: dict[str, str] = {
+    "sketch":      "Use as structural/silhouette guide (linework, wireframe)",
+    "pose":        "Use as pose / body-language reference",
+    "photo":       "Use as photographic realism reference",
+    "texture":     "Use as surface / material sample reference",
+    "lighting":    "Use as lighting direction and quality reference",
+    "mood":        "Use as atmosphere / emotional tone / color-grade reference",
+    "style":       "Use as artistic style / rendering-technique reference",
+    "environment": "Use as background / environment / scene reference",
+    "3d_render":   "Use as 3D form / volume / shading reference",
+    "blueprint":   "Use as technical / orthographic blueprint reference",
+}
+
+
+def ref_type_hint(key: str | None) -> str:
+    """Return the prompt hint for a reference type key.
+
+    Falls back to a generic hint when key is unknown / missing so
+    downstream synth modules always get a usable string.
+    """
+    if not key:
+        return "Use as visual reference"
+    return REFERENCE_TYPE_HINTS.get(key, "Use as visual reference")

@@ -14,7 +14,7 @@ Inputs the synth reads from a node:
 """
 from __future__ import annotations
 
-from .presets import style_tokens, type_clause
+from .presets import ref_type_hint, style_tokens, type_clause
 
 
 # Core directives that apply regardless of style/type. Pulled out of
@@ -54,17 +54,48 @@ environmental scene, ambient storytelling, atmospheric perspective,
 ground texture, scenic backdrop, matte painting elements."""
 
 
+def _ref_context_block(ref_nodes: list[dict]) -> str:
+    """Build a REFERENCES block from upstream reference node data.
+
+    Each entry surfaces the ref's type hint, aiBrief (vision description),
+    and customNote (user annotation) so the LLM knows HOW to use each
+    upstream image without the user having to re-explain in the prompt.
+
+    Only included when at least one ref node has usable data.
+    """
+    lines: list[str] = []
+    for node in ref_nodes:
+        data = node.get("data") or {}
+        ref_type = data.get("refType")
+        custom_note = (data.get("customNote") or "").strip()
+        ai_brief = (data.get("aiBrief") or "").strip()
+        short_id = data.get("shortId") or "?"
+
+        hint = ref_type_hint(ref_type)
+        line = f"  - Ref #{short_id} [{ref_type or 'reference'}]: {hint}."
+        if ai_brief:
+            line += f" Visual: {ai_brief[:150]}"
+        if custom_note:
+            line += f" Note: {custom_note[:120]}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def build_concept_system_prompt(
     *,
     style_key: str | None,
     type_key: str | None,
+    ref_nodes: list[dict] | None = None,
 ) -> str:
     """Compose the system prompt for a Concept node generation.
 
     Returns a complete system prompt ready to send to the auto-prompt
-    LLM. Order: core directives → type-specific clause → style-token
-    list → output rule. Both keys are optional; missing keys produce
-    a generic concept prompt (still usable, just less guided).
+    LLM. Order: core directives → type-specific clause → ref context
+    (when upstream refs have type/note/brief) → style tokens → output
+    rule.
+
+    `ref_nodes` is a list of upstream reference node dicts (each with
+    a `data` key containing `refType`, `aiBrief`, `customNote`).
     """
     parts: list[str] = [_CONCEPT_CORE]
 
@@ -72,14 +103,18 @@ def build_concept_system_prompt(
     if type_block:
         parts.append(type_block)
     else:
-        # Fallback when no type chosen — pick reasonable defaults so
-        # the LLM doesn't invent its own.
         parts.append(
             "TYPE = GENERIC\n"
             "  POSE: neutral canonical pose, full silhouette clear\n"
             "  FRAMING: full subject in frame, 8% margin all sides\n"
             "  PRIORITY: design clarity, anatomy / structure readable"
         )
+
+    # Inject upstream reference context when available.
+    if ref_nodes:
+        ref_block = _ref_context_block(ref_nodes)
+        if ref_block:
+            parts.append(f"UPSTREAM REFERENCES:\n{ref_block}")
 
     tokens = style_tokens(style_key)
     if tokens:

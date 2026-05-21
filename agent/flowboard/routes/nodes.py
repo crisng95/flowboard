@@ -34,6 +34,7 @@ NodeType = Literal[
     "turntable",   # Veo i2v with orbit camera prompt (Phase 3)
     "upload",      # minimal input-only image node
     "text",        # text-only prompt node
+    "add_reference", # reference-only input node (no generation)
 ]
 NodeStatus = Literal["idle", "queued", "running", "done", "error"]
 

@@ -74,7 +74,16 @@ async def _handle_gen_image(params: dict) -> tuple[dict, Optional[str]]:
     prompt = params.get("prompt")
     project_id = params.get("project_id")
     if not isinstance(prompt, str) or not prompt.strip():
-        return {}, "missing_prompt"
+        node_id = params.get("__node_id")
+        if node_id is not None:
+            try:
+                from flowboard.services.prompt_synth import auto_prompt
+                prompt = await auto_prompt(node_id)
+            except Exception as exc:
+                logger.warning("auto_prompt failed for node %s: %s", node_id, exc)
+                return {}, "missing_prompt"
+        else:
+            return {}, "missing_prompt"
     if not isinstance(project_id, str) or not project_id.strip():
         return {}, "missing_project_id"
     project_id = project_id.strip()
