@@ -20,17 +20,17 @@ export default {
     extend: {
       colors: {
         canvas: {
-          DEFAULT: "#0a0b0f",
-          group: "#0d1018",
+          DEFAULT: "#0f0f0f",
+          group: "#111111",
         },
         surface: {
-          1: "#14161c",
-          2: "#1a1d25",
-          3: "#21252e",
+          1: "#141414",
+          2: "#1a1a1a",
+          3: "#262626",
         },
         line: {
-          subtle: "rgba(255,255,255,0.06)",
-          strong: "rgba(255,255,255,0.12)",
+          subtle: "#2a2a2a",
+          strong: "#333333",
           accent: "rgba(124,92,255,0.45)",
         },
         accent: {
@@ -42,9 +42,9 @@ export default {
         },
         edge: "rgba(124,92,255,0.55)",
         ink: {
-          primary: "#e8e8ed",
-          muted: "#8a8f99",
-          placeholder: "#5d6270",
+          primary: "#f5f5f5",
+          muted: "#ababab",
+          placeholder: "#666666",
         },
         status: {
           queued: "#f5b301",
@@ -55,6 +55,7 @@ export default {
       },
       fontFamily: {
         sans: [
+          "Geist",
           "Inter",
           "ui-sans-serif",
           "system-ui",

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Concept-pipeline presets â€” the shared dictionaries that every Concepta
  * node reads from. Mirrors the legacy `character.ts` shape so existing
  * `countryLabel` / `vibeLabel` patterns translate 1:1.
@@ -222,3 +222,30 @@ export const VARIANT_AXES = [
 ] as const;
 
 export type VariantAxisKey = (typeof VARIANT_AXES)[number]["key"];
+
+// ── Reference types ──────────────────────────────────────────────────────
+//
+// Tagging a Reference node with a type tells downstream synth modules
+// HOW to use the image — as a surface sample, a silhouette guide, a
+// mood board, etc. The hint string is injected into the system prompt
+// so the LLM knows the intent without the user having to re-explain.
+
+export const REFERENCE_TYPES = [
+  { key: "sketch",      label: "Sketch / Linework",    hint: "Rough concept / wireframe / linework" },
+  { key: "pose",        label: "Pose Reference",       hint: "Character pose and body language" },
+  { key: "photo",       label: "Photo Reference",      hint: "Photographic reference for realism" },
+  { key: "texture",     label: "Texture / Material",   hint: "Surface / material sample" },
+  { key: "lighting",    label: "Lighting Reference",   hint: "Lighting direction and quality" },
+  { key: "mood",        label: "Mood & Atmosphere",    hint: "Atmosphere, emotional tone, color grading" },
+  { key: "style",       label: "Style Reference",      hint: "Artistic style and rendering technique" },
+  { key: "environment", label: "Environment / Scene",  hint: "Background environment or scene" },
+  { key: "3d_render",   label: "3D Render Reference",  hint: "3D form, volume, and shading" },
+  { key: "blueprint",   label: "Blueprint / Technical", hint: "Technical drawing / orthographic" },
+] as const;
+
+export type ReferenceTypeKey = (typeof REFERENCE_TYPES)[number]["key"];
+
+export function referenceTypeLabel(key: string | undefined): string | null {
+  if (!key) return null;
+  return REFERENCE_TYPES.find((t) => t.key === key)?.label ?? null;
+}

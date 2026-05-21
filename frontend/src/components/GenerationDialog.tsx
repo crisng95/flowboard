@@ -63,6 +63,8 @@ const IMAGE_ASPECT_RATIOS = [
   { key: "IMAGE_ASPECT_RATIO_SQUARE", label: "1:1" },
   { key: "IMAGE_ASPECT_RATIO_PORTRAIT", label: "9:16" },
   { key: "IMAGE_ASPECT_RATIO_LANDSCAPE", label: "16:9" },
+  { key: "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR", label: "3:4" },
+  { key: "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE", label: "4:3" },
 ] as const;
 
 const VIDEO_ASPECT_RATIOS = [
@@ -109,6 +111,12 @@ function imageAspectToVideo(img: string | undefined): VideoAspectKey | null {
   if (img === "IMAGE_ASPECT_RATIO_LANDSCAPE") return "VIDEO_ASPECT_RATIO_LANDSCAPE";
   if (img === "IMAGE_ASPECT_RATIO_PORTRAIT") return "VIDEO_ASPECT_RATIO_PORTRAIT";
   if (img === "IMAGE_ASPECT_RATIO_SQUARE") return "VIDEO_ASPECT_RATIO_PORTRAIT";
+  // Video has no 4:3 / 3:4 enum, so we collapse to the closest
+  // 16:9 / 9:16 bucket. The image asset itself stays at the original
+  // ratio; only the video gen request swaps to a video-compatible
+  // enum.
+  if (img === "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE") return "VIDEO_ASPECT_RATIO_LANDSCAPE";
+  if (img === "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR") return "VIDEO_ASPECT_RATIO_PORTRAIT";
   return null;
 }
 

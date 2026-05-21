@@ -1,6 +1,26 @@
 import { useState } from "react";
 import { useReactFlow } from "@xyflow/react";
-import { Plus, StickyNote, Undo2, Redo2, Search, Type, ImageUp, Upload } from "lucide-react";
+import {
+  Plus,
+  StickyNote,
+  Undo2,
+  Redo2,
+  Search,
+  Type,
+  ImageUp,
+  Upload,
+  Video,
+  Sparkles,
+  Image,
+  Layers,
+  Palette,
+  Box,
+  RotateCw,
+  PersonStanding,
+  Puzzle,
+  LayoutGrid,
+  Clapperboard,
+} from "lucide-react";
 
 import { useBoardStore } from "../store/board";
 import type { NodeType } from "../store/board";
@@ -22,7 +42,41 @@ const CATEGORIES: Category[] = [
     name: "BASICS",
     nodes: [
       { type: "text", icon: Type, label: "Text" },
+      { type: "note", icon: StickyNote, label: "Note" },
+    ],
+  },
+  {
+    name: "REFERENCES",
+    nodes: [
+      { type: "add_reference", icon: ImageUp, label: "Add Reference" },
+    ],
+  },
+  {
+    name: "IMAGE",
+    nodes: [
       { type: "reference", icon: ImageUp, label: "Image Generator" },
+      { type: "image", icon: Image, label: "Image" },
+      { type: "visual_asset", icon: Sparkles, label: "Visual Asset" },
+      { type: "concept", icon: Box, label: "Concept" },
+      { type: "multiview", icon: LayoutGrid, label: "Multi-view" },
+      { type: "variant", icon: Layers, label: "Variant" },
+      { type: "style_pack", icon: Palette, label: "Style Pack" },
+    ],
+  },
+  {
+    name: "CHARACTER",
+    nodes: [
+      { type: "character", icon: PersonStanding, label: "Character" },
+      { type: "pose", icon: PersonStanding, label: "Pose" },
+      { type: "part", icon: Puzzle, label: "Part" },
+      { type: "turntable", icon: RotateCw, label: "Turntable" },
+    ],
+  },
+  {
+    name: "VIDEO",
+    nodes: [
+      { type: "video", icon: Video, label: "Video" },
+      { type: "Storyboard", icon: Clapperboard, label: "Storyboard" },
     ],
   },
   {

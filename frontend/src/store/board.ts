@@ -69,6 +69,13 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   // route + gen worker produce. Video targets map them onto the matching
   // VIDEO_ASPECT_RATIO_* enum at dialog-open time.
   aspectRatio?: string;
+  // Pixel dimensions of the uploaded / generated image. Persisted so
+  // the node can display the correct aspect-ratio immediately on
+  // reload without waiting for the <img> onLoad event. The upload
+  // route already returns `width` / `height` in its response; we
+  // just need to stamp them here.
+  imageWidth?: number;
+  imageHeight?: number;
   // AI-generated factual description of mediaId (set by /api/vision/describe).
   // Spliced into auto-prompts on downstream nodes for richer context.
   // `null` is the explicit "clear this key" sentinel - undefined would

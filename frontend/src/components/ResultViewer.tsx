@@ -44,6 +44,10 @@ function formatAspectRatio(value: string | undefined): string {
       return "9:16";
     case "IMAGE_ASPECT_RATIO_SQUARE":
       return "1:1";
+    case "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE":
+      return "4:3";
+    case "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR":
+      return "3:4";
     default:
       return "—";
   }

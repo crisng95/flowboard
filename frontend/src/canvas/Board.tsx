@@ -23,6 +23,7 @@ import { VariantEdge } from "./VariantEdge";
 import { useGenerationStore } from "../store/generation";
 import { getUiVersion } from "../lib/utils";
 import { ReferenceNode } from "./v2/ReferenceNode";
+import { AddReferenceNode } from "./v2/AddReferenceNode";
 import { ConceptNode } from "./v2/ConceptNode";
 import { MultiviewNode } from "./v2/MultiviewNode";
 import { PartNode } from "./v2/PartNode";
@@ -61,6 +62,7 @@ const nodeTypes = useV2
       variant: VariantNode,
       upload: UploadNode,
       text: TextNode,
+        add_reference: AddReferenceNode,
       pose: NodeCard, // TODO Phase 3
       turntable: NodeCard, // TODO Phase 3
     }
@@ -82,6 +84,7 @@ const nodeTypes = useV2
       text: NodeCard,
       pose: NodeCard,
       turntable: NodeCard,
+      add_reference: AddReferenceNode,
     };
 
 // Single edge type used for everything — VariantEdge renders the
@@ -251,7 +254,7 @@ export function Board() {
   // Image nodes (type="upload"/"reference"/etc) can only connect to "target-image" handles
   // If target has no specific handle id (legacy nodes), allow any connection
   const TEXT_SOURCE_TYPES = new Set(["text"]);
-  const IMAGE_SOURCE_TYPES = new Set(["upload", "reference", "image", "visual_asset", "character", "concept", "multiview", "part", "variant", "Storyboard"]);
+  const IMAGE_SOURCE_TYPES = new Set(["upload", "reference", "image", "visual_asset", "character", "concept", "multiview", "part", "variant", "Storyboard", "add_reference"]);
 
   const isValidConnection = useCallback(
     (connection: Connection | Edge) => {
