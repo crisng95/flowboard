@@ -53,7 +53,7 @@ def test_get_missing_request_returns_404(client):
     assert r.status_code == 404
 
 
-def test_cancel_queued_request_marks_failed_with_canceled_error(client):
+def test_cancel_queued_request_marks_canceled(client):
     r = client.post(
         "/api/requests",
         json={"type": "proxy", "params": {"url": "https://aisandbox-pa.googleapis.com/v1/ping"}},
@@ -61,7 +61,7 @@ def test_cancel_queued_request_marks_failed_with_canceled_error(client):
     res = client.post(f"/api/requests/{r['id']}/cancel")
     assert res.status_code == 200
     body = res.json()
-    assert body["status"] == "failed"
+    assert body["status"] == "canceled"
     assert body["error"] == "canceled"
     assert body["finished_at"] is not None
 
@@ -92,9 +92,9 @@ async def test_worker_skips_canceled_request(client):
         json={"type": "proxy", "params": {"marker": "skip-me"}},
     ).json()
     # Cancel BEFORE enqueueing the rid so the row already reads
-    # status='failed' when the worker pops it.
+    # status='canceled' when the worker pops it.
     canceled = client.post(f"/api/requests/{row['id']}/cancel").json()
-    assert canceled["status"] == "failed"
+    assert canceled["status"] == "canceled"
 
     handler_calls: list[dict] = []
 
@@ -111,7 +111,7 @@ async def test_worker_skips_canceled_request(client):
         await asyncio.sleep(0.3)
         assert handler_calls == []
         current = client.get(f"/api/requests/{row['id']}").json()
-        assert current["status"] == "failed"
+        assert current["status"] == "canceled"
         assert current["error"] == "canceled"
     finally:
         w.request_shutdown()
@@ -148,7 +148,11 @@ async def test_worker_marks_request_done_on_ok(client):
             if current["status"] != "queued":
                 break
         assert current["status"] == "done"
-        assert current["result"] == {"echo": {"marker": "abc"}}
+        # Worker injects __request_id alongside the user params (mirrors
+        # the existing __node_id injection) so long-running handlers can
+        # re-check the row for cancellation.
+        assert current["result"]["echo"]["marker"] == "abc"
+        assert current["result"]["echo"]["__request_id"] == row["id"]
         assert current["error"] is None
     finally:
         w.request_shutdown()
@@ -376,7 +380,10 @@ async def test_worker_gen_video_times_out(client, monkeypatch):
             current = client.get(f"/api/requests/{row['id']}").json()
             if current["status"] not in ("queued", "running"):
                 break
-        assert current["status"] == "failed"
+        # Polling exhaustion now lands on the dedicated 'timeout' status
+        # (was 'failed' before the auto-TIMEOUT change). Error string
+        # stays the same so the detail viewer still surfaces the cause.
+        assert current["status"] == "timeout"
         assert current["error"] == "timeout_waiting_video"
     finally:
         w.request_shutdown()
@@ -641,6 +648,103 @@ async def test_worker_gen_video_dedupes_repeat_entries_across_polls(
 
 
 @pytest.mark.asyncio
+async def test_cancel_running_video_bails_poll_and_keeps_canceled_status(
+    client, monkeypatch,
+):
+    """While a gen_video poll is in flight the user hits Cancel. The
+    poll loop must read the new 'canceled' status on its next tick and
+    bail out without overwriting the row back to 'failed' or 'done'."""
+    from flowboard.worker import processor as proc
+
+    monkeypatch.setattr(proc, "VIDEO_POLL_INTERVAL_S", 0.05)
+    monkeypatch.setattr(proc, "VIDEO_POLL_MAX_CYCLES", 50)
+
+    poll_count = {"n": 0}
+
+    class _StubSdk:
+        async def gen_video(self, **kwargs):
+            return {"raw": {}, "operation_names": ["op-x"]}
+
+        async def check_async(self, names, workflows=None):
+            poll_count["n"] += 1
+            return {
+                "raw": {},
+                "operations": [
+                    {"name": "op-x", "done": False, "media_entries": []}
+                ],
+            }
+
+    monkeypatch.setattr(proc, "get_flow_sdk", lambda: _StubSdk())
+
+    row = client.post(
+        "/api/requests",
+        json={
+            "type": "gen_video",
+            "params": {
+                "prompt": "x",
+                "project_id": "abcd1234",
+                "start_media_id": "src",
+            },
+        },
+    ).json()
+
+    w = WorkerController(handlers={"gen_video": proc._handle_gen_video})
+    task = asyncio.create_task(w.start())
+    try:
+        w.enqueue(row["id"])
+        # Wait for the worker to flip the row to running.
+        for _ in range(50):
+            await asyncio.sleep(0.02)
+            current = client.get(f"/api/requests/{row['id']}").json()
+            if current["status"] == "running":
+                break
+        assert current["status"] == "running", current
+        # Cancel the in-flight job — endpoint must accept it.
+        cancel_resp = client.post(f"/api/requests/{row['id']}/cancel")
+        assert cancel_resp.status_code == 200
+        assert cancel_resp.json()["status"] == "canceled"
+        # Worker handler should observe cancel on its next poll tick
+        # and exit; final status remains 'canceled'.
+        for _ in range(200):
+            await asyncio.sleep(0.02)
+            current = client.get(f"/api/requests/{row['id']}").json()
+            if current["status"] == "canceled":
+                break
+        assert current["status"] == "canceled", current
+        assert current["error"] == "canceled"
+    finally:
+        w.request_shutdown()
+        await asyncio.wait_for(task, timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_cancel_done_request_returns_409(client):
+    """A request that already succeeded can't be canceled."""
+    row = client.post(
+        "/api/requests", json={"type": "proxy", "params": {}}
+    ).json()
+
+    async def _ok(_p):
+        return ({"echo": True}, None)
+
+    w = WorkerController(handlers={"proxy": _ok})
+    task = asyncio.create_task(w.start())
+    try:
+        w.enqueue(row["id"])
+        for _ in range(40):
+            await asyncio.sleep(0.05)
+            current = client.get(f"/api/requests/{row['id']}").json()
+            if current["status"] == "done":
+                break
+        assert current["status"] == "done"
+        res = client.post(f"/api/requests/{row['id']}/cancel")
+        assert res.status_code == 409
+    finally:
+        w.request_shutdown()
+        await asyncio.wait_for(task, timeout=2.0)
+
+
+@pytest.mark.asyncio
 async def test_worker_gen_video_rejects_missing_start(client):
     from flowboard.worker.processor import _handle_gen_video
 
@@ -735,3 +839,136 @@ def test_recover_orphan_running_requests_marks_them_failed(client):
 
     # Idempotent — second call should touch nothing.
     assert _recover_orphan_running_requests() == 0
+
+
+# ── Omni Flash r2v ─────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_worker_gen_video_omni_happy_path(client, monkeypatch):
+    """Omni Flash dispatches to gen_video_omni with the cURL-confirmed
+    body shape: referenceImages[] + duration-keyed model + V2 config."""
+    from flowboard.worker import processor as proc
+
+    monkeypatch.setattr(proc, "VIDEO_POLL_INTERVAL_S", 0.05)
+
+    captured: dict = {}
+
+    class _StubSdk:
+        async def gen_video_omni(self, **kwargs):
+            captured.update(kwargs)
+            return {"raw": {"ok": True}, "operation_names": ["op-omni-1"]}
+
+        async def check_async(self, names, workflows=None):
+            return {
+                "raw": {},
+                "operations": [
+                    {
+                        "name": "op-omni-1",
+                        "done": True,
+                        "media_entries": [
+                            {
+                                "media_id": "omni-vid-aaa",
+                                "url": "https://flow-content.google/video/omni-vid-aaa?sig=z",
+                                "mediaType": "video",
+                            }
+                        ],
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(proc, "get_flow_sdk", lambda: _StubSdk())
+
+    row = client.post(
+        "/api/requests",
+        json={
+            "type": "gen_video_omni",
+            "params": {
+                "prompt": "this girl smile",
+                "project_id": "abcd1234",
+                "ref_media_ids": ["ref-aaa"],
+                "duration_s": 6,
+                "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+            },
+        },
+    ).json()
+
+    w = WorkerController(handlers={"gen_video_omni": proc._handle_gen_video_omni})
+    task = asyncio.create_task(w.start())
+    try:
+        w.enqueue(row["id"])
+        for _ in range(60):
+            await asyncio.sleep(0.05)
+            current = client.get(f"/api/requests/{row['id']}").json()
+            if current["status"] not in ("queued", "running"):
+                break
+        assert current["status"] == "done", current
+        assert current["result"]["media_ids"] == ["omni-vid-aaa"]
+        assert current["result"]["duration_s"] == 6
+        assert captured["duration_s"] == 6
+        assert captured["ref_media_ids"] == ["ref-aaa"]
+        assert captured["aspect_ratio"] == "VIDEO_ASPECT_RATIO_PORTRAIT"
+    finally:
+        w.request_shutdown()
+        await asyncio.wait_for(task, timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_worker_gen_video_omni_rejects_invalid_duration(client, monkeypatch):
+    """Duration must be one of {4,6,8,10}. 5s / 7s / 12s reject hard."""
+    from flowboard.worker import processor as proc
+
+    class _StubSdk:
+        async def gen_video_omni(self, **kwargs):
+            raise AssertionError("must not dispatch with invalid duration")
+
+    monkeypatch.setattr(proc, "get_flow_sdk", lambda: _StubSdk())
+
+    out, err = await proc._handle_gen_video_omni(
+        {
+            "prompt": "test",
+            "project_id": "abcd1234",
+            "ref_media_ids": ["ref-1"],
+            "duration_s": 5,
+            "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+            "paygate_tier": "PAYGATE_TIER_ONE",
+        }
+    )
+    assert err == "invalid_duration_s"
+
+
+@pytest.mark.asyncio
+async def test_worker_gen_video_omni_requires_refs(client, monkeypatch):
+    from flowboard.worker import processor as proc
+
+    out, err = await proc._handle_gen_video_omni(
+        {
+            "prompt": "test",
+            "project_id": "abcd1234",
+            "ref_media_ids": [],
+            "duration_s": 4,
+            "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+            "paygate_tier": "PAYGATE_TIER_ONE",
+        }
+    )
+    assert err == "missing_ref_media_ids"
+
+
+def test_omni_flash_credit_cost_table():
+    """The credit table is informational only (frontend reads it) — pin
+    the contract so a Pro user doesn't get surprised by a silent rebase."""
+    from flowboard.services.flow_sdk import OMNI_FLASH_CREDIT_COST
+
+    assert OMNI_FLASH_CREDIT_COST == {4: 15, 6: 20, 8: 25, 10: 30}
+
+
+def test_omni_flash_resolve_model():
+    from flowboard.services.flow_sdk import resolve_omni_flash_model
+
+    assert resolve_omni_flash_model(4) == "abra_r2v_4s"
+    assert resolve_omni_flash_model(6) == "abra_r2v_6s"
+    assert resolve_omni_flash_model(8) == "abra_r2v_8s"
+    assert resolve_omni_flash_model(10) == "abra_r2v_10s"
+    import pytest as _pt
+    with _pt.raises(ValueError, match="unsupported"):
+        resolve_omni_flash_model(5)

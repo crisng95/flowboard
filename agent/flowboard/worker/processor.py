@@ -151,11 +151,31 @@ async def _handle_gen_image(params: dict) -> tuple[dict, Optional[str]]:
     return resp, None
 
 
-# Video polling knobs — overridable in tests. flowkit uses 420s/10s; Flow's
-# video gen routinely takes 4-6 minutes, so 5 minutes is too tight and times
-# out legitimately-finishing operations.
+# Video polling knobs — overridable in tests. 5-minute hard deadline
+# (30 cycles × 10s). When the budget runs out without all ops finishing
+# the handler returns the ``timeout_waiting_video`` sentinel and the
+# worker stamps the row as ``status='timeout'`` (distinct from
+# ``failed``) so the UI can render it as a soft auto-cancel rather than
+# a generation error.
 VIDEO_POLL_INTERVAL_S = 10.0
-VIDEO_POLL_MAX_CYCLES = 42
+VIDEO_POLL_MAX_CYCLES = 30
+
+
+def _is_request_canceled(rid: Optional[int]) -> bool:
+    """Return True iff the cancel endpoint flipped this row to canceled.
+
+    Long-running handlers call this between polls so a user-initiated
+    cancel takes effect mid-flight (we can't abort the Flow HTTP calls
+    themselves, but we can stop polling and let _process_one keep the
+    canceled status intact).
+    """
+    if not isinstance(rid, int):
+        return False
+    with get_session() as s:
+        req = s.get(Request, rid)
+        if req is None:
+            return True
+        return req.status == "canceled"
 
 
 async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
@@ -221,6 +241,7 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
     done_by_name: dict[str, bool] = {name: False for name in op_names}
     entry_by_name: dict[str, dict] = {}
     op_errors: dict[str, str] = {}
+    rid = params.get("__request_id")
 
     # Per-op resolution: each operation in the batch resolves
     # independently (success, content-filter rejection, or timeout). We
@@ -235,6 +256,22 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
     ):
         await asyncio.sleep(VIDEO_POLL_INTERVAL_S)
         poll_attempts += 1
+        if _is_request_canceled(rid):
+            # User canceled mid-poll. Bail with the special error code
+            # so _process_one knows to leave the row's canceled status
+            # intact (the cancel endpoint already stamped finished_at +
+            # error='canceled'). Any partial state we collected is
+            # preserved on `result` for the detail viewer.
+            return (
+                {
+                    "raw_dispatch": dispatch,
+                    "last_poll": last_poll,
+                    "operation_names": op_names,
+                    "done": done_by_name,
+                    "canceled": True,
+                },
+                "canceled",
+            )
         last_poll = await sdk.check_async(op_names, workflows=workflows)
         if last_poll.get("error"):
             continue
@@ -412,11 +449,551 @@ async def _handle_edit_image(params: dict) -> tuple[dict, Optional[str]]:
     return resp, None
 
 
+# ── Storyboard ────────────────────────────────────────────────────────────
+# Plan: .omc/plans/storyboard-image-node.md §6.3-6.5.
+# A storyboard request fans out into:
+#   Phase A — gen_image for every root shot (parents[k] is None) in
+#             parallel chunks of ≤4 (Flow's hard cap).
+#   Phase B — BFS through the continuity tree; siblings whose parent
+#             just turned `done` dispatch in parallel as edit_image
+#             with `base_media_id = shots[parent].mediaId`.
+# Refs are global (locked OPEN-4): same array passed to every dispatch.
+# Failures keep the partial state — descendants of a failed shot are
+# marked "blocked" so the user can retry just the failed level.
+
+def _propagate_blocked(shots: list[dict]) -> None:
+    """Any shot whose parent is error/blocked → blocked + parent_failed."""
+    n = len(shots)
+    changed = True
+    while changed:
+        changed = False
+        for k in range(n):
+            if shots[k].get("status") != "queued":
+                continue
+            p = shots[k].get("parentShotIdx")
+            if p is None:
+                continue
+            if shots[p].get("status") in ("error", "blocked"):
+                shots[k]["status"] = "blocked"
+                shots[k]["error"] = "parent_failed"
+                changed = True
+
+
+def _aggregate_node_status(shots: list[dict]) -> str:
+    statuses = {s.get("status") for s in shots}
+    if statuses == {"done"}:
+        return "done"
+    if statuses <= {"error", "blocked"}:
+        return "error"
+    if "done" in statuses:
+        return "partial"
+    return "running"
+
+
+def _persist_storyboard_progress(
+    node_id: int, shots: list[dict], node_status: str
+) -> None:
+    """Write the in-progress shots[] state to Node.data so the frontend
+    sees Phase A roots populate before Phase B finishes. Mirrors the final
+    patchNode payload the frontend writes on done — idempotent w.r.t.
+    that final write.
+
+    For 30-60s storyboards the request-level polling path only patches
+    the node ONCE on completion. Persisting after each phase lets a poll
+    of `/api/nodes/:id` return real-time progress.
+    """
+    from flowboard.db.models import Node
+    with get_session() as s:
+        node = s.get(Node, node_id)
+        if node is None:
+            return
+        new_data = dict(node.data or {})
+        new_data["shots"] = shots
+        new_data["shotCount"] = len(shots)
+        new_data["mediaIds"] = [sh.get("mediaId") for sh in shots]
+        node.data = new_data
+        node.status = node_status
+        s.add(node)
+        s.commit()
+
+
+async def _handle_gen_storyboard(params: dict) -> tuple[dict, Optional[str]]:
+    from flowboard.services import prompt_synth
+    from flowboard.services.flow_sdk import is_valid_project_id
+
+    n = params.get("shot_count")
+    if not isinstance(n, int) or not 1 <= n <= 8:
+        return {}, "shot_count_out_of_range"
+
+    project_id = params.get("project_id")
+    if not isinstance(project_id, str) or not project_id.strip():
+        return {}, "missing_project_id"
+    project_id = project_id.strip()
+    if not is_valid_project_id(project_id):
+        return {}, "invalid_project_id"
+
+    aspect = params.get("aspect_ratio") or "IMAGE_ASPECT_RATIO_LANDSCAPE"
+    tier = params.get("paygate_tier") or flow_client.paygate_tier
+    if tier is None:
+        return {}, "paygate_tier_unknown"
+
+    image_model = params.get("image_model")
+    if not isinstance(image_model, str) or not image_model.strip():
+        image_model = None
+
+    raw_refs = params.get("global_ref_media_ids")
+    refs: list[str] = []
+    if isinstance(raw_refs, list):
+        refs = [m for m in raw_refs if isinstance(m, str) and m]
+
+    # Hoist node_id read here so progressive-persistence helpers below can
+    # reach Node.data without depending on planner branch. The escape-hatch
+    # path (caller supplies shot_prompts) doesn't require a node_id — tests
+    # of the validation-only path call without one. Persistence is gated on
+    # `isinstance(node_id, int)` so a missing node_id is a no-op, not an
+    # error, here.
+    node_id = params.get("__node_id") or params.get("node_id")
+
+    # 1. Plan beats (or use caller-supplied)
+    if isinstance(params.get("shot_prompts"), list):
+        prompts = list(params["shot_prompts"])
+        parents = list(params.get("shot_parents") or [])
+        if len(prompts) != n or len(parents) != n:
+            return {}, "shot_prompts_length_mismatch"
+    else:
+        if not isinstance(node_id, int):
+            return {}, "missing_node_id_for_planner"
+        try:
+            plan = await prompt_synth.auto_prompt_storyboard(
+                node_id, count=n,
+                narrative_seed=params.get("narrative_seed", "") or "",
+            )
+        except prompt_synth.PromptSynthError as exc:
+            return {}, f"planner:{exc}"[:200]
+        prompts = list(plan["prompts"])
+        parents = list(plan["parents"])
+
+    # 2. Validate parents
+    if parents[0] is not None:
+        return {}, "parents_root_must_be_null"
+    for k in range(1, n):
+        v = parents[k]
+        # Reject bool explicitly: in Python `bool` subclasses `int`, so a
+        # caller posting `shot_parents=[null, true]` would otherwise pass
+        # the `isinstance(v, int)` check and `True == 1` would silently be
+        # used as the parent index. Mirrors the planner-side validation in
+        # `auto_prompt_storyboard` (services/prompt_synth.py).
+        if v is not None and not (
+            isinstance(v, int) and not isinstance(v, bool) and 0 <= v < k
+        ):
+            return {}, f"parents_oob_at_{k}"
+
+    # 3. Initialise shots state
+    shots: list[dict] = [
+        {
+            "idx": k,
+            "prompt": prompts[k],
+            "parentShotIdx": parents[k],
+            "mediaId": None,
+            "status": "queued",
+            "error": None,
+        }
+        for k in range(n)
+    ]
+
+    sdk = get_flow_sdk()
+
+    async def _ingest(entries: list[dict]) -> None:
+        urls = [e for e in entries if isinstance(e, dict) and e.get("url")]
+        if not urls:
+            return
+        try:
+            media_service.ingest_urls(urls)
+        except Exception:  # noqa: BLE001
+            logger.exception("auto-ingest failed in gen_storyboard")
+
+    # 4. Phase A — dispatch roots in chunks of ≤4
+    roots = [k for k in range(n) if parents[k] is None]
+    for chunk_start in range(0, len(roots), 4):
+        chunk = roots[chunk_start:chunk_start + 4]
+        try:
+            res = await sdk.gen_image(
+                prompt=prompts[chunk[0]],
+                project_id=project_id,
+                aspect_ratio=aspect,
+                paygate_tier=tier,
+                ref_media_ids=refs or None,
+                variant_count=len(chunk),
+                prompts=[prompts[k] for k in chunk],
+                image_model=image_model,
+            )
+            if (res or {}).get("error"):
+                err_msg = str(res["error"])[:200]
+                for k in chunk:
+                    shots[k]["status"] = "error"
+                    shots[k]["error"] = err_msg
+                continue
+            await _ingest((res or {}).get("media_entries") or [])
+            ids = (res or {}).get("media_ids") or []
+            for i, k in enumerate(chunk):
+                mid = ids[i] if i < len(ids) else None
+                shots[k]["mediaId"] = mid
+                shots[k]["status"] = "done" if mid else "error"
+                shots[k]["error"] = None if mid else "missing_media"
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("gen_storyboard root chunk failed")
+            err_msg = str(exc)[:200]
+            for k in chunk:
+                shots[k]["status"] = "error"
+                shots[k]["error"] = err_msg
+    _propagate_blocked(shots)
+    # Persist Phase A progress so the frontend sees roots populate before
+    # Phase B finishes (mirrors the final patchNode payload — idempotent).
+    if isinstance(node_id, int):
+        _persist_storyboard_progress(
+            node_id, shots, _aggregate_node_status(shots)
+        )
+
+    # 5. Phase B — BFS children level by level
+    while True:
+        eligible = [
+            k for k in range(n)
+            if shots[k]["status"] == "queued"
+            and parents[k] is not None
+            and shots[parents[k]]["status"] == "done"
+        ]
+        if not eligible:
+            break
+
+        async def _edit_one(k: int) -> None:
+            try:
+                res = await sdk.edit_image(
+                    prompt=prompts[k],
+                    project_id=project_id,
+                    source_media_id=shots[parents[k]]["mediaId"],
+                    ref_media_ids=refs or None,
+                    aspect_ratio=aspect,
+                    paygate_tier=tier,
+                    image_model=image_model,
+                )
+                if (res or {}).get("error"):
+                    shots[k]["status"] = "error"
+                    shots[k]["error"] = str(res["error"])[:200]
+                    return
+                await _ingest((res or {}).get("media_entries") or [])
+                ids = (res or {}).get("media_ids") or []
+                mid = ids[0] if ids else None
+                shots[k]["mediaId"] = mid
+                shots[k]["status"] = "done" if mid else "error"
+                shots[k]["error"] = None if mid else "missing_media"
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("gen_storyboard child %d failed", k)
+                shots[k]["status"] = "error"
+                shots[k]["error"] = str(exc)[:200]
+
+        await asyncio.gather(*[_edit_one(k) for k in eligible])
+        _propagate_blocked(shots)
+        # Persist after each BFS level so a long Phase B reveals progress
+        # tile-by-tile. The next eligibility scan uses the in-memory shots
+        # list, not the persisted copy, so this write is purely for
+        # frontend visibility.
+        if isinstance(node_id, int):
+            _persist_storyboard_progress(
+                node_id, shots, _aggregate_node_status(shots)
+            )
+
+    return (
+        {
+            "shots": shots,
+            "media_ids": [s["mediaId"] for s in shots],
+            "node_status": _aggregate_node_status(shots),
+        },
+        None,
+    )
+
+
+async def _handle_retry_storyboard_shot(params: dict) -> tuple[dict, Optional[str]]:
+    from flowboard.db.models import Node
+    from flowboard.services.flow_sdk import is_valid_project_id
+
+    shot_idx = params.get("shot_idx")
+    if not isinstance(shot_idx, int) or shot_idx < 0:
+        return {}, "missing_shot_idx"
+
+    node_id = params.get("__node_id") or params.get("node_id")
+    if not isinstance(node_id, int):
+        return {}, "missing_node_id"
+
+    # Pull current shots[] + node-level config from Node.data.
+    with get_session() as s:
+        node = s.get(Node, node_id)
+        if node is None:
+            return {}, "node_not_found"
+        data = dict(node.data or {})
+        shots = list(data.get("shots") or [])
+        if not (0 <= shot_idx < len(shots)):
+            return {}, "shot_idx_out_of_range"
+        shot = dict(shots[shot_idx])
+        node_aspect = data.get("aspectRatio")
+        node_refs_raw = data.get("globalRefMediaIds")
+        node_refs = (
+            [m for m in node_refs_raw if isinstance(m, str) and m]
+            if isinstance(node_refs_raw, list) else []
+        )
+        node_model = data.get("imageModel")
+        node_tier = data.get("paygateTier")
+        node_project = data.get("projectId")
+
+    prompt = shot.get("prompt")
+    parent_idx = shot.get("parentShotIdx")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return {}, "shot_has_no_prompt"
+
+    project_id = params.get("project_id") or node_project
+    aspect = params.get("aspect_ratio") or node_aspect or "IMAGE_ASPECT_RATIO_LANDSCAPE"
+    tier = params.get("paygate_tier") or node_tier or flow_client.paygate_tier
+    raw_refs = params.get("ref_media_ids")
+    refs = (
+        [m for m in raw_refs if isinstance(m, str) and m]
+        if isinstance(raw_refs, list) else node_refs
+    )
+    model = params.get("image_model") or node_model
+    if not isinstance(model, str) or not model.strip():
+        model = None
+
+    if not isinstance(project_id, str) or not project_id.strip():
+        return {}, "missing_project_id"
+    project_id = project_id.strip()
+    if not is_valid_project_id(project_id):
+        return {}, "invalid_project_id"
+    if tier is None:
+        return {}, "paygate_tier_unknown"
+
+    sdk = get_flow_sdk()
+
+    if parent_idx is None:
+        # Root retry — gen_image with variant_count=1.
+        try:
+            res = await sdk.gen_image(
+                prompt=prompt,
+                project_id=project_id,
+                aspect_ratio=aspect,
+                paygate_tier=tier,
+                ref_media_ids=refs or None,
+                variant_count=1,
+                prompts=[prompt],
+                image_model=model,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("retry_storyboard_shot root dispatch failed")
+            return {}, f"gen_image:{exc}"[:200]
+    else:
+        if not (0 <= parent_idx < len(shots)):
+            return {}, "parent_idx_out_of_range"
+        parent_status = shots[parent_idx].get("status")
+        if parent_status != "done":
+            return {}, "parent_not_ready"
+        parent_mid = shots[parent_idx].get("mediaId")
+        if not isinstance(parent_mid, str) or not parent_mid:
+            return {}, "parent_has_no_media"
+        try:
+            res = await sdk.edit_image(
+                prompt=prompt,
+                project_id=project_id,
+                source_media_id=parent_mid,
+                ref_media_ids=refs or None,
+                aspect_ratio=aspect,
+                paygate_tier=tier,
+                image_model=model,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("retry_storyboard_shot child dispatch failed")
+            return {}, f"edit_image:{exc}"[:200]
+
+    if (res or {}).get("error"):
+        return res, str(res["error"])[:200]
+    entries = (res or {}).get("media_entries") or []
+    urls = [e for e in entries if isinstance(e, dict) and e.get("url")]
+    if urls:
+        try:
+            media_service.ingest_urls(urls)
+        except Exception:  # noqa: BLE001
+            logger.exception("auto-ingest failed in retry_storyboard_shot")
+    ids = (res or {}).get("media_ids") or []
+    new_mid = ids[0] if ids else None
+    return (
+        {
+            "shot_idx": shot_idx,
+            "media_id": new_mid,
+            "media_ids": [new_mid] if new_mid else [],
+        },
+        None,
+    )
+
+
+# ── Omni Flash r2v ────────────────────────────────────────────────────────
+# Variable-duration video model with a distinct endpoint + body shape from
+# Veo i2v. See agent/flowboard/services/flow_sdk.py::gen_video_omni for the
+# request assembly. Single operation per request (no multi-source batching
+# like Veo's start_media_ids), so the polling logic collapses to a single
+# op + first-error-wins, simpler than _handle_gen_video.
+
+async def _handle_gen_video_omni(params: dict) -> tuple[dict, Optional[str]]:
+    from flowboard.services.flow_sdk import is_valid_project_id
+
+    prompt = params.get("prompt")
+    project_id = params.get("project_id")
+    raw_refs = params.get("ref_media_ids")
+    if not isinstance(raw_refs, list):
+        # Also accept the legacy single-source field for symmetry with
+        # Veo's start_media_id, so the same upstream-walk on the frontend
+        # works without a special-case.
+        raw_refs = (
+            [params.get("start_media_id")]
+            if isinstance(params.get("start_media_id"), str)
+            else []
+        )
+    ref_media_ids = [m for m in raw_refs if isinstance(m, str) and m.strip()]
+    duration_s = params.get("duration_s")
+
+    if not isinstance(prompt, str) or not prompt.strip():
+        return {}, "missing_prompt"
+    if not isinstance(project_id, str) or not project_id.strip():
+        return {}, "missing_project_id"
+    project_id = project_id.strip()
+    if not is_valid_project_id(project_id):
+        return {}, "invalid_project_id"
+    if not ref_media_ids:
+        return {}, "missing_ref_media_ids"
+    if not isinstance(duration_s, int) or duration_s not in (4, 6, 8, 10):
+        return {}, "invalid_duration_s"
+    aspect = params.get("aspect_ratio") or "VIDEO_ASPECT_RATIO_PORTRAIT"
+    tier = params.get("paygate_tier") or flow_client.paygate_tier
+    if tier is None:
+        return {}, "paygate_tier_unknown"
+
+    sdk = get_flow_sdk()
+    dispatch = await sdk.gen_video_omni(
+        prompt=prompt.strip(),
+        project_id=project_id,
+        ref_media_ids=ref_media_ids,
+        duration_s=duration_s,
+        aspect_ratio=aspect,
+        paygate_tier=tier,
+    )
+    if dispatch.get("error"):
+        return dispatch, str(dispatch["error"])[:200]
+
+    op_names = dispatch.get("operation_names") or []
+    if not op_names:
+        return dispatch, "no_operations_returned"
+    workflows = dispatch.get("workflows") or None
+
+    poll_attempts = 0
+    last_poll: dict = {}
+    done_by_name: dict[str, bool] = {name: False for name in op_names}
+    entry_by_name: dict[str, dict] = {}
+    op_errors: dict[str, str] = {}
+    rid = params.get("__request_id")
+
+    while (
+        poll_attempts < VIDEO_POLL_MAX_CYCLES
+        and not all(done_by_name.values())
+    ):
+        await asyncio.sleep(VIDEO_POLL_INTERVAL_S)
+        poll_attempts += 1
+        if _is_request_canceled(rid):
+            return (
+                {
+                    "raw_dispatch": dispatch,
+                    "last_poll": last_poll,
+                    "operation_names": op_names,
+                    "done": done_by_name,
+                    "canceled": True,
+                },
+                "canceled",
+            )
+        last_poll = await sdk.check_async(op_names, workflows=workflows)
+        if last_poll.get("error"):
+            continue
+        for op in last_poll.get("operations") or []:
+            if not isinstance(op, dict):
+                continue
+            name = op.get("name")
+            if not isinstance(name, str) or done_by_name.get(name, False):
+                continue
+            err = op.get("error")
+            if isinstance(err, str) and err:
+                done_by_name[name] = True
+                op_errors[name] = err
+                continue
+            if op.get("done"):
+                done_by_name[name] = True
+                for e in op.get("media_entries") or []:
+                    if isinstance(e, dict) and e.get("media_id"):
+                        entry_by_name[name] = e
+                        break
+
+    for name in op_names:
+        if not done_by_name.get(name) and name not in op_errors:
+            op_errors[name] = "timeout_waiting_video"
+
+    positional_ids: list[Optional[str]] = []
+    slot_errors: list[Optional[str]] = []
+    succeeded_entries: list[dict] = []
+    for name in op_names:
+        e = entry_by_name.get(name)
+        if isinstance(e, dict) and isinstance(e.get("media_id"), str):
+            positional_ids.append(e["media_id"])
+            succeeded_entries.append(e)
+            slot_errors.append(None)
+        else:
+            positional_ids.append(None)
+            slot_errors.append(op_errors.get(name))
+
+    if not any(positional_ids):
+        first_err = next(iter(op_errors.values()), "timeout_waiting_video")
+        return (
+            {
+                "raw_dispatch": dispatch,
+                "last_poll": last_poll,
+                "operation_names": op_names,
+                "done": done_by_name,
+                "op_errors": op_errors,
+            },
+            first_err,
+        )
+
+    entries_with_urls = [
+        e for e in succeeded_entries if isinstance(e, dict) and e.get("url")
+    ]
+    if entries_with_urls:
+        try:
+            media_service.ingest_urls(entries_with_urls)
+        except Exception:  # noqa: BLE001
+            logger.exception("auto-ingest from gen_video_omni response failed")
+
+    return (
+        {
+            "raw_dispatch": dispatch,
+            "last_poll": last_poll,
+            "operation_names": op_names,
+            "media_ids": positional_ids,
+            "media_entries": succeeded_entries,
+            "op_errors": op_errors,
+            "slot_errors": slot_errors,
+            "duration_s": duration_s,
+        },
+        None,
+    )
+
+
 _DEFAULT_HANDLERS: dict[str, Handler] = {
     "proxy": _handle_proxy,
     "create_project": _handle_create_project,
     "gen_image": _handle_gen_image,
     "gen_video": _handle_gen_video,
+    "gen_video_omni": _handle_gen_video_omni,
     "edit_image": _handle_edit_image,
     "gen_variant": None,
 }
@@ -631,6 +1208,9 @@ class WorkerController:
                 # prefix avoids colliding with handler-defined fields.
                 if req.node_id is not None and "__node_id" not in params:
                     params["__node_id"] = req.node_id
+                # Long-running handlers re-check this rid between polls
+                # to honor user-initiated cancels.
+                params["__request_id"] = rid
 
             # Release the session during the possibly-long RPC.
             result, err = await handler(params)
@@ -639,10 +1219,22 @@ class WorkerController:
                 req = s.get(Request, rid)
                 if req is None:
                     return
+                # Don't overwrite a canceled row with a late-arriving
+                # done/failed stamp. The cancel endpoint already set
+                # status='canceled' and finished_at; we only persist the
+                # partial result for debugging visibility.
+                if req.status == "canceled":
+                    if isinstance(result, dict):
+                        req.result = result
+                        s.add(req)
+                        s.commit()
+                    return
                 req.result = result if isinstance(result, dict) else {"value": result}
                 req.finished_at = datetime.now(timezone.utc)
                 if err:
-                    req.status = "failed"
+                    # Video-poll exhaustion gets its own status so the UI
+                    # can render "TIMEOUT" instead of a generic failure.
+                    req.status = "timeout" if err == "timeout_waiting_video" else "failed"
                     req.error = err
                 else:
                     req.status = "done"
@@ -654,7 +1246,7 @@ class WorkerController:
             try:
                 with get_session() as s:
                     req = s.get(Request, rid)
-                    if req is not None:
+                    if req is not None and req.status != "canceled":
                         req.status = "failed"
                         req.error = str(exc)[:500]
                         req.finished_at = datetime.now(timezone.utc)

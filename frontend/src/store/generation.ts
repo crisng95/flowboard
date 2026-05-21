@@ -552,27 +552,54 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           set({ error: "Video generation requires a source image (connect an upstream image node)" });
           return;
         }
-        const videoParams: Record<string, unknown> = {
-          prompt: opts.prompt,
-          project_id: projectId,
-          aspect_ratio: opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_LANDSCAPE",
-          // Tier precedence: explicit caller arg > auto-detected from
-          // Flow > TIER_ONE fallback. The dialog no longer asks the user.
-          paygate_tier:
-            opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
-          // Backend resolves [tier][quality][aspect] → Flow model key.
-          video_quality: useSettingsStore.getState().videoQuality,
-        };
-        if (hasMulti) {
-          videoParams.start_media_ids = opts.sourceMediaIds;
+        const settings = useSettingsStore.getState();
+        // Omni Flash takes a different endpoint + body shape on the
+        // backend (referenceImages[] + per-duration model key, not Veo
+        // i2v's startImage). The two model families never share a Flow
+        // request — branch on the user's setting.
+        if (settings.videoModel === "omni_flash") {
+          const refs = hasMulti
+            ? (opts.sourceMediaIds as string[])
+            : opts.sourceMediaId
+              ? [opts.sourceMediaId]
+              : [];
+          reqDto = await createRequest({
+            type: "gen_video_omni",
+            node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
+            params: {
+              prompt: opts.prompt,
+              project_id: projectId,
+              ref_media_ids: refs,
+              duration_s: settings.omniFlashDuration,
+              aspect_ratio:
+                opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_PORTRAIT",
+              paygate_tier:
+                opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
+            },
+          });
         } else {
-          videoParams.start_media_id = opts.sourceMediaId;
+          const videoParams: Record<string, unknown> = {
+            prompt: opts.prompt,
+            project_id: projectId,
+            aspect_ratio: opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_LANDSCAPE",
+            // Tier precedence: explicit caller arg > auto-detected from
+            // Flow > TIER_ONE fallback. The dialog no longer asks the user.
+            paygate_tier:
+              opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
+            // Backend resolves [tier][quality][aspect] → Flow model key.
+            video_quality: settings.videoQuality,
+          };
+          if (hasMulti) {
+            videoParams.start_media_ids = opts.sourceMediaIds;
+          } else {
+            videoParams.start_media_id = opts.sourceMediaId;
+          }
+          reqDto = await createRequest({
+            type: "gen_video",
+            node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
+            params: videoParams,
+          });
         }
-        reqDto = await createRequest({
-          type: "gen_video",
-          node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
-          params: videoParams,
-        });
       } else {
         const refMediaIds = collectUpstreamRefMediaIds(rfId);
         // Concept-aware aspect default: humanoid / creature / robot /
@@ -817,13 +844,31 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               delete next[rfId];
               return { active: next };
             });
-          } else if (req.status === "failed") {
-            const errMsg = req.error ?? "unknown";
+          } else if (req.status === "failed" || req.status === "timeout") {
+            // 'timeout' is the dedicated terminal state for the
+            // 5-minute video-gen budget. We render it as a node error
+            // so the card visually flags the stuck run, but tag the
+            // message so the user can tell auto-timeout apart from a
+            // generation failure.
+            const errMsg =
+              req.status === "timeout"
+                ? `Timed out after 5 minutes (${req.error ?? "video_timeout"})`
+                : (req.error ?? "unknown");
             useBoardStore.getState().updateNodeData(rfId, { status: "error", error: errMsg });
             set((s) => {
               const next = { ...s.active };
               delete next[rfId];
-              return { active: next, error: req.error ?? "Generation failed" };
+              return { active: next, error: errMsg };
+            });
+          } else if (req.status === "canceled") {
+            // User-initiated cancel from the activity bell. Don't
+            // stamp the node as 'error' — clear the in-flight state
+            // and leave whatever the node was showing before.
+            useBoardStore.getState().updateNodeData(rfId, { status: "idle" });
+            set((s) => {
+              const next = { ...s.active };
+              delete next[rfId];
+              return { active: next };
             });
           } else {
             // queued — keep polling
@@ -973,8 +1018,23 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           });
           return;
         }
-        // failed
-        const errMsg = req.error ?? "refine failed";
+        if (req.status === "canceled") {
+          useBoardStore.getState().updateNodeData(rfId, { status: "idle" });
+          set((s) => {
+            const next = { ...s.active };
+            delete next[rfId];
+            return { active: next };
+          });
+          return;
+        }
+        // failed | timeout — treat as a hard error on the node card so
+        // the user sees something happened. 'timeout' is the auto-cancel
+        // after the 5-minute video-gen budget; tag the message so the
+        // user can tell auto-timeout apart from a real failure.
+        const errMsg =
+          req.status === "timeout"
+            ? `Timed out after 5 minutes (${req.error ?? "video_timeout"})`
+            : (req.error ?? "refine failed");
         useBoardStore.getState().updateNodeData(rfId, {
           status: "error",
           error: errMsg,
