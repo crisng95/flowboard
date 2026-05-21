@@ -545,31 +545,38 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     try {
       const nodeDbId = parseInt(rfId, 10);
       if (kind === "video") {
-        const hasMulti =
-          Array.isArray(opts.sourceMediaIds) && opts.sourceMediaIds.length > 0;
-        if (!hasMulti && !opts.sourceMediaId) {
-          useBoardStore.getState().updateNodeData(rfId, { status: "error", error: "no source media" });
-          set({ error: "Video generation requires a source image (connect an upstream image node)" });
-          return;
-        }
         const settings = useSettingsStore.getState();
-        // Omni Flash takes a different endpoint + body shape on the
-        // backend (referenceImages[] + per-duration model key, not Veo
-        // i2v's startImage). The two model families never share a Flow
-        // request — branch on the user's setting.
-        if (settings.videoModel === "omni_flash") {
-          const refs = hasMulti
-            ? (opts.sourceMediaIds as string[])
-            : opts.sourceMediaId
-              ? [opts.sourceMediaId]
-              : [];
+        const isOmni = settings.videoModel === "omni_flash";
+
+        // Omni Flash takes a fundamentally different input shape from
+        // Veo i2v. Veo wants ONE source image to use as the literal
+        // start frame (multi-source = batch of N parallel i2v calls,
+        // one per variant). Omni Flash takes "ingredients" — a list of
+        // referenceImages[] where each entry is IMAGE_USAGE_TYPE_ASSET.
+        // The model conditions on the assets but doesn't use any of
+        // them as a literal frame. So we walk EVERY upstream image-
+        // bearing edge (character / image / visual_asset / Storyboard)
+        // and pass them all, not just the one edge the i2v UI picked.
+        if (isOmni) {
+          const ingredients = collectUpstreamRefMediaIds(rfId);
+          if (ingredients.length === 0) {
+            useBoardStore.getState().updateNodeData(rfId, {
+              status: "error",
+              error: "no ingredients",
+            });
+            set({
+              error:
+                "Omni Flash needs at least one ingredient (connect an upstream Character / Image / Visual asset).",
+            });
+            return;
+          }
           reqDto = await createRequest({
             type: "gen_video_omni",
             node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
             params: {
               prompt: opts.prompt,
               project_id: projectId,
-              ref_media_ids: refs,
+              ref_media_ids: ingredients,
               duration_s: settings.omniFlashDuration,
               aspect_ratio:
                 opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_PORTRAIT",
@@ -578,6 +585,17 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             },
           });
         } else {
+          // Veo i2v path — still validates "must have a single source
+          // image / variant batch" because that's the model's input
+          // contract. Omni's ingredient validation above runs first
+          // when isOmni; this check only fires for the Veo branch.
+          const hasMulti =
+            Array.isArray(opts.sourceMediaIds) && opts.sourceMediaIds.length > 0;
+          if (!hasMulti && !opts.sourceMediaId) {
+            useBoardStore.getState().updateNodeData(rfId, { status: "error", error: "no source media" });
+            set({ error: "Veo i2v requires a source image (connect an upstream image node)" });
+            return;
+          }
           const videoParams: Record<string, unknown> = {
             prompt: opts.prompt,
             project_id: projectId,
