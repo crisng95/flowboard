@@ -228,16 +228,37 @@ export function Board({
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
+      // Persist node deletes immediately. ReactFlow ALSO fires
+      // `onNodesDelete` for the same event, but we don't trust it as the
+      // sole hook because in some keyboard-focus configurations only the
+      // `onNodesChange` event with type:"remove" fires (the local state
+      // updates via applyNodeChanges but onNodesDelete never gets called
+      // → node visually disappears but reappears on reload because the
+      // backend never heard about it). Calling deleteNodeByRfId here
+      // covers both cases; the action is idempotent server-side (404 on
+      // the second call is silently swallowed).
+      for (const c of changes) {
+        if (c.type === "remove") {
+          void deleteNodeByRfId(c.id);
+        }
+      }
       setNodes(applyNodeChanges(changes, useBoardStore.getState().nodes) as FlowNode[]);
     },
-    [setNodes],
+    [setNodes, deleteNodeByRfId],
   );
 
   const onEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
+      // Same fix as onNodesChange — backend deletion is driven by the
+      // change event, not by ReactFlow's separate onEdgesDelete callback.
+      for (const c of changes) {
+        if (c.type === "remove") {
+          void deleteEdgeByRfId(c.id);
+        }
+      }
       setEdges(applyEdgeChanges(changes, useBoardStore.getState().edges));
     },
-    [setEdges],
+    [setEdges, deleteEdgeByRfId],
   );
 
   const onNodeDragStop: OnNodeDrag<FlowNode> = useCallback(
