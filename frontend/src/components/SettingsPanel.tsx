@@ -176,72 +176,32 @@ export function SettingsPanel({ open, onClose, onLogout, logoutPending }: Settin
         </div>
       </div>
 
+      {/* Single unified Video model picker — flat list of every option
+          (Veo tiers + Omni Flash). Selecting a Veo row stamps both
+          videoModel="veo" + the matching quality; selecting Omni Flash
+          stamps videoModel="omni_flash" (duration is picked per dispatch
+          in the GenerationDialog). */}
       <div className="settings-panel__section">
-        <div className="settings-panel__label">Video model family</div>
-        <div className="settings-panel__radio-group">
-          <label
-            className={`settings-panel__radio${videoModel === "veo" ? " settings-panel__radio--active" : ""}`}
-          >
-            <input
-              type="radio"
-              name="video-model-family"
-              value="veo"
-              checked={videoModel === "veo"}
-              onChange={() => setVideoModel("veo")}
-            />
-            <div>
-              <div className="settings-panel__radio-label">Veo 3.1 (i2v)</div>
-              <div className="settings-panel__radio-hint">
-                Image-to-video from a single source image. ~8s clips.
-                Quality tier (lite / fast / quality) selectable below.
-              </div>
-            </div>
-          </label>
-          <label
-            className={`settings-panel__radio${videoModel === "omni_flash" ? " settings-panel__radio--active" : ""}`}
-          >
-            <input
-              type="radio"
-              name="video-model-family"
-              value="omni_flash"
-              checked={videoModel === "omni_flash"}
-              onChange={() => setVideoModel("omni_flash")}
-            />
-            <div>
-              <div className="settings-panel__radio-label">Omni Flash (r2v)</div>
-              <div className="settings-panel__radio-hint">
-                Reference-image to video. Variable duration (4 / 6 / 8 / 10s)
-                picked per dispatch. Credit cost: 15 / 20 / 25 / 30.
-                Portrait + landscape; no Veo quality tiers.
-              </div>
-            </div>
-          </label>
-        </div>
-      </div>
-
-      {videoModel === "veo" && (
-      <div className="settings-panel__section">
-        <div className="settings-panel__label">Veo quality tier</div>
+        <div className="settings-panel__label">Video model</div>
         <div className="settings-panel__radio-group">
           {VIDEO_QUALITIES.map((q) => {
-            // *_relaxed variants are Ultra-only — Pro users picking
-            // either would silently fall back to Fast on the backend
-            // (no Tier 1 mapping in VIDEO_MODEL_KEYS). Disable the
-            // option here so the UI never lies about which checkpoint
-            // is actually being dispatched.
             const locked = q.ultraOnly && tier !== "PAYGATE_TIER_TWO";
+            const checked = videoModel === "veo" && videoQuality === q.key;
             return (
               <label
                 key={q.key}
-                className={`settings-panel__radio${videoQuality === q.key ? " settings-panel__radio--active" : ""}${locked ? " settings-panel__radio--locked" : ""}`}
+                className={`settings-panel__radio${checked ? " settings-panel__radio--active" : ""}${locked ? " settings-panel__radio--locked" : ""}`}
               >
                 <input
                   type="radio"
-                  name="video-quality"
-                  value={q.key}
-                  checked={videoQuality === q.key}
+                  name="video-model"
+                  value={`veo:${q.key}`}
+                  checked={checked}
                   disabled={locked}
-                  onChange={() => setVideoQuality(q.key)}
+                  onChange={() => {
+                    setVideoModel("veo");
+                    setVideoQuality(q.key);
+                  }}
                 />
                 <div>
                   <div className="settings-panel__radio-label">
@@ -255,9 +215,29 @@ export function SettingsPanel({ open, onClose, onLogout, logoutPending }: Settin
               </label>
             );
           })}
+          <label
+            className={`settings-panel__radio${videoModel === "omni_flash" ? " settings-panel__radio--active" : ""}`}
+          >
+            <input
+              type="radio"
+              name="video-model"
+              value="omni_flash"
+              checked={videoModel === "omni_flash"}
+              onChange={() => setVideoModel("omni_flash")}
+            />
+            <div>
+              <div className="settings-panel__radio-label">
+                Omni Flash (r2v)
+              </div>
+              <div className="settings-panel__radio-hint">
+                Reference-image to video. Variable duration (4 / 6 / 8 / 10s)
+                picked per dispatch — 15 / 20 / 25 / 30 credits. Portrait +
+                landscape supported.
+              </div>
+            </div>
+          </label>
         </div>
       </div>
-      )}
 
       <div className="settings-panel__section">
         <div className="settings-panel__label">Image model</div>
