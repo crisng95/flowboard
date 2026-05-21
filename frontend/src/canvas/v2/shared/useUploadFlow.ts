@@ -56,6 +56,9 @@ export interface UploadFlow {
     accept: string;
     onChange: (e: ChangeEvent<HTMLInputElement>) => void;
   };
+  /** Upload an image from a remote URL. Fetches client-side and
+   *  re-uploads as a blob. May fail on CORS-restricted origins. */
+  uploadFromUrl: (url: string) => Promise<void>;
 }
 
 /**
@@ -84,12 +87,21 @@ export function useUploadFlow(
     return () => window.clearTimeout(t);
   }, [uploadJustFinished]);
 
-  function persistMedia(newMediaId: string, aspectRatio?: string) {
+  function persistMedia(
+    newMediaId: string,
+    aspectRatio?: string,
+    fileName?: string,
+    imageWidth?: number,
+    imageHeight?: number,
+  ) {
     useBoardStore.getState().updateNodeData(rfId, {
       mediaId: newMediaId,
       status: "done",
       aiBrief: undefined,
       aspectRatio,
+      fileName: fileName ?? null,
+      imageWidth,
+      imageHeight,
     });
     const dbId = parseInt(rfId, 10);
     if (!Number.isNaN(dbId)) {
@@ -97,13 +109,19 @@ export function useUploadFlow(
         status: "done",
         data: {
           mediaId: newMediaId,
-          aiBrief: null, // sentinel — clear stale brief on backend merge
+          aiBrief: null,
           aspectRatio,
+          fileName: fileName ?? null,
+          imageWidth,
+          imageHeight,
           renderedAt: new Date().toISOString(),
         },
       }).catch(() => {});
     }
-    requestAutoBrief(rfId, newMediaId);
+    // Only request auto-brief when the user has opted in via settings.
+    if (data.type === "add_reference" || data.autoBriefEnabled) {
+      requestAutoBrief(rfId, newMediaId);
+    }
   }
 
   async function uploadOwn(file: File) {
@@ -131,7 +149,13 @@ export function useUploadFlow(
         projectId,
         Number.isNaN(dbId) ? undefined : dbId,
       );
-      persistMedia(resp.media_id, resp.aspect_ratio);
+      persistMedia(
+        resp.media_id,
+        resp.aspect_ratio,
+        file.name,
+        resp.width,
+        resp.height,
+      );
       setUploadJustFinished(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "upload failed");
@@ -184,6 +208,29 @@ export function useUploadFlow(
           ? "filled"
           : "empty";
 
+  async function uploadFromUrl(url: string) {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    setError(null);
+    setUploading(true);
+    try {
+      const res = await fetch(trimmed);
+      if (!res.ok) throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+      const blob = await res.blob();
+      if (!blob.type.startsWith("image/")) {
+        throw new Error(`Not an image: ${blob.type || "unknown type"}`);
+      }
+      const ext = blob.type.split("/")[1]?.split("+")[0] ?? "jpg";
+      const fileName = trimmed.split("/").pop()?.split("?")[0] ?? `ref.${ext}`;
+      const file = new File([blob], fileName, { type: blob.type });
+      await uploadOwn(file);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "URL fetch failed");
+    } finally {
+      setUploading(false);
+    }
+  }
+
   return {
     bodyState,
     uploading,
@@ -200,6 +247,7 @@ export function useUploadFlow(
       accept: ACCEPT_MIME,
       onChange,
     },
+    uploadFromUrl,
   };
 }
 

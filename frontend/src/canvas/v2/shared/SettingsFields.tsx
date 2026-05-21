@@ -186,3 +186,50 @@ export function RadioField<V extends string>({
     </FieldShell>
   );
 }
+
+// ── ToggleField ──────────────────────────────────────────────────────────
+
+export interface ToggleFieldProps {
+  label: string;
+  value: boolean;
+  onChange: (next: boolean) => void;
+  hint?: string;
+}
+
+export function ToggleField({ label, value, onChange, hint }: ToggleFieldProps) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col gap-0.5 min-w-0">
+        <span className="text-2xs font-medium uppercase tracking-wide text-ink-muted">
+          {label}
+        </span>
+        {hint && (
+          <span className="text-2xs text-ink-placeholder leading-snug">{hint}</span>
+        )}
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={value}
+        onClick={(e) => {
+          e.stopPropagation();
+          onChange(!value);
+        }}
+        className={cn(
+          "relative shrink-0 h-5 w-9 rounded-full border transition-colors duration-150",
+          value
+            ? "bg-accent border-accent/60"
+            : "bg-white/[0.06] border-white/[0.10]",
+        )}
+      >
+        <span
+          className={cn(
+            "absolute top-0.5 size-4 rounded-full transition-transform duration-150",
+            "bg-white shadow-sm",
+            value ? "translate-x-4" : "translate-x-0.5",
+          )}
+        />
+      </button>
+    </div>
+  );
+}

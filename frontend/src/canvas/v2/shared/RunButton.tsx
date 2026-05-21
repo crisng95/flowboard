@@ -1,4 +1,4 @@
-﻿/**
+/**
  * RunButton - the Magnific-style accent gradient circle that
  * dispatches a node''s primary action ("generate", "run").
  *
@@ -11,20 +11,18 @@
  * component does not fetch; it just renders.
  */
 import { Play } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type { MouseEvent } from "react";
 
 import { cn } from "../../../lib/utils";
 
 export interface RunButtonProps {
   onClick: () => void;
-  /** Disable click + dim the button. Use for "missing inputs" or
-   *  "already running" states. */
   disabled?: boolean;
-  /** Tooltip text, also used as aria-label. */
   label?: string;
-  /** Pulses the gradient ring while a generation is in flight. The
-   *  parent decides when this is true (typically status === running). */
   busy?: boolean;
+  /** Override the default Play icon. */
+  icon?: LucideIcon;
 }
 
 export function RunButton({
@@ -32,6 +30,7 @@ export function RunButton({
   disabled = false,
   label = "Run",
   busy = false,
+  icon: Icon = Play,
 }: RunButtonProps) {
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
@@ -59,7 +58,7 @@ export function RunButton({
         boxShadow: "0 4px 14px rgba(124,92,255,0.4)",
       }}
     >
-      <Play size={14} fill="white" stroke="white" strokeWidth={0} />
+      <Icon size={14} fill="white" stroke="white" strokeWidth={0} />
     </button>
   );
 }
