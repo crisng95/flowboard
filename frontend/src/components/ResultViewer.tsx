@@ -78,6 +78,11 @@ export function ResultViewer() {
   const [mediaReady, setMediaReady] = useState(false);
   const [cacheKey, setCacheKey] = useState(0);
   const [status, setStatus] = useState<MediaStatus | null>(null);
+  // Save-to-library state. MUST live above the `if (!data) return null`
+  // early-return below — React's Rules of Hooks require all hooks to be
+  // called unconditionally on every render in the same order.
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [saving, setSaving] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<Element | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -394,8 +399,7 @@ export function ResultViewer() {
   // Save the currently-viewed variant to the cross-board Reference
   // library. Backend POST is idempotent on media_id, so multi-clicking
   // is safe — we still flip the button to "Saved" for 1.5s for feedback.
-  const [savedFlash, setSavedFlash] = useState(false);
-  const [saving, setSaving] = useState(false);
+  // (State declared at the top of the component to satisfy Rules of Hooks.)
 
   async function handleSaveToLibrary() {
     if (!rfId || !data || !currentMediaId || saving) return;
