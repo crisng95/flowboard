@@ -350,7 +350,10 @@ export interface RequestDTO {
   node_id: number | null;
   type: string;
   params: Record<string, unknown>;
-  status: "queued" | "running" | "done" | "failed";
+  // 'canceled' = user cancelled the request from the activity bell.
+  // 'timeout' = backend's 5-minute video-gen budget elapsed; the row
+  // self-transitions out of running. Both are terminal states.
+  status: "queued" | "running" | "done" | "failed" | "canceled" | "timeout";
   result: Record<string, unknown>;
   error: string | null;
   created_at: string;
@@ -838,9 +841,10 @@ export async function getActivityDetail(id: number): Promise<ActivityDetail> {
   return res.json();
 }
 
-// Cancel a queued request. The activity row id IS the underlying
-// Request.id, so the same numeric handle works against /api/requests.
-// Backend returns 409 when the row has already moved past queued.
+// Cancel a queued or running request. The activity row id IS the
+// underlying Request.id, so the same numeric handle works against
+// /api/requests. Backend returns 409 when the row has already settled
+// (done/failed/timeout/canceled).
 export async function cancelActivity(id: number): Promise<void> {
   const res = await fetch(`/api/requests/${id}/cancel`, { method: "POST" });
   if (!res.ok) {
@@ -849,3 +853,147 @@ export async function cancelActivity(id: number): Promise<void> {
   }
 }
 
+
+// ── References ───────────────────────────────────────────────────────────
+// User-curated cross-board library of saved media. Backend mirror:
+// agent/flowboard/routes/references.py + db.models.Reference.
+// JSON wire format is snake_case (mirrors SQLModel column names);
+// camelCase is reserved for the TS surface, so each helper maps the
+// rows on the way back.
+
+export interface ReferenceItem {
+  id: number;
+  mediaId: string;
+  // Best-effort signed CDN URL captured at save time. May expire — the
+  // canonical bytes live in storage/media/{mediaId}.{ext}; this field
+  // exists purely as a re-ingest hint when the file goes missing.
+  url: string | null;
+  label: string;
+  kind: "image" | "character" | "visual_asset" | "storyboard_shot";
+  // Snapshot of the source node's aiBrief at save time; lets cross-board
+  // spawn skip the re-vision call entirely.
+  aiBrief: string | null;
+  aspectRatio: string | null;
+  tags: string[];
+  pinned: boolean;
+  position: number;
+  sourceBoardId: number | null;
+  sourceNodeShortId: string | null;
+  createdAt: string;
+}
+
+// Wire-shape POST body — snake_case to match the FastAPI schema 1:1.
+export interface ReferenceCreateInput {
+  media_id: string;
+  kind: ReferenceItem["kind"];
+  label?: string;
+  ai_brief?: string | null;
+  aspect_ratio?: string | null;
+  url?: string | null;
+  source_board_id?: number | null;
+  source_node_short_id?: string | null;
+  tags?: string[];
+}
+
+// Wire-shape PATCH body. Same snake_case convention.
+export interface ReferencePatchInput {
+  label?: string;
+  pinned?: boolean;
+  position?: number;
+  tags?: string[];
+}
+
+interface ReferenceRowWire {
+  id: number;
+  media_id: string;
+  url: string | null;
+  label: string;
+  kind: string;
+  ai_brief: string | null;
+  aspect_ratio: string | null;
+  tags: string[] | null;
+  pinned: boolean;
+  position: number;
+  source_board_id: number | null;
+  source_node_short_id: string | null;
+  created_at: string;
+}
+
+function mapReferenceRow(row: ReferenceRowWire): ReferenceItem {
+  // Coerce the kind string into the typed union — the backend already
+  // validates against _ALLOWED_KINDS so any unknown value here would
+  // mean a backend bug. Fall back to "image" defensively rather than
+  // throwing, so a single bad row doesn't break the whole list render.
+  const allowed: ReferenceItem["kind"][] = [
+    "image",
+    "character",
+    "visual_asset",
+    "storyboard_shot",
+  ];
+  const kind: ReferenceItem["kind"] = (allowed as string[]).includes(row.kind)
+    ? (row.kind as ReferenceItem["kind"])
+    : "image";
+  return {
+    id: row.id,
+    mediaId: row.media_id,
+    url: row.url,
+    label: row.label,
+    kind,
+    aiBrief: row.ai_brief,
+    aspectRatio: row.aspect_ratio,
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    pinned: row.pinned,
+    position: row.position,
+    sourceBoardId: row.source_board_id,
+    sourceNodeShortId: row.source_node_short_id,
+    createdAt: row.created_at,
+  };
+}
+
+export async function listReferences(params?: {
+  q?: string;
+  pinned_first?: boolean;
+  limit?: number;
+}): Promise<ReferenceItem[]> {
+  const search = new URLSearchParams();
+  if (params?.q) search.set("q", params.q);
+  if (params?.pinned_first !== undefined) {
+    search.set("pinned_first", String(params.pinned_first));
+  }
+  if (params?.limit !== undefined) search.set("limit", String(params.limit));
+  const qs = search.toString();
+  const rows = await api<ReferenceRowWire[]>(
+    `/api/references${qs ? `?${qs}` : ""}`,
+  );
+  return rows.map(mapReferenceRow);
+}
+
+export async function createReference(
+  input: ReferenceCreateInput,
+): Promise<ReferenceItem> {
+  const row = await api<ReferenceRowWire>("/api/references", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return mapReferenceRow(row);
+}
+
+export async function patchReference(
+  id: number,
+  patch: ReferencePatchInput,
+): Promise<ReferenceItem> {
+  const row = await api<ReferenceRowWire>(`/api/references/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+  return mapReferenceRow(row);
+}
+
+export async function deleteReference(id: number): Promise<void> {
+  // Backend returns 204 No Content; api<T>() would choke on the empty
+  // body, so we use fetch() directly and skip the JSON parse.
+  const res = await fetch(`/api/references/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    throw new Error(`deleteReference: ${res.status} ${res.statusText}`);
+  }
+}

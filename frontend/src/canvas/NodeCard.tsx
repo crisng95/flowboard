@@ -4,6 +4,7 @@ import { useBoardStore, type FlowboardNodeData, type FlowNode } from "../store/b
 import { useGenerationStore } from "../store/generation";
 import { mediaUrl, patchEdge, patchNode, uploadImage, uploadImageFromUrl } from "../api/client";
 import { requestAutoBrief } from "../api/autoBrief";
+import { useReferencesStore } from "../store/references";
 
 const ICON: Record<string, string> = {
   character: "◎",
@@ -173,6 +174,22 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
           {uploading && <span className="character-drop__overlay">…</span>}
         </div>
         <BriefHint data={data} />
+        <button
+          type="button"
+          className="visual-asset__action"
+          onClick={(e) => {
+            e.stopPropagation();
+            saveTileToLibrary({
+              mediaId,
+              nodeType: data.type,
+              data,
+            });
+          }}
+          title="Save this character to the library"
+          aria-label="Save to library"
+        >
+          ★ Save
+        </button>
         <input
           ref={fileInputRef}
           type="file"
@@ -234,6 +251,47 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
   );
 }
 
+// ── Reference-library save helpers ────────────────────────────────────────
+//
+// Maps a FlowboardNodeData.type → the `kind` enum stored on a Reference
+// row. Storyboard nodes are containers — each saved tile is one *shot*
+// of the board, so we use the "storyboard_shot" kind there to leave
+// room for shot-specific UX in the library later (e.g. surfacing the
+// shot index, or grouping by parent storyboard).
+type ReferenceKind = "image" | "character" | "visual_asset" | "storyboard_shot";
+
+function referenceKindFor(nodeType: string): ReferenceKind {
+  if (nodeType === "Storyboard") return "storyboard_shot";
+  if (nodeType === "character") return "character";
+  if (nodeType === "visual_asset") return "visual_asset";
+  return "image";
+}
+
+/** Fire-and-forget save of a tile's media into the reference library.
+ * Errors surface via useReferencesStore.error; UI doesn't need to
+ * await for the save to succeed before letting the user keep working. */
+function saveTileToLibrary(opts: {
+  mediaId: string;
+  nodeType: string;
+  data: FlowboardNodeData;
+}) {
+  const { mediaId, nodeType, data } = opts;
+  const label =
+    typeof data.aiBrief === "string" && data.aiBrief.trim().length > 0
+      ? data.aiBrief.slice(0, 80)
+      : `#${data.shortId}`;
+  void useReferencesStore.getState().save({
+    media_id: mediaId,
+    kind: referenceKindFor(nodeType),
+    ai_brief: typeof data.aiBrief === "string" ? data.aiBrief : null,
+    aspect_ratio: typeof data.aspectRatio === "string" ? data.aspectRatio : null,
+    label,
+    source_board_id: useBoardStore.getState().boardId ?? null,
+    source_node_short_id:
+      typeof data.shortId === "string" ? data.shortId : null,
+  });
+}
+
 const MAX_IMG_RETRIES = 5;
 
 function tileCountFor(data: FlowboardNodeData): number {
@@ -250,6 +308,7 @@ function ImageTile({
   alt,
   onClick,
   onUseAsRef,
+  onSaveToLibrary,
 }: {
   rfId: string;
   mediaId: string | undefined;
@@ -262,6 +321,11 @@ function ImageTile({
    * AND has a downstream image/video target — keeps the affordance
    * scoped to cases where it actually does something. */
   onUseAsRef?: () => void;
+  /** When provided, render a "★" overlay (top-right corner, opposite
+   * the "Use →" affordance) that snapshots this tile's media + aiBrief
+   * into the cross-board reference library. Parents only pass this when
+   * the tile has a real mediaId — saving a placeholder makes no sense. */
+  onSaveToLibrary?: () => void;
 }) {
   const [attempt, setAttempt] = useState(0);
   const [loaded, setLoaded] = useState(false);
@@ -343,6 +407,24 @@ function ImageTile({
           aria-label="Use this variant as reference"
         >
           Use →
+        </button>
+      )}
+      {onSaveToLibrary && (
+        // ★ overlay — top-right corner, opposite the "Use →" chip in
+        // the bottom-right. Fire-and-forget save into the cross-board
+        // reference library. Same stopPropagation pattern so clicking
+        // the star doesn't also open the result viewer.
+        <button
+          type="button"
+          className="thumbnail-tile__save-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSaveToLibrary();
+          }}
+          title="Save this variant to the library"
+          aria-label="Save to library"
+        >
+          ★
         </button>
       )}
     </div>
@@ -665,6 +747,16 @@ function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
         onUseAsRef={
           isMultiVariant && mid && !isProcessing
             ? () => onUseVariantClick(i)
+            : undefined
+        }
+        onSaveToLibrary={
+          mid
+            ? () =>
+                saveTileToLibrary({
+                  mediaId: mid,
+                  nodeType: data.type,
+                  data,
+                })
             : undefined
         }
       />
@@ -1175,6 +1267,24 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
         )}
       </div>
       <BriefHint data={data} />
+      {!isProcessing && (
+        <button
+          type="button"
+          className="visual-asset__action"
+          onClick={(e) => {
+            e.stopPropagation();
+            saveTileToLibrary({
+              mediaId,
+              nodeType: data.type,
+              data,
+            });
+          }}
+          title="Save this asset to the library"
+          aria-label="Save to library"
+        >
+          ★ Save
+        </button>
+      )}
       {refineOpen && (
         <div className="visual-asset__refine-panel" role="region" aria-label="Refine">
           <textarea
@@ -1359,6 +1469,16 @@ function StoryboardBody({ rfId, data }: { rfId: string; data: FlowboardNodeData 
               isProcessing={tileProcessing}
               alt={`Shot ${shot.idx + 1}`}
               onClick={onClick}
+              onSaveToLibrary={
+                shot.mediaId
+                  ? () =>
+                      saveTileToLibrary({
+                        mediaId: shot.mediaId as string,
+                        nodeType: data.type,
+                        data,
+                      })
+                  : undefined
+              }
             />
             {/* Continuation badge: shows parent index when this shot
                 edits from another shot. Roots have no badge. */}

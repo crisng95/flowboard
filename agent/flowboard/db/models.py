@@ -76,6 +76,29 @@ class Asset(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow)
 
 
+class Reference(SQLModel, table=True):
+    """User-curated saved media for cross-board reuse.
+
+    Distinct from Asset (auto-managed cache index). Each Reference
+    points at one media_id and snapshots enough metadata to spawn a
+    brand-new visual_asset node in any board without re-vision or
+    re-upload.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    media_id: str = Field(index=True, unique=True)
+    url: Optional[str] = None
+    label: str = ""
+    kind: str  # "image" | "character" | "visual_asset" | "storyboard_shot"
+    ai_brief: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+    tags: list = Field(default_factory=list, sa_column=Column(JSON))
+    pinned: bool = False
+    position: int = 0
+    source_board_id: Optional[int] = Field(default=None, foreign_key="board.id", index=True)
+    source_node_short_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
 class ChatMessage(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     board_id: int = Field(foreign_key="board.id", index=True)

@@ -320,6 +320,21 @@ interface BoardState {
   // Callers that need to wire up an edge immediately (e.g. drop-popover
   // shortcut) need the id back synchronously.
   addNodeOfType(type: NodeType, position: { x: number; y: number }): Promise<string | null>;
+  // Spawn a brand-new visual_asset node from a saved Reference. Used by
+  // both the panel click-to-spawn path and the canvas drop-to-spawn path.
+  // The new node lands with status="done" + mediaId + aiBrief already
+  // populated so its thumbnail loads immediately and it can be used as a
+  // downstream ref without any extra round-trip.
+  addReferenceNode(
+    ref: {
+      mediaId: string;
+      aiBrief?: string | null;
+      aspectRatio?: string | null;
+      kind: string;
+      label: string;
+    },
+    position: { x: number; y: number },
+  ): Promise<string | null>;
   persistNodePosition(rfId: string, position: { x: number; y: number }): Promise<void>;
   deleteNodeByRfId(rfId: string): Promise<void>;
   addEdgeFromConnection(source: string, target: string, sourceHandle?: string, targetHandle?: string): Promise<void>;
@@ -556,6 +571,51 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         }
       }
 
+      return node.id;
+    } catch {
+      // surface silently for now
+    }
+    return null;
+  },
+
+  async addReferenceNode(ref, position) {
+    const { boardId } = get();
+    if (boardId === null) return null;
+    const title = ref.label || "Reference";
+    try {
+      const dto = await createNode({
+        board_id: boardId,
+        type: "visual_asset",
+        x: Math.round(position.x),
+        y: Math.round(position.y),
+        data: {
+          title,
+          mediaId: ref.mediaId,
+          aiBrief: ref.aiBrief ?? undefined,
+          aspectRatio: ref.aspectRatio ?? undefined,
+          status: "done",
+          renderedAt: new Date().toISOString(),
+        },
+      });
+      // Mirror addNodeOfType's local-state insertion, but propagate the
+      // rich data fields so the visual_asset body renders the thumbnail
+      // straight away (instead of falling into the empty-state CTA).
+      const node: FlowNode = {
+        id: String(dto.id),
+        type: dto.type,
+        position: { x: dto.x, y: dto.y },
+        data: {
+          type: dto.type,
+          shortId: dto.short_id,
+          title: (dto.data["title"] as string | undefined) ?? title,
+          status: "done",
+          mediaId: ref.mediaId,
+          aiBrief: ref.aiBrief ?? undefined,
+          aspectRatio: ref.aspectRatio ?? undefined,
+          renderedAt: new Date().toISOString(),
+        },
+      };
+      set((s) => ({ nodes: [...s.nodes, node] }));
       return node.id;
     } catch {
       // surface silently for now

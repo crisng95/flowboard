@@ -103,7 +103,7 @@ wheels = [
 
 [[package]]
 name = "flowboard-agent"
-version = "1.2.11"
+version = "1.2.12"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

@@ -172,6 +172,7 @@ export function Board() {
   const addEdgeFromConnection = useBoardStore((s) => s.addEdgeFromConnection);
   const addNodeOfType = useBoardStore((s) => s.addNodeOfType);
   const deleteEdgeByRfId = useBoardStore((s) => s.deleteEdgeByRfId);
+  const { screenToFlowPosition } = useReactFlow();
   const wrapperRef = useRef<HTMLDivElement>(null);
 
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -186,6 +187,42 @@ export function Board() {
     sourceId: null,
     didConnect: false,
   });
+
+  // Reference-panel drop handler — fires when the user drags a saved
+  // reference card from the right-side library onto the canvas. We
+  // detect the custom MIME we set in ReferencesPanel and spawn a new
+  // visual_asset node at the cursor's flow-space position. The browser
+  // requires onDragOver to call preventDefault() or the onDrop never
+  // fires on this element.
+  const onCanvasDragOver = useCallback((e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes("application/x-flowboard-reference")) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    }
+  }, []);
+
+  const onCanvasDrop = useCallback(
+    (e: React.DragEvent) => {
+      const raw = e.dataTransfer.getData("application/x-flowboard-reference");
+      if (!raw) return;
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        const ref = JSON.parse(raw) as {
+          mediaId: string;
+          aiBrief?: string | null;
+          aspectRatio?: string | null;
+          kind: string;
+          label: string;
+        };
+        const flowPos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+        void useBoardStore.getState().addReferenceNode(ref, flowPos);
+      } catch (err) {
+        console.warn("Failed to parse reference drop payload", err);
+      }
+    },
+    [screenToFlowPosition],
+  );
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -375,7 +412,12 @@ export function Board() {
   }, []);
 
   return (
-    <div ref={wrapperRef} style={{ flex: 1, minHeight: 0, width: "100%", height: "100%" }}>
+    <div
+      ref={wrapperRef}
+      style={{ flex: 1, minHeight: 0, width: "100%", height: "100%" }}
+      onDragOver={onCanvasDragOver}
+      onDrop={onCanvasDrop}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}

@@ -1643,6 +1643,38 @@ button:disabled {
   background: var(--accent);
 }
 
+/* "★" overlay — reference-library save button. Sits top-right of the
+   tile (opposite the "Use →" affordance in the bottom-right corner)
+   so the two overlays never overlap. Same hover-reveal pattern. */
+.thumbnail-tile__save-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 80ms linear, background 80ms linear;
+  z-index: 2;
+}
+.thumbnail-tile:hover .thumbnail-tile__save-btn,
+.thumbnail-tile:focus-within .thumbnail-tile__save-btn,
+.thumbnail-tile__save-btn:focus-visible {
+  opacity: 1;
+}
+.thumbnail-tile__save-btn:hover {
+  background: rgba(0, 0, 0, 0.85);
+  border-color: var(--accent);
+}
+
 /* Inline picker — shown below the tile grid when the upstream has 2+
    downstream targets and the user clicks "Use →" on a variant. Lists
    each target so the user picks which downstream this variant feeds. */
@@ -5239,6 +5271,301 @@ button:disabled {
 
 .storyboard-retry-btn:hover {
   background: rgba(0, 0, 0, 0.85);
+  border-color: var(--accent);
+}
+
+/* ── References panel (right sidebar) ──────────────────────────────────── */
+
+.references-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  z-index: 12;
+  transform: translateX(100%);
+  transition: transform 180ms ease;
+  /* Pull the panel slightly inset so the toggle tab sits flush against
+     its outer edge when collapsed. */
+  pointer-events: auto;
+}
+
+.references-panel--open {
+  transform: translateX(0);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+}
+
+.references-panel--collapsed {
+  /* When collapsed, also disable child input focus so a hidden search
+     box doesn't accidentally swallow keyboard events. */
+  pointer-events: none;
+}
+
+.references-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.references-panel__title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.references-panel__close {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-high);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.references-panel__close:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.references-panel__search {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.references-panel__search input {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--panel-high);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 80ms ease;
+}
+
+.references-panel__search input:focus {
+  border-color: var(--accent);
+}
+
+.references-panel__empty {
+  padding: 24px 18px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  text-align: center;
+}
+
+.references-panel__error {
+  margin: 8px 12px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--error);
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 6px;
+}
+
+.references-panel__list {
+  flex: 1;
+  list-style: none;
+  padding: 6px 0;
+  margin: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.reference-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: grab;
+  transition: background 80ms ease;
+}
+
+.reference-card:hover {
+  background: var(--panel-high);
+}
+
+.reference-card:active {
+  cursor: grabbing;
+}
+
+.reference-card__thumb {
+  flex-shrink: 0;
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel-higher);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.reference-card__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.reference-card__thumb-missing {
+  font-size: 22px;
+  color: var(--muted);
+}
+
+.reference-card__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.reference-card__label {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+}
+
+.reference-card__id {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: var(--panel-higher);
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.reference-card__rename-input {
+  width: 100%;
+  padding: 4px 6px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.reference-card__actions {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 80ms ease;
+  background: var(--panel-high);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.reference-card:hover .reference-card__actions {
+  opacity: 1;
+}
+
+.reference-card__action-btn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  transition: background 80ms ease, color 80ms ease;
+}
+
+.reference-card__action-btn:hover {
+  background: var(--panel-higher);
+  color: var(--text);
+}
+
+.reference-card__action-btn--active {
+  color: var(--warn);
+}
+
+.reference-card__action-btn--danger:hover {
+  color: var(--error);
+}
+
+/* Armed-confirm state for the danger button — widens to fit "Confirm?"
+   label and shifts to red background so the second click feels distinct
+   from the first. Auto-reverts after 3s (handled in the component). */
+.reference-card__action-btn--armed,
+.reference-card__action-btn--armed:hover {
+  width: auto;
+  padding: 0 8px;
+  background: var(--error, #ef4444);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.reference-card__action-btn:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.references-panel__toggle-tab {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-high);
+  border: 1px solid var(--border);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  color: var(--muted);
+  font-size: 14px;
+  z-index: 13;
+  transition: color 80ms ease, border-color 80ms ease, background 80ms ease;
+}
+
+.references-panel__toggle-tab:hover {
+  color: var(--text);
+  background: var(--panel-higher);
   border-color: var(--accent);
 }
 
