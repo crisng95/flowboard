@@ -13,6 +13,12 @@ import {
   patchEdge,
   patchNode,
 } from "../api/client";
+import {
+  useSettingsStore,
+  OMNI_FLASH_CREDIT_COST,
+  OMNI_FLASH_DURATIONS,
+  type OmniFlashDuration,
+} from "../store/settings";
 
 // Use the same dispatch set as `collectUpstreamRefMediaIds` so the
 // chip preview lists every ref that will actually be sent to Flow,
@@ -158,8 +164,18 @@ export function GenerationDialog() {
   const nodeCount = nodes.length;
   const edges = useBoardStore((s) => s.edges);
 
+  // Hooks MUST be called unconditionally on every render — pull
+  // videoModel out first, derive the boolean after.
+  const videoModelFamily = useSettingsStore((s) => s.videoModel);
   const targetType = (node?.data.type as string | undefined) ?? "reference";
   const isVideo = targetType === "video";
+  const isCharacter = targetType === "character";
+  const isStoryboard = targetType === "Storyboard";
+  // Omni Flash is a video model but with image-target semantics: it
+  // takes ingredients (multi reference images), NOT a single i2v start
+  // frame. So the dialog should show the same "Source references" chip
+  // list that image targets use, and hide Veo's source-image selector.
+  const isOmniVideo = isVideo && videoModelFamily === "omni_flash";
   // Prompt nodes are text-only — clicking Generate runs auto_prompt
   // synthesis from upstream context and writes the result back to
   // node.data.prompt. No image dispatch, no aspect/variants.
@@ -196,7 +212,7 @@ export function GenerationDialog() {
   // separate list from refSourceNodes; the dialog renders them as a
   // text-only chip alongside image refs so the user can SEE that a
   // Prompt node is influencing the gen.
-  const promptSourceNodes = !isVideo && rfId
+  const promptSourceNodes = (!isVideo || isOmniVideo) && rfId
     ? edges
         .filter((e) => e.target === rfId)
         .map((e) => {
@@ -208,7 +224,7 @@ export function GenerationDialog() {
         .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     : [];
 
-  const refSourceNodes = !isVideo && rfId
+  const refSourceNodes = (!isVideo || isOmniVideo) && rfId
     ? edges
         .filter((e) => e.target === rfId)
         .map((e) => {
@@ -527,7 +543,9 @@ export function GenerationDialog() {
     || node?.data.aiBriefStatus === "pending";
   const isWorking = autoBuilding || nodeLLMBusy;
 
-  const canGenerate = isVideo
+  const canGenerate = isOmniVideo
+    ? refSourceNodes.length > 0 && !isWorking
+    : isVideo
     ? selectedSourceIdx.size > 0 && !isWorking
     : !isWorking;
 
@@ -610,7 +628,7 @@ export function GenerationDialog() {
         )
 
         {/* Source image (video only — i2v, multi-select variants → N videos) */}
-        {isVideo && (
+        {isVideo && !isOmniVideo && (
           <div className="gen-dialog__field">
             <div className="gen-dialog__label-row">
               <span className="gen-dialog__label">
@@ -702,7 +720,7 @@ export function GenerationDialog() {
         {/* Source references — image refs AND prompt-text refs. Prompt nodes don't have
             media but their text feeds the auto-prompt synth, so we
             surface them as text chips next to the thumbnails. */}
-        {!isVideo && (refSourceNodes.length > 0 || promptSourceNodes.length > 0) && (
+        {(!isVideo || isOmniVideo) && (refSourceNodes.length > 0 || promptSourceNodes.length > 0) && (
           <div className="gen-dialog__field">
             <span className="gen-dialog__label">
               Source references ({refSourceNodes.length + promptSourceNodes.length})
@@ -829,8 +847,44 @@ export function GenerationDialog() {
           </div>
         )}
 
+        {/* Omni Flash duration picker — video only, when the user's
+            settings select the Omni model family. Replaces the implicit
+            ~8s Veo duration with a per-dispatch radio. Credit cost is
+            surfaced beside each option. */}
+        {isOmniVideo && (
+          <div className="gen-dialog__field">
+            <span className="gen-dialog__label">Duration (Omni Flash)</span>
+            <div className="aspect-chip-row">
+              {OMNI_FLASH_DURATIONS.map((d) => {
+                const active =
+                  useSettingsStore.getState().omniFlashDuration === d;
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    className={`aspect-chip${active ? " aspect-chip--active" : ""}`}
+                    onClick={() =>
+                      useSettingsStore
+                        .getState()
+                        .setOmniFlashDuration(d as OmniFlashDuration)
+                    }
+                    title={`${d}s — ${OMNI_FLASH_CREDIT_COST[d]} credits`}
+                  >
+                    {d}s · {OMNI_FLASH_CREDIT_COST[d]}c
+                  </button>
+                );
+              })}
+            </div>
+            <p className="gen-dialog__hint">
+              Omni Flash dispatches via <code>video:batchAsyncGenerateVideoReferenceImages</code>
+              {" "}with the upstream image(s) as <code>IMAGE_USAGE_TYPE_ASSET</code> refs.
+              Duration scales credit cost: 4s=15, 6s=20, 8s=25, 10s=30.
+            </p>
+          </div>
+        )}
+
         {/* Camera movement (video only) */}
-        {isVideo && (
+        {isVideo && !isOmniVideo && (
           <div className="gen-dialog__field">
             <span className="gen-dialog__label">Camera</span>
             <div className="aspect-chip-row">
@@ -847,9 +901,8 @@ export function GenerationDialog() {
               ))}
             </div>
             <p className="gen-dialog__hint">
-              <strong>Static</strong> = locked-off, không zoom/pan — phù hợp
-              e-commerce product shot. <strong>Dynamic</strong> = để auto-prompt
-              tự quyết camera move (dolly / micro-shift / …).
+              <strong>Static</strong> = locked-off, no zoom/pan.
+              <strong>Dynamic</strong> = let auto-prompt choose camera motion.
             </p>
           </div>
         )}
@@ -910,5 +963,6 @@ export function GenerationDialog() {
     </div>
   );
 }
+
 
 
