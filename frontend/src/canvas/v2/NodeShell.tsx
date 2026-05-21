@@ -1,4 +1,4 @@
-﻿/**
+/**
  * NodeShell â€” V2 base wrapper, rebuilt to match Magnific Spaces.
  *
  * Reference: Magnific "Assistant" + "Creation" node screenshots.
@@ -165,7 +165,7 @@ export function NodeShell({
           // The Handle host element IS the hit-area. Make it large
           // (28x28) and transparent â€” visible pill is rendered as a
           // child div positioned inside.
-          className="!h-7 !w-7 !border-0 !bg-transparent !-translate-x-1/2"
+          className="!h-8 !w-8 !border-0 !bg-transparent !-translate-x-1/2"
           style={{ top: "50%" }}
         >
           <HandlePill icon={targetHandle.icon} label={targetHandle.label} />
@@ -176,7 +176,7 @@ export function NodeShell({
           type="source"
           position={Position.Right}
           id={sourceHandle.id}
-          className="!h-7 !w-7 !border-0 !bg-transparent !translate-x-1/2"
+          className="!h-8 !w-8 !border-0 !bg-transparent !translate-x-1/2"
           style={{ top: "50%" }}
         >
           <HandlePill icon={sourceHandle.icon} label={sourceHandle.label} />
@@ -208,9 +208,9 @@ function HandlePill({ icon: Icon, label }: { icon: LucideIcon; label?: string })
         // Inline so the dark pill is guaranteed opaque even when
         // Tailwind tree-shakes utilities; the colour matches the
         // canvas tone so the pill reads as "floating off the card".
-        backgroundColor: "#1c1f27",
-        borderColor: "rgba(255,255,255,0.14)",
-        color: "rgba(255,255,255,0.65)",
+        backgroundColor: "#2b2b2b",
+        borderColor: "rgba(255,255,255,0.10)",
+        color: "rgba(255,255,255,0.60)",
       }}
     >
       <Icon size={12} strokeWidth={2} />

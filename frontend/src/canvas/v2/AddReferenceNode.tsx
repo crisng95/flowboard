@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Handle, Position, useConnection, useEdges, type NodeProps } from "@xyflow/react";
 import { ImageUp, Replace, Upload, Tag } from "lucide-react";
 
@@ -19,6 +20,35 @@ const DEFAULT_WIDTH = 280;
 const BORDER_RADIUS = 16;
 const HOVER_LEAVE_DELAY = 200;
 
+// Map Flow's IMAGE_ASPECT_RATIO_* enum to a CSS `aspect-ratio` value.
+// The upload route stamps `data.aspectRatio` with the enum string
+// (e.g. "IMAGE_ASPECT_RATIO_PORTRAIT"), but CSS only understands
+// numeric ratios like "9 / 16" - feeding the enum directly leaves the
+// box at its fallback "1 / 1" so the node never resizes to match the
+// uploaded image. Returns null for unrecognised input so the caller
+// can fall back without producing an invalid CSS value.
+function flowAspectToCss(value: string | undefined): string | null {
+  if (!value) return null;
+  if (value.includes("/")) return value; // already CSS form
+  switch (value) {
+    case "IMAGE_ASPECT_RATIO_SQUARE":
+    case "VIDEO_ASPECT_RATIO_SQUARE":
+      return "1 / 1";
+    case "IMAGE_ASPECT_RATIO_PORTRAIT":
+    case "VIDEO_ASPECT_RATIO_PORTRAIT":
+      return "9 / 16";
+    case "IMAGE_ASPECT_RATIO_LANDSCAPE":
+    case "VIDEO_ASPECT_RATIO_LANDSCAPE":
+      return "16 / 9";
+    case "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE":
+      return "4 / 3";
+    case "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR":
+      return "3 / 4";
+    default:
+      return null;
+  }
+}
+
 export function AddReferenceNode(props: NodeProps<FlowNode>) {
   const { id: rfId, data, selected } = props;
   const flow = useUploadFlow(rfId, data);
@@ -30,6 +60,9 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
   const refType = (data.refType as ReferenceTypeKey | undefined) ?? "texture";
   const shortId = data.shortId as string | undefined;
   const aspectRatio = data.aspectRatio as string | undefined;
+  const userNote = (data.prompt as string | undefined) ?? "";
+  const aiBrief = (data.aiBrief as string | undefined) ?? "";
+  const aiBriefPending = (data.aiBriefStatus as string | undefined) === "pending";
 
   // Hover with delay
   const [hovered, setHovered] = useState(false);
@@ -43,8 +76,23 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
   }, []);
   const showControls = hovered || !!selected;
 
-  const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null);
+  // Seed imgSize from persisted node data so the aspect-ratio is
+  // correct immediately on mount / reload without waiting for the
+  // <img> onLoad event. onImageLoad will overwrite with the same
+  // values once the image element fires.
+  const persistedW = data.imageWidth as number | undefined;
+  const persistedH = data.imageHeight as number | undefined;
+  const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(
+    persistedW && persistedH ? { w: persistedW, h: persistedH } : null,
+  );
   const [showTypePicker, setShowTypePicker] = useState(false);
+  const [promptFocused, setPromptFocused] = useState(false);
+  // Anchor + viewport coords for the type-picker dropdown. We render
+  // the menu through a portal so `overflow-hidden` on the image slot
+  // doesn't clip the 10-tag list (the previous in-tree absolute
+  // positioning got cut off when the node was small).
+  const tagButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [tagMenuPos, setTagMenuPos] = useState<{ left: number; top: number } | null>(null);
 
   // Handle visibility
   const edges = useEdges();
@@ -57,6 +105,52 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
     const img = e.currentTarget;
     setImgSize({ w: img.naturalWidth, h: img.naturalHeight });
   }
+
+  function setUserNote(value: string) {
+    persistNodeData(rfId, { prompt: value });
+  }
+
+  // Track the trigger button's viewport rect every animation frame
+  // while the menu is open. Using a portal escapes the image slot's
+  // `overflow-hidden`, but a portal also detaches the menu from the
+  // canvas's pan/zoom transform - so without this loop the menu
+  // would stay frozen in place when the user drags the board.
+  // rAF is cheap (~60fps reads of one bounding rect) and only runs
+  // while the menu is visible.
+  useEffect(() => {
+    if (!showTypePicker) {
+      setTagMenuPos(null);
+      return;
+    }
+    let raf = 0;
+    function tick() {
+      const btn = tagButtonRef.current;
+      if (btn) {
+        const r = btn.getBoundingClientRect();
+        setTagMenuPos({
+          left: r.left,
+          top: r.bottom + 4, // 4px gap below the trigger
+        });
+      }
+      raf = requestAnimationFrame(tick);
+    }
+    raf = requestAnimationFrame(tick);
+
+    function onDocumentMouseDown(e: MouseEvent) {
+      const target = e.target as Node | null;
+      if (!target) return;
+      const btn = tagButtonRef.current;
+      if (btn && btn.contains(target)) return;
+      const menu = document.getElementById(`add-ref-tag-menu-${rfId}`);
+      if (menu && menu.contains(target)) return;
+      setShowTypePicker(false);
+    }
+    document.addEventListener("mousedown", onDocumentMouseDown);
+    return () => {
+      cancelAnimationFrame(raf);
+      document.removeEventListener("mousedown", onDocumentMouseDown);
+    };
+  }, [showTypePicker, rfId]);
 
   function setRefType(key: ReferenceTypeKey) {
     // Switching tags changes the role of the image (structural vs.
@@ -119,7 +213,20 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
             !mediaId && "min-h-[180px]",
           )}
           style={{
-            aspectRatio: mediaId ? aspectRatio || "1 / 1" : "4 / 3",
+            // Drive the box ratio from the actual image dimensions
+            // when available - that way 4:3, 3:4, 5:7, 21:9 (anything
+            // outside Flow's 3-bucket SQUARE/PORTRAIT/LANDSCAPE enum)
+            // all render at their true ratio. Backend keeps using
+            // the enum for downstream gen because Flow's API only
+            // accepts those three values.
+            // Fall back to the enum-derived CSS ratio while the image
+            // is still loading, then to 1:1, then to 4:3 for the
+            // empty drop-zone state.
+            aspectRatio: mediaId
+              ? imgSize
+                ? `${imgSize.w} / ${imgSize.h}`
+                : flowAspectToCss(aspectRatio) ?? "1 / 1"
+              : "4 / 3",
             borderRadius: BORDER_RADIUS - 3,
           }}
         >
@@ -129,16 +236,22 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
               <img
                 src={mediaUrl(mediaId)}
                 alt="reference"
-                className="size-full object-contain"
+                className={cn(
+                  "absolute inset-0 size-full object-cover transition-all duration-300",
+                  promptFocused && "blur-sm scale-[1.02]",
+                )}
                 onLoad={onImageLoad}
                 onDoubleClick={() => useGenerationStore.getState().openResultViewer(rfId)}
               />
+              {promptFocused && (
+                <div className="absolute inset-0 bg-black/50 transition-opacity duration-300 z-[5]" />
+              )}
               {imgSize && showControls && (
                 <div
-                  className="absolute top-2 right-2 px-2 py-0.5 rounded-md text-2xs font-medium text-ink-muted"
-                  style={{ backgroundColor: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}
+                  className="absolute top-3 right-3 px-2.5 py-1 rounded-full text-2xs font-medium text-ink-primary z-10"
+                  style={{ backgroundColor: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }}
                 >
-                  {imgSize.w} x {imgSize.h}
+                  {imgSize.w} {"\u00d7"} {imgSize.h}
                 </div>
               )}
             </>
@@ -182,74 +295,75 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
               </span>
             </div>
           )}
-        </div>
 
-        {/* AI Description */}
-        {mediaId && (
-          <div className="px-3 py-2">
-            {(data.aiBriefStatus as string) === "pending" && (
-              <p className="text-2xs text-accent animate-pulse">Analyzing image...</p>
-            )}
-            {typeof data.aiBrief === "string" && (data.aiBrief as string).length > 0 && (
-              <p className="text-2xs text-ink-muted leading-relaxed line-clamp-3" title={data.aiBrief as string}>
-                {data.aiBrief as string}
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* Bottom bar: type picker + replace */}
-        <div className={cn("absolute bottom-3 left-3 right-3 z-10 flex items-center gap-2 transition-all duration-300 ease-out", showControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1 pointer-events-none")}>
-          {/* Reference type picker */}
-          <div className="relative">
-            <button
-              onClick={() => setShowTypePicker(!showTypePicker)}
-              className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg",
-                "text-2xs font-medium text-ink-primary",
-                "transition-all duration-300 ease-out cursor-pointer",
-                "hover:bg-white/[0.12]",
-              )}
-              style={{ backgroundColor: "rgba(0,0,0,0.65)", backdropFilter: "blur(8px)" }}
-            >
-              <Tag size={12} strokeWidth={2} />
-              {currentTypeLabel}
-              <span className="text-[8px] opacity-50">▾</span>
-            </button>
-            {showTypePicker && (
-              <div className="absolute bottom-full left-0 mb-1 rounded-lg p-1 shadow-xl border border-white/[0.08] z-50" style={{ backgroundColor: "#2a2a2a" }}>
-                {REFERENCE_TYPES.map((t) => (
-                  <button
-                    key={t.key}
-                    onClick={() => setRefType(t.key as ReferenceTypeKey)}
-                    className={cn("block w-full text-left px-3 py-1.5 rounded-md text-2xs whitespace-nowrap transition-colors", t.key === refType ? "text-accent bg-accent/10" : "text-white/80 hover:text-white hover:bg-white/[0.06]")}
-                  >
-                    {t.label}
-                    <span className="ml-2 text-ink-placeholder">{t.hint}</span>
-                  </button>
-                ))}
+          {/* Bottom overlay: prompt textarea + toolbar (type picker +
+              Replace) layered ON the image. Mirrors the ImageGenerator
+              pattern so both nodes feel consistent. The textarea uses
+              `aiBrief` as its placeholder so the user sees the auto
+              description while still being able to type a manual note.
+              When there's no media yet, the toolbar still shows so
+              users can pick the right tag BEFORE uploading - that
+              tag drives which vision profile runs after upload, so
+              picking it first is the correct mental model. The
+              textarea is hidden in the empty state because there's
+              no image to caption yet. */}
+          <div className="absolute bottom-0 left-0 right-0 z-10 transition-all duration-300 ease-out">
+            {mediaId && (
+              <div className={cn(
+                "px-4 pb-1 transition-all duration-300 ease-out",
+                promptFocused ? "pt-4" : "pt-2",
+              )}>
+                <textarea
+                  value={userNote}
+                  onChange={(e) => setUserNote(e.target.value)}
+                  spellCheck={false}
+                  placeholder={
+                    aiBriefPending
+                      ? "Analyzing image..."
+                      : aiBrief || "Add a note about this reference..."
+                  }
+                  rows={promptFocused ? 6 : 1}
+                  onFocus={() => setPromptFocused(true)}
+                  onBlur={() => setPromptFocused(false)}
+                  className="img-gen-prompt w-full bg-transparent text-sm text-white placeholder:text-white/70 resize-none outline-none border-0 leading-relaxed"
+                />
               </div>
             )}
+
+              <div className={cn(
+                "flex items-center gap-1.5 px-3 pb-3 pt-0",
+                "transition-all duration-300 ease-out",
+                showControls
+                  ? "max-h-[48px] opacity-100 translate-y-0"
+                  : "max-h-0 opacity-0 translate-y-1 overflow-hidden",
+              )}>
+                <div className="relative">
+                  <button
+                    ref={tagButtonRef}
+                    onClick={() => setShowTypePicker(!showTypePicker)}
+                    className="flex items-center gap-1 rounded-full px-2 py-1 text-2xs font-medium text-white/80 hover:text-white transition-colors whitespace-nowrap"
+                    style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+                  >
+                    <Tag size={11} strokeWidth={2} />
+                    {currentTypeLabel}
+                    <span className="text-[8px] opacity-50">{"\u25be"}</span>
+                  </button>
+                </div>
+
+                <div className="flex-1" />
+
+                {mediaId && (
+                  <button
+                    onClick={flow.pickFile}
+                    className="flex items-center gap-1 rounded-full px-2 py-1 text-2xs font-medium text-white/80 hover:text-white transition-colors whitespace-nowrap"
+                    style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+                  >
+                    <Replace size={11} strokeWidth={2} />
+                    Replace
+                  </button>
+                )}
+              </div>
           </div>
-
-          <div className="flex-1" />
-
-          {/* Replace button */}
-          {mediaId && (
-            <button
-              onClick={flow.pickFile}
-              className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg",
-                "text-2xs font-medium text-ink-primary",
-                "transition-all duration-300 ease-out cursor-pointer",
-                "hover:bg-white/[0.12]",
-              )}
-              style={{ backgroundColor: "rgba(0,0,0,0.65)", backdropFilter: "blur(8px)" }}
-            >
-              <Replace size={12} strokeWidth={2} />
-              Replace
-            </button>
-          )}
         </div>
 
         {/* Resize handle */}
@@ -294,6 +408,38 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
         accept={flow.fileInputProps.accept}
         onChange={flow.fileInputProps.onChange}
       />
+
+      {/* Portal-rendered tag picker - escapes the image slot's
+          `overflow-hidden` so the full 10-tag list is always visible
+          regardless of node size. Positioned via the trigger rect. */}
+      {showTypePicker && tagMenuPos && createPortal(
+        <div
+          id={`add-ref-tag-menu-${rfId}`}
+          className="fixed rounded-lg p-1 shadow-xl border border-white/[0.08] z-[1000]"
+          style={{
+            left: tagMenuPos.left,
+            top: tagMenuPos.top,
+            backgroundColor: "#2a2a2a",
+          }}
+        >
+          {REFERENCE_TYPES.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setRefType(t.key as ReferenceTypeKey)}
+              className={cn(
+                "block w-full text-left px-3 py-1.5 rounded-md text-2xs whitespace-nowrap transition-colors",
+                t.key === refType
+                  ? "text-accent bg-accent/10"
+                  : "text-white/80 hover:text-white hover:bg-white/[0.06]",
+              )}
+            >
+              {t.label}
+              <span className="ml-2 text-ink-placeholder">{t.hint}</span>
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }

@@ -79,12 +79,16 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
   const [promptFocused, setPromptFocused] = useState(false);
   const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null);
 
-    const upstreamTextEdge = edges.find(
-    (e) => e.target === rfId && e.targetHandle === "target-text"
-  );
+    const allNodes = useBoardStore.getState().nodes;
+  const upstreamTextEdge = edges.find((e) => {
+    if (e.target !== rfId) return false;
+    if (e.targetHandle === "target-text") return true;
+    const src = allNodes.find((n) => n.id === e.source);
+    return src?.data.type === "text";
+  });
   const hasTextConnection = !!upstreamTextEdge;
   const upstreamTextNode = hasTextConnection
-    ? useBoardStore.getState().nodes.find((n) => n.id === upstreamTextEdge!.source)
+    ? allNodes.find((n) => n.id === upstreamTextEdge!.source)
     : null;
   const upstreamText = ((upstreamTextNode?.data.prompt as string) ?? "").trim();
 
@@ -112,7 +116,13 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
   function handleGenerate() {
     // Use local prompt, or fall back to upstream text node prompt
     const finalPrompt = hasTextConnection ? upstreamText : prompt.trim();
-    if (!finalPrompt) return;
+    // Allow empty prompt when upstream image references exist
+    const hasImageRefs = edges.some((e) => {
+      if (e.target !== rfId) return false;
+      const src = allNodes.find((n) => n.id === e.source);
+      return src && src.data.type !== "text";
+    });
+    if (!finalPrompt && !hasImageRefs) return;
     useGenerationStore.getState().dispatchGeneration(rfId, {
       prompt: finalPrompt,
       aspectRatio: ASPECT_TO_FLOW[aspectKey],
@@ -186,15 +196,20 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
               "transition-all duration-300 ease-out",
             )}
           >
-            {/* Prompt - always visible */}
-            <div className={cn("px-4 pb-1 transition-all duration-300 ease-out", promptFocused ? "pt-4" : "pt-6")}>
+            {/* Prompt - bottom-anchored. When collapsed, render as a
+                single row so the placeholder/text hugs the toolbar; on
+                focus, the textarea expands upward (the wrapper is
+                `bottom-0` anchored, so growing rows pushes the top up
+                rather than the bottom down). Removes the empty "row 2"
+                gap that previously made the prompt feel detached. */}
+            <div className={cn("px-4 pb-1 transition-all duration-300 ease-out", promptFocused ? "pt-4" : "pt-2")}>
               <textarea
                 value={hasTextConnection ? upstreamText : prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 spellCheck={false}
                 placeholder="Describe the image you want to generate..."
                 disabled={hasTextConnection}
-                rows={promptFocused ? 6 : 2}
+                rows={promptFocused ? 6 : 1}
                 onFocus={() => setPromptFocused(true)}
                 onBlur={() => setPromptFocused(false)}
                 className="img-gen-prompt w-full bg-transparent text-sm text-white placeholder:text-white/70 resize-none outline-none border-0 leading-relaxed"
