@@ -1004,6 +1004,24 @@ async def _handle_gen_video_omni(params: dict) -> tuple[dict, Optional[str]]:
             media_service.ingest_urls(entries_with_urls)
         except Exception:  # noqa: BLE001
             logger.exception("auto-ingest from gen_video_omni response failed")
+    # Omni Flash uses workflow-mode polling: Flow delivers the rendered MP4
+    # inline as base64 on `/v1/media/<id>` with no signed GCS URL. Plant the
+    # bytes in the local cache so `/media/<id>` can serve them.
+    for entry in succeeded_entries:
+        if not isinstance(entry, dict):
+            continue
+        encoded = entry.get("encoded_video")
+        mid = entry.get("media_id")
+        if not isinstance(encoded, str) or not isinstance(mid, str):
+            continue
+        try:
+            import base64 as _b64
+            media_service.ingest_inline_bytes(
+                mid, _b64.b64decode(encoded, validate=False),
+                kind="video", mime="video/mp4",
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("inline ingest from omni workflow poll failed for %s", mid)
 
     return (
         {
