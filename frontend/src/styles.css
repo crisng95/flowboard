@@ -3061,6 +3061,30 @@ button:disabled {
   font-family: ui-monospace, monospace;
 }
 
+/* Inline "ⓘ" affordance next to a label. Used to move static help text
+   out of the layout into a hover tooltip — keeps dialogs short while
+   preserving the information for users who want it. */
+.gen-dialog__info-tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: help;
+  user-select: none;
+  opacity: 0.75;
+  transition: opacity 120ms ease, color 120ms ease;
+  vertical-align: middle;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.gen-dialog__info-tip:hover {
+  opacity: 1;
+  color: var(--accent);
+}
+
 .gen-dialog__textarea {
   width: 100%;
   background: var(--panel-high);
@@ -3131,6 +3155,48 @@ button:disabled {
   color: var(--text);
   border-color: var(--border);
   border-left-color: var(--accent);
+}
+
+/* Native <select> styled to match the dialog's chip/input aesthetic.
+   Used by the Generate-video model picker — replaces the chip row for
+   denser layout when the option list is longer than the chip row can
+   fit without wrapping. */
+.gen-dialog__select {
+  width: 100%;
+  padding: 6px 28px 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background-color: var(--panel-high);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  border-left: 2px solid var(--accent);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23888' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px 6px;
+  transition: border-color 120ms ease;
+}
+
+.gen-dialog__select:hover {
+  border-color: var(--accent);
+}
+
+.gen-dialog__select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.gen-dialog__select option {
+  background-color: var(--panel-high);
+  color: var(--text);
+}
+
+.gen-dialog__select option:disabled {
+  color: var(--muted);
 }
 
 /* Tier radio row */

@@ -18,6 +18,7 @@ import {
   OMNI_FLASH_CREDIT_COST,
   OMNI_FLASH_DURATIONS,
   type OmniFlashDuration,
+  type VideoQuality,
 } from "../store/settings";
 
 // Use the same dispatch set as `collectUpstreamRefMediaIds` so the
@@ -62,6 +63,23 @@ const CAMERA_MOVEMENTS = [
 ] as const;
 
 type CameraKey = (typeof CAMERA_MOVEMENTS)[number]["key"];
+
+type VeoChip = {
+  kind: "veo";
+  quality: VideoQuality;
+  label: string;
+  ultraOnly: boolean;
+};
+type OmniChip = { kind: "omni"; label: string };
+type VideoModelChip = VeoChip | OmniChip;
+
+const VIDEO_MODEL_CHIPS: readonly VideoModelChip[] = [
+  { kind: "veo", quality: "lite", label: "Veo 3.1 Lite", ultraOnly: false },
+  { kind: "veo", quality: "fast", label: "Veo 3.1 Fast", ultraOnly: false },
+  { kind: "veo", quality: "quality", label: "Veo 3.1 Quality", ultraOnly: false },
+  { kind: "veo", quality: "lite_relaxed", label: "Veo 3.1 Lite (Low Priority)", ultraOnly: true },
+  { kind: "omni", label: "Omni Flash" },
+];
 
 function cameraInstruction(key: CameraKey): string {
   return CAMERA_MOVEMENTS.find((c) => c.key === key)?.instruction ?? "";
@@ -128,6 +146,19 @@ function pickDefaultAspect(
   return "IMAGE_ASPECT_RATIO_PORTRAIT";
 }
 
+function InfoTip({ tip }: { tip: string }) {
+  return (
+    <span
+      className="gen-dialog__info-tip"
+      title={tip}
+      aria-label={tip}
+      role="img"
+    >
+      (i)
+    </span>
+  );
+}
+
 export function GenerationDialog() {
   const openDialog = useGenerationStore((s) => s.openDialog);
   const closeGenerationDialog = useGenerationStore((s) => s.closeGenerationDialog);
@@ -167,6 +198,12 @@ export function GenerationDialog() {
   // Hooks MUST be called unconditionally on every render — pull
   // videoModel out first, derive the boolean after.
   const videoModelFamily = useSettingsStore((s) => s.videoModel);
+  const videoQuality = useSettingsStore((s) => s.videoQuality);
+  const setVideoModel = useSettingsStore((s) => s.setVideoModel);
+  const setVideoQuality = useSettingsStore((s) => s.setVideoQuality);
+  const omniFlashDuration = useSettingsStore((s) => s.omniFlashDuration);
+  const setOmniFlashDuration = useSettingsStore((s) => s.setOmniFlashDuration);
+  const paygateTier = useGenerationStore((s) => s.paygateTier);
   const targetType = (node?.data.type as string | undefined) ?? "reference";
   const isVideo = targetType === "video";
   const isCharacter = targetType === "character";
@@ -847,46 +884,75 @@ export function GenerationDialog() {
           </div>
         )}
 
-        {/* Omni Flash duration picker — video only, when the user's
-            settings select the Omni model family. Replaces the implicit
-            ~8s Veo duration with a per-dispatch radio. Credit cost is
-            surfaced beside each option. */}
+        {/* Omni Flash duration picker */}
         {isOmniVideo && (
           <div className="gen-dialog__field">
-            <span className="gen-dialog__label">Duration (Omni Flash)</span>
+            <span className="gen-dialog__label">
+              Duration (Omni Flash)
+              <InfoTip tip="Omni Flash dispatches via video:batchAsyncGenerateVideoReferenceImages with the upstream image(s) as IMAGE_USAGE_TYPE_ASSET refs. Duration scales credit cost: 4s=15, 6s=20, 8s=25, 10s=30." />
+            </span>
             <div className="aspect-chip-row">
               {OMNI_FLASH_DURATIONS.map((d) => {
-                const active =
-                  useSettingsStore.getState().omniFlashDuration === d;
+                const active = omniFlashDuration === d;
                 return (
                   <button
                     key={d}
                     type="button"
                     className={`aspect-chip${active ? " aspect-chip--active" : ""}`}
-                    onClick={() =>
-                      useSettingsStore
-                        .getState()
-                        .setOmniFlashDuration(d as OmniFlashDuration)
-                    }
+                    onClick={() => setOmniFlashDuration(d as OmniFlashDuration)}
                     title={`${d}s — ${OMNI_FLASH_CREDIT_COST[d]} credits`}
                   >
-                    {d}s · {OMNI_FLASH_CREDIT_COST[d]}c
+                    {d}s / {OMNI_FLASH_CREDIT_COST[d]}c
                   </button>
                 );
               })}
             </div>
-            <p className="gen-dialog__hint">
-              Omni Flash dispatches via <code>video:batchAsyncGenerateVideoReferenceImages</code>
-              {" "}with the upstream image(s) as <code>IMAGE_USAGE_TYPE_ASSET</code> refs.
-              Duration scales credit cost: 4s=15, 6s=20, 8s=25, 10s=30.
-            </p>
+          </div>
+        )}
+
+        {/* Model picker (video only) */}
+        {isVideo && (
+          <div className="gen-dialog__field">
+            <span className="gen-dialog__label">
+              Model
+              <InfoTip tip="Sticky setting shared with Settings. Veo uses i2v with one source image. Omni Flash uses reference ingredients and the 4/6/8/10s duration picker below." />
+            </span>
+            <select
+              className="gen-dialog__select"
+              value={videoModelFamily === "omni_flash" ? "omni" : `veo:${videoQuality}`}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "omni") {
+                  setVideoModel("omni_flash");
+                  return;
+                }
+                const [, quality] = v.split(":") as ["veo", VideoQuality];
+                setVideoModel("veo");
+                setVideoQuality(quality);
+              }}
+            >
+              {VIDEO_MODEL_CHIPS.map((m) => {
+                if (m.kind === "omni") {
+                  return <option key="omni" value="omni">Omni Flash</option>;
+                }
+                const locked = m.ultraOnly && paygateTier !== "PAYGATE_TIER_TWO";
+                return (
+                  <option key={`veo:${m.quality}`} value={`veo:${m.quality}`} disabled={locked}>
+                    {m.label}{m.ultraOnly ? " / Ultra only" : ""}
+                  </option>
+                );
+              })}
+            </select>
           </div>
         )}
 
         {/* Camera movement (video only) */}
         {isVideo && !isOmniVideo && (
           <div className="gen-dialog__field">
-            <span className="gen-dialog__label">Camera</span>
+            <span className="gen-dialog__label">
+              Camera
+              <InfoTip tip="Static keeps the camera locked. Dynamic lets auto-prompt choose camera motion." />
+            </span>
             <div className="aspect-chip-row">
               {CAMERA_MOVEMENTS.map((c) => (
                 <button
@@ -900,10 +966,6 @@ export function GenerationDialog() {
                 </button>
               ))}
             </div>
-            <p className="gen-dialog__hint">
-              <strong>Static</strong> = locked-off, no zoom/pan.
-              <strong>Dynamic</strong> = let auto-prompt choose camera motion.
-            </p>
           </div>
         )}
 
@@ -963,6 +1025,7 @@ export function GenerationDialog() {
     </div>
   );
 }
+
 
 
 
