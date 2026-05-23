@@ -77,12 +77,6 @@ const VIDEO_QUALITIES: {
     hint: "Same Lite checkpoint, low-priority queue — 0 credits. Slower turnaround when Flow is busy.",
     ultraOnly: true,
   },
-  {
-    key: "fast_relaxed",
-    label: "Veo 3.1 Fast (Low Priority)",
-    hint: "Same Fast checkpoint, low-priority queue — 0 credits. Slower turnaround when Flow is busy.",
-    ultraOnly: true,
-  },
 ];
 
 interface SettingsPanelProps {

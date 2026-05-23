@@ -11,34 +11,48 @@ import { create } from "zustand";
  * gen_image / edit_image dispatch reads the cached preference and
  * forwards it to the worker.
  *
- * Video model is currently derived from paygate tier + aspect (resolved
- * server-side via VIDEO_MODEL_KEYS), so it's a *display* on the panel
- * rather than a switchable preference. When/if Flow ships variants per
- * tier (e.g. fast vs quality) we extend this store with `videoModelKey`.
+ * Video settings now split into:
+ *   - `videoModel`: family selector (`veo` or `omni_flash`)
+ *   - `videoQuality`: Veo-only quality tier
+ *   - `omniFlashDuration`: Omni-only duration, chosen per dispatch but
+ *     persisted so the dialog stays sticky across opens.
  */
 export type ImageModelKey = "NANO_BANANA_PRO" | "NANO_BANANA_2" | "NANO_OMNI";
-// Veo 3.1 ships in five flavours:
+
+// Veo 3.1 ships in four surfaced flavours:
 //   - Lite (smaller checkpoint, fastest, lower fidelity)
 //   - Fast (default — bigger model, balanced)
 //   - Quality (highest fidelity, slowest)
 //   - Lite Relaxed (Lite on a low-priority queue, 0 credits — Ultra only)
-//   - Fast Relaxed (Fast on a low-priority queue, 0 credits — Ultra only)
-// Choice applies globally across both portrait and landscape; backend
-// resolves the actual model key at dispatch time from [tier][quality][aspect].
-// Tier 1 (Pro) users picking either *_relaxed* fall back to Fast on the
-// backend (and the Settings UI locks those radios for them).
+// `fast_relaxed` is intentionally buried; stale persisted values are
+// normalized back to `fast` on hydrate below.
 export type VideoQuality =
   | "fast"
   | "lite"
   | "quality"
-  | "lite_relaxed"
-  | "fast_relaxed";
+  | "lite_relaxed";
+
+export type VideoModelFamily = "veo" | "omni_flash";
+
+export const OMNI_FLASH_CREDIT_COST: Record<4 | 6 | 8 | 10, number> = {
+  4: 15,
+  6: 20,
+  8: 25,
+  10: 30,
+};
+
+export type OmniFlashDuration = 4 | 6 | 8 | 10;
+export const OMNI_FLASH_DURATIONS: OmniFlashDuration[] = [4, 6, 8, 10];
 
 interface SettingsState {
   imageModel: ImageModelKey;
   videoQuality: VideoQuality;
+  videoModel: VideoModelFamily;
+  omniFlashDuration: OmniFlashDuration;
   setImageModel(model: ImageModelKey): void;
   setVideoQuality(q: VideoQuality): void;
+  setVideoModel(m: VideoModelFamily): void;
+  setOmniFlashDuration(d: OmniFlashDuration): void;
 }
 
 const STORAGE_KEY = "flowboard.settings.v1";
@@ -46,6 +60,8 @@ const STORAGE_KEY = "flowboard.settings.v1";
 interface PersistShape {
   imageModel?: ImageModelKey;
   videoQuality?: VideoQuality;
+  videoModel?: VideoModelFamily;
+  omniFlashDuration?: OmniFlashDuration;
 }
 
 function loadPersisted(): PersistShape {
@@ -68,15 +84,23 @@ function persist(state: PersistShape): void {
 }
 
 const persisted = loadPersisted();
+const VALID_VIDEO_QUALITIES: VideoQuality[] = ["fast", "lite", "quality", "lite_relaxed"];
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
-  imageModel: persisted.imageModel ?? "NANO_BANANA_PRO",
-  videoQuality: persisted.videoQuality ?? "fast",
+  imageModel: persisted.imageModel ?? "NANO_BANANA_2",
+  videoQuality:
+    persisted.videoQuality && VALID_VIDEO_QUALITIES.includes(persisted.videoQuality)
+      ? persisted.videoQuality
+      : "fast",
+  videoModel: persisted.videoModel ?? "veo",
+  omniFlashDuration: persisted.omniFlashDuration ?? 4,
   setImageModel(model) {
     set({ imageModel: model });
     persist({
       imageModel: model,
       videoQuality: get().videoQuality,
+      videoModel: get().videoModel,
+      omniFlashDuration: get().omniFlashDuration,
     });
   },
   setVideoQuality(q) {
@@ -84,6 +108,26 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     persist({
       imageModel: get().imageModel,
       videoQuality: q,
+      videoModel: get().videoModel,
+      omniFlashDuration: get().omniFlashDuration,
+    });
+  },
+  setVideoModel(m) {
+    set({ videoModel: m });
+    persist({
+      imageModel: get().imageModel,
+      videoQuality: get().videoQuality,
+      videoModel: m,
+      omniFlashDuration: get().omniFlashDuration,
+    });
+  },
+  setOmniFlashDuration(d) {
+    set({ omniFlashDuration: d });
+    persist({
+      imageModel: get().imageModel,
+      videoQuality: get().videoQuality,
+      videoModel: get().videoModel,
+      omniFlashDuration: d,
     });
   },
 }));
