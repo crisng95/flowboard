@@ -4,17 +4,19 @@ import { create } from "zustand";
  * Per-user model preferences. Survives page reload via localStorage —
  * single-user, single-host app, so no need for server persistence.
  *
- * Image model: Flow ships two checkpoints — "NANO_BANANA_PRO" (premium,
- * higher quality, slower) and "NANO_BANANA_2" (faster, lighter). Users
- * pick once in the dashboard Settings panel; every gen_image / edit_image
- * dispatch reads the cached preference and forwards it to the worker.
+ * Image model: Flow ships three checkpoints — "NANO_BANANA_PRO" (premium,
+ * higher quality, slower), "NANO_BANANA_2" (faster, lighter), and
+ * "NANO_OMNI" (next-gen unified model, ultra-high fidelity and context
+ * awareness). Users pick once in the dashboard Settings panel; every
+ * gen_image / edit_image dispatch reads the cached preference and
+ * forwards it to the worker.
  *
  * Video model is currently derived from paygate tier + aspect (resolved
  * server-side via VIDEO_MODEL_KEYS), so it's a *display* on the panel
  * rather than a switchable preference. When/if Flow ships variants per
  * tier (e.g. fast vs quality) we extend this store with `videoModelKey`.
  */
-export type ImageModelKey = "NANO_BANANA_PRO" | "NANO_BANANA_2";
+export type ImageModelKey = "NANO_BANANA_PRO" | "NANO_BANANA_2" | "NANO_OMNI";
 // Veo 3.1 ships in five flavours:
 //   - Lite (smaller checkpoint, fastest, lower fidelity)
 //   - Fast (default — bigger model, balanced)

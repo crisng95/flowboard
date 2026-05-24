@@ -2,6 +2,7 @@ import { create } from "zustand";
 import {
   ensureBoardProject,
   createRequest,
+  createNode,
   getRequest,
   patchNode,
   autoPromptSheet,
@@ -182,55 +183,28 @@ export function targetHasStructuralRef(targetRfId: string): boolean {
   return false;
 }
 
-// Predicate used by chip-preview components: returns true when the
-// given source node should be hidden from the preview because the
-// dispatcher will skip it under the burn-and-bake rule. Keeping this
-// in the same module as `collectUpstreamRefMediaIds` guarantees both
-// surfaces evaluate the same condition.
+// Predicate used by chip-preview components. Historically the
+// dispatcher skipped material refs under a structural one (burn-and-
+// bake), so the preview hid those chips. Now that Omni handles mixed
+// refs natively (every upstream media id is forwarded as a positional
+// `ref_image_N`), nothing is skipped ? so this predicate is a no-op.
+// Kept as a stable export so existing call-sites keep compiling; the
+// signature is retained even though `hasStructuralRef` is unused.
 export function isMaterialRefDemoted(
-  src: { data: { type?: string; refType?: unknown } },
-  hasStructuralRef: boolean,
+  _src: { data: { type?: string; refType?: unknown } },
+  _hasStructuralRef: boolean,
 ): boolean {
-  if (!hasStructuralRef) return false;
-  if (src.data.type !== "add_reference") return false;
-  const refType = typeof src.data.refType === "string" ? src.data.refType : null;
-  return Boolean(refType && REF_MATERIAL_TAGS.has(refType));
+  return false;
 }
 
 function collectUpstreamRefMediaIds(targetRfId: string): string[] {
   const { nodes, edges } = useBoardStore.getState();
   const ids: string[] = [];
 
-  // First pass: detect whether the upstream of this target carries
-  // any strict structural `add_reference`. We need this answer before
-  // we start picking media ids so the second pass can drop material
-  // refs in the same target's edge list.
-  let hasStructuralRef = false;
-  for (const e of edges) {
-    if (e.target !== targetRfId) continue;
-    const src = nodes.find((n) => n.id === e.source);
-    if (!src || src.data.type !== "add_reference") continue;
-    const refType = typeof src.data.refType === "string" ? src.data.refType : null;
-    if (refType && REF_STRUCTURAL_TAGS.has(refType)) {
-      hasStructuralRef = true;
-      break;
-    }
-  }
-
   for (const e of edges) {
     if (e.target !== targetRfId) continue;
     const src = nodes.find((n) => n.id === e.source);
     if (!src || !REF_SOURCE_TYPES.has(src.data.type)) continue;
-
-    // Burn-and-bake: when at least one structural `add_reference` is
-    // upstream, skip every material `add_reference` so the image-gen
-    // backend only receives the structural slot. The material ref's
-    // visual language is already baked into the prompt text by the
-    // auto-prompt synthesiser.
-    if (hasStructuralRef && src.data.type === "add_reference") {
-      const refType = typeof src.data.refType === "string" ? src.data.refType : null;
-      if (refType && REF_MATERIAL_TAGS.has(refType)) continue;
-    }
 
     const variants = Array.isArray(src.data.mediaIds) ? src.data.mediaIds : [];
     const pinned = (e.data?.sourceVariantIdx ?? null) as number | null;
@@ -274,6 +248,7 @@ function collectUpstreamRefMediaIds(targetRfId: string): string[] {
  * Variant is grid; both ride the same poll loop.
  */
 type EditDerivedOpts = {
+  aspectRatio?: string;
   aspectRatioFallback: string;
   paygateTier?: string;
   get: () => GenerationState;
@@ -303,7 +278,7 @@ async function dispatchEditDerived(
   requestType: "gen_part" | "gen_variant",
   opts: EditDerivedOpts,
 ): Promise<void> {
-  const { get, set, mapResult, aspectRatioFallback, paygateTier, ...typeParams } =
+  const { get, set, mapResult, aspectRatio: optsAspectRatio, aspectRatioFallback, paygateTier, ...typeParams } =
     opts;
 
   const projectId = await get().ensureProjectId();
@@ -327,7 +302,8 @@ async function dispatchEditDerived(
   // Part / Variant for chaining). We pull the first incoming edge's
   // source mediaId; if the upstream is multi-variant we pick variant 0.
   const board = useBoardStore.getState();
-  const upstreamEdge = board.edges.find((e) => e.target === rfId);
+  const upstreamEdge = board.edges.find((e) => e.target === rfId && e.targetHandle !== "target-text")
+    || board.edges.find((e) => e.target === rfId);
   if (!upstreamEdge) {
     const label = requestType === "gen_part" ? "Part" : "Variant";
     set({
@@ -379,7 +355,8 @@ async function dispatchEditDerived(
   // it's derived from (a portrait Concept → portrait Variant feels
   // right; user can override via the dialog later).
   const aspectRatio =
-    (node?.data.aspectRatio as string | undefined)
+    (optsAspectRatio as string | undefined)
+    ?? (node?.data.aspectRatio as string | undefined)
     ?? (upstreamNode?.data.aspectRatio as string | undefined)
     ?? aspectRatioFallback;
 
@@ -763,6 +740,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               req.type === "gen_video"
                 ? (req.params["video_quality"] as string | undefined)
                 : undefined;
+            const renderedAt = new Date().toISOString();
             useBoardStore.getState().updateNodeData(rfId, {
               status: "done",
               mediaId,
@@ -770,7 +748,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               slotErrors: slotErrors ?? undefined,
               aiBrief: undefined,
               aspectRatio: opts.aspectRatio,
-              renderedAt: new Date().toISOString(),
+              renderedAt,
               error: partialError ?? undefined,
               ...(stampedImageModel ? { imageModel: stampedImageModel } : {}),
               ...(stampedVideoQuality ? { videoQuality: stampedVideoQuality } : {}),
@@ -800,7 +778,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                   variantCount: d?.variantCount ?? mediaIds.length,
                   aiBrief: null,
                   aspectRatio: opts.aspectRatio,
-                  renderedAt: new Date().toISOString(),
+                  renderedAt,
                   // `null` clears stale error from a previous attempt
                   // when this run was clean; otherwise persist the
                   // partial summary so it survives reload.
@@ -811,6 +789,66 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               }).catch(() => {
                 // Non-fatal: the in-memory state is still correct for this session.
               });
+            }
+            if ((opts.kind ?? "image") === "image" && mediaIds.length > 1) {
+              const board = useBoardStore.getState();
+              const rootNode = board.nodes.find((x) => x.id === rfId);
+              const baseX = rootNode?.position.x ?? 0;
+              const baseY = rootNode?.position.y ?? 0;
+              const rootTitle =
+                (rootNode?.data.title as string | undefined)
+                ?? "Image";
+              const boardId = board.boardId;
+
+              if (boardId !== null) {
+                for (let idx = 1; idx < mediaIds.length; idx += 1) {
+                  const extraMediaId = mediaIds[idx];
+                  if (typeof extraMediaId !== "string" || !extraMediaId) continue;
+                  try {
+                    const extraDto = await createNode({
+                      board_id: boardId,
+                      type: "visual_asset",
+                      x: Math.round(baseX + idx * 340),
+                      y: Math.round(baseY),
+                      data: {
+                        title: `${rootTitle} ${idx + 1}`,
+                        mediaId: extraMediaId,
+                        aspectRatio: opts.aspectRatio,
+                        renderedAt,
+                      },
+                    });
+                    useBoardStore.getState().setNodes([
+                      ...useBoardStore.getState().nodes,
+                      {
+                        id: String(extraDto.id),
+                        type: extraDto.type,
+                        position: { x: extraDto.x, y: extraDto.y },
+                        data: {
+                          type: extraDto.type,
+                          shortId: extraDto.short_id,
+                          title:
+                            (extraDto.data["title"] as string | undefined)
+                            ?? `${rootTitle} ${idx + 1}`,
+                          status: "done",
+                          mediaId: extraMediaId,
+                          aspectRatio: opts.aspectRatio,
+                          renderedAt,
+                        },
+                      },
+                    ]);
+                    void patchNode(extraDto.id, {
+                      status: "done",
+                      data: {
+                        mediaId: extraMediaId,
+                        aspectRatio: opts.aspectRatio,
+                        renderedAt,
+                      },
+                    });
+                  } catch {
+                    // Non-fatal: root node result is already complete.
+                  }
+                }
+              }
             }
             // Generation results always carry a prompt (the one we just
             // dispatched with), and downstream synth treats prompt as the
@@ -1565,7 +1603,8 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
   async dispatchPart(rfId, opts) {
     await dispatchEditDerived(rfId, "gen_part", {
       region_key: opts.regionKey,
-      aspectRatioFallback: opts.aspectRatio ?? "IMAGE_ASPECT_RATIO_SQUARE",
+      aspectRatio: opts.aspectRatio,
+      aspectRatioFallback: "IMAGE_ASPECT_RATIO_SQUARE",
       paygateTier: opts.paygateTier,
       get,
       set,
@@ -1592,11 +1631,14 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
   // ── Variant (Concepta fork) ───────────────────────────────────────
   async dispatchVariant(rfId, opts) {
     const variantCount = Math.max(1, Math.min(opts.variantCount ?? 1, 4));
+    const prompt = buildVariantPrompt(opts.axisKey, opts.instruction);
     await dispatchEditDerived(rfId, "gen_variant", {
       axis_key: opts.axisKey,
       instruction: opts.instruction,
+      prompt,
       variant_count: variantCount,
-      aspectRatioFallback: opts.aspectRatio ?? "IMAGE_ASPECT_RATIO_PORTRAIT",
+      aspectRatio: opts.aspectRatio,
+      aspectRatioFallback: "IMAGE_ASPECT_RATIO_PORTRAIT",
       paygateTier: opts.paygateTier,
       get,
       set,
@@ -1641,3 +1683,47 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     set({ error: null });
   },
 }));
+
+function buildVariantPrompt(axisKey: string, instruction: string): string {
+  const templates: Record<string, { label: string; template: string }> = {
+    color: {
+      label: "Color",
+      template:
+        "Recolor the subject to: {instruction}. PRESERVE: silhouette, design lines, material types (metal stays metal, fabric stays fabric), structural detail, anatomy, pose, framing, neutral grey background, lighting. CHANGE: colour palette only. The result must read as an alternate colorway of the SAME subject.",
+    },
+    material: {
+      label: "Material",
+      template:
+        "Swap the subject's materials to: {instruction}. PRESERVE: silhouette, design lines, anatomy, pose, framing, neutral grey background, lighting, colour palette where it makes sense. CHANGE: material rendering — surface roughness, specular highlights, texture grain. The result must read as the SAME subject re-imagined in different materials.",
+    },
+    damage: {
+      label: "Damage state",
+      template:
+        "Apply this damage / wear state: {instruction}. PRESERVE: silhouette, anatomy, base design, pose, framing, neutral grey background, lighting, base colour palette. CHANGE: add weathering, scratches, dents, tears, dirt, bloodstains, missing pieces, charring — whatever the instruction calls for. The result must read as the SAME subject after the described damage.",
+    },
+    equipment: {
+      label: "Equipment",
+      template:
+        "Swap the subject's equipment / gear: {instruction}. PRESERVE: subject's body, anatomy, identity, pose, framing, neutral grey background, lighting, base outfit colours where unaffected. CHANGE: weapons, shields, accessories, armor pieces — whichever the instruction targets. The result must read as the SAME subject with different gear.",
+    },
+    outfit_alt: {
+      label: "Outfit alt",
+      template:
+        "Replace the subject's outfit with: {instruction}. PRESERVE: subject's body, anatomy, face, identity, pose, framing, neutral grey background, lighting, overall mood. CHANGE: the entire wardrobe / armor / costume to match the instruction. The result must read as the SAME character wearing a different outfit.",
+    },
+  };
+
+  const axis = templates[axisKey];
+  if (!axis) {
+    return (instruction || "").trim();
+  }
+
+  let cleaned = (instruction || "").trim();
+  if (!cleaned) {
+    cleaned = `a different ${axis.label.toLowerCase()}`;
+  }
+  if (cleaned.length > 280) {
+    cleaned = cleaned.slice(0, 280).trim();
+  }
+  return axis.template.replace("{instruction}", cleaned);
+}

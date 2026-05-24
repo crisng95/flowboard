@@ -1317,3 +1317,244 @@ async def test_storyboard_rejects_non_object_response(client, monkeypatch):
     monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
     with pytest.raises(prompt_synth.PromptSynthError, match="not a JSON object"):
         await prompt_synth.auto_prompt_storyboard(tgt, count=2)
+
+# === I2I structured command builder (Omni agent flow) ===
+# Validates the per-refType action-clause templates and the conditional
+# [NEGATIVE DIRECTIVE] block appended for pose / material / texture refs.
+
+BASE_PREFIX = (
+    "Based on the provided input images, perform a precise attribute "
+    "synthesis onto the primary subject from the main upload node "
+    "(defined as ref_image_1). You must strictly isolate attributes "
+    "and enforce the following rules:"
+)
+NEGATIVE_DIRECTIVE = "[NEGATIVE DIRECTIVE]:"
+
+
+def _seed_i2i_board(*, ref_type: str, ref_brief: str) -> dict:
+    """Build base image + single add_reference upstream into a target
+    image node. ref_type controls the add_reference refType.
+    """
+    with get_session() as s:
+        b = Board(name="i2i")
+        s.add(b); s.commit(); s.refresh(b)
+        base = Node(
+            board_id=b.id, short_id="base", type="image",
+            x=0, y=0, w=240, h=180,
+            data={
+                "title": "Base subject",
+                "aiBrief": "anime girl with crop top and arm markings",
+                "mediaId": "uuuuuuuu-base-0001-0001-000000000001",
+            },
+            status="done",
+        )
+        ref = Node(
+            board_id=b.id, short_id="refr", type="add_reference",
+            x=0, y=0, w=240, h=180,
+            data={
+                "title": "Reference",
+                "refType": ref_type,
+                "aiBrief": ref_brief,
+                "mediaId": "uuuuuuuu-refr-0002-0002-000000000002",
+            },
+            status="done",
+        )
+        target = Node(
+            board_id=b.id, short_id="trgt", type="image",
+            x=0, y=0, w=240, h=180, data={"title": "Output"},
+            status="idle",
+        )
+        s.add_all([base, ref, target]); s.commit()
+        for n in (base, ref, target):
+            s.refresh(n)
+        s.add(Edge(board_id=b.id, source_id=base.id, target_id=target.id))
+        s.add(Edge(board_id=b.id, source_id=ref.id, target_id=target.id))
+        s.commit()
+        return {"target_id": target.id}
+
+
+async def _run_i2i(target_id: int, monkeypatch) -> str:
+    async def stub_run(*args, **kwargs):
+        raise AssertionError("run_llm must not be called on I2I path")
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
+    return await prompt_synth.auto_prompt(target_id)
+
+
+@pytest.mark.asyncio
+async def test_i2i_pose_injects_camera_rule_with_brief(client, monkeypatch):
+    """Pose clause must inject the brief behind the CRITICAL CAMERA RULE
+    so Omni inherits the framing (low angle, full-body, ...). The FILTER
+    sentence still keeps it from drawing peripheral props, and the
+    [NEGATIVE DIRECTIVE] block remains the second guardrail."""
+    ids = _seed_i2i_board(
+        ref_type="pose",
+        ref_brief="low-angle hero shot, full-body, contrapposto stance",
+    )
+    out = await _run_i2i(ids["target_id"], monkeypatch)
+    assert out.startswith(BASE_PREFIX)
+    assert "- Adopt ONLY the underlying skeletal pose, posture, body mechanics, and weight distribution from ref_image_2" in out
+    # Camera rule + brief must appear in the clause (not just the
+    # negative directive block).
+    clauses_section = out.split("[NEGATIVE DIRECTIVE]")[0]
+    assert "CRITICAL CAMERA RULE" in clauses_section
+    assert "low angle" in clauses_section  # examples list mentions "low angle"
+    assert "low-angle hero shot, full-body, contrapposto stance" in clauses_section
+    # Per-clause FILTER (not the multi-line CRITICAL FILTER from earlier
+    # revisions) keeps prop-stripping in place.
+    assert "FILTER: Ignore all characters, clothing, weapons, hats" in clauses_section
+    # Negative directive must still be appended for pose refs.
+    assert NEGATIVE_DIRECTIVE in out
+    # Old "transform the material" wording must be gone.
+    assert "transform the material" not in out
+
+
+def test_i2i_pose_without_brief_uses_fallback_clause():
+    """When the pose ref has no brief / prompt / title, the fallback
+    clause kicks in (camera+framing language, no "CRITICAL CAMERA RULE"
+    block). Tested via the helper directly so we do not have to fight
+    the DB-seed fixture default title."""
+    class _T:
+        data = {}
+
+    records = [
+        {"type": "image", "has_media": True, "ref_index": 1, "brief": "base subject"},
+        {"type": "add_reference", "refType": "pose", "ref_index": 2,
+         "brief": None, "prompt": None, "title": None},
+    ]
+    out = prompt_synth._try_i2i_direct_concat(records, _T())
+    assert out is not None
+    assert out.startswith(BASE_PREFIX)
+    assert (
+        "- Adopt ONLY the underlying skeletal pose, posture, and weight "
+        "distribution from ref_image_2, while matching its exact camera "
+        "perspective and framing."
+    ) in out
+    # No brief -> fallback clause must NOT contain the verbose
+    # CRITICAL CAMERA RULE wording.
+    assert "CRITICAL CAMERA RULE" not in out
+    assert NEGATIVE_DIRECTIVE in out
+
+
+@pytest.mark.asyncio
+async def test_i2i_lighting_uses_slot_and_brief_no_negative(client, monkeypatch):
+    """Lighting clause must reference the slot and include the brief.
+    Negative directive must NOT be appended for lighting-only upstream."""
+    ids = _seed_i2i_board(
+        ref_type="lighting",
+        ref_brief="upper-right rim, somber high-contrast, charcoal vignette",
+    )
+    out = await _run_i2i(ids["target_id"], monkeypatch)
+    assert out.startswith(BASE_PREFIX)
+    assert "- Apply the exact 3D lighting direction, key-light setup, shadow falloff, and studio atmosphere from ref_image_2" in out
+    assert "upper-right rim, somber high-contrast, charcoal vignette" in out
+    # Lighting-only: no negative directive needed.
+    assert NEGATIVE_DIRECTIVE not in out
+
+
+@pytest.mark.asyncio
+async def test_i2i_texture_uses_slot_and_maintains_identity(client, monkeypatch):
+    """Texture clause must reference the slot, include the brief, and
+    contain the identity-preservation phrase. Negative directive must
+    be appended for texture/material refs."""
+    ids = _seed_i2i_board(
+        ref_type="texture",
+        ref_brief="translucent cyan-blue crystal, glassy finish, glowing sub-surface light",
+    )
+    out = await _run_i2i(ids["target_id"], monkeypatch)
+    assert out.startswith(BASE_PREFIX)
+    assert "- Completely transform and re-render its surface material using the texture definition from ref_image_2" in out
+    assert "while strictly maintaining the underlying shapes and identity of ref_image_1" in out
+    assert "translucent cyan-blue crystal" in out
+    assert NEGATIVE_DIRECTIVE in out
+
+
+@pytest.mark.asyncio
+async def test_i2i_multi_ref_pose_lighting_texture(client, monkeypatch):
+    """Full 3-ref case: pose (ref_image_2) + lighting (ref_image_3) +
+    texture (ref_image_4). Each clause must use its own slot label and
+    verb. Negative directive must appear exactly once at the end."""
+    with get_session() as s:
+        b = Board(name="i2i-multi"); s.add(b); s.commit(); s.refresh(b)
+        base = Node(
+            board_id=b.id, short_id="base", type="image",
+            x=0, y=0, w=240, h=180,
+            data={
+                "title": "Base",
+                "aiBrief": "anime girl with crop top",
+                "mediaId": "uuuuuuuu-base-0001-0001-000000000001",
+            },
+            status="done",
+        )
+        pose_node = Node(
+            board_id=b.id, short_id="pose", type="add_reference",
+            x=0, y=0, w=240, h=180,
+            data={
+                "refType": "pose",
+                "aiBrief": "contrapposto with sword overhead",
+                "mediaId": "uuuuuuuu-pose-0002-0002-000000000002",
+            },
+            status="done",
+        )
+        light_node = Node(
+            board_id=b.id, short_id="lit_", type="add_reference",
+            x=0, y=0, w=240, h=180,
+            data={
+                "refType": "lighting",
+                "aiBrief": "upper-right rim, amber fill, deep shadows",
+                "mediaId": "uuuuuuuu-lit_-0003-0003-000000000003",
+            },
+            status="done",
+        )
+        tex_node = Node(
+            board_id=b.id, short_id="tex_", type="add_reference",
+            x=0, y=0, w=240, h=180,
+            data={
+                "refType": "texture",
+                "aiBrief": "desaturated steel-and-bone tones, crisp specular",
+                "mediaId": "uuuuuuuu-tex_-0004-0004-000000000004",
+            },
+            status="done",
+        )
+        target = Node(
+            board_id=b.id, short_id="trgt", type="image",
+            x=0, y=0, w=240, h=180, data={"title": "Output"},
+            status="idle",
+        )
+        s.add_all([base, pose_node, light_node, tex_node, target]); s.commit()
+        for n in (base, pose_node, light_node, tex_node, target):
+            s.refresh(n)
+        for src_node in (base, pose_node, light_node, tex_node):
+            s.add(Edge(board_id=b.id, source_id=src_node.id, target_id=target.id))
+        s.commit()
+        target_id = target.id
+
+    out = await _run_i2i(target_id, monkeypatch)
+    assert out.startswith(BASE_PREFIX)
+    assert "ref_image_2" in out
+    assert "ref_image_3" in out
+    assert "ref_image_4" in out
+    # Pose clause now uses CRITICAL CAMERA RULE + FILTER (split into
+    # two sentences) so we assert both pieces.
+    assert "CRITICAL CAMERA RULE" in out
+    assert "FILTER: Ignore all characters, clothing, weapons, hats" in out
+    assert "upper-right rim" in out
+    assert "desaturated steel-and-bone" in out
+    assert out.count(NEGATIVE_DIRECTIVE) == 1
+    assert out.endswith("isolated mechanics of references.")
+
+
+@pytest.mark.asyncio
+async def test_i2i_skipped_when_no_add_reference(client, monkeypatch):
+    """Pure character + visual_asset upstream (no add_reference) keeps
+    going through the regular Claude prose-synthesis path."""
+    ids = _seed_board_with_chain()
+    captured: dict = {}
+
+    async def stub_run(feature, prompt, *, system_prompt=None, timeout=0):
+        captured["prompt"] = prompt
+        return "Photoreal studio shot of a Korean woman wearing a white t-shirt"
+
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
+    out = await prompt_synth.auto_prompt(ids["target_id"])
+    assert "prompt" in captured, "non-I2I path must call run_llm"
+    assert "Korean woman" in out

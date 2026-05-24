@@ -32,6 +32,11 @@ const IMAGE_MODELS: { key: ImageModelKey; label: string; hint: string }[] = [
     hint: "GEM_PIX_2 — premium, higher fidelity, slightly slower",
   },
   {
+    key: "NANO_OMNI",
+    label: "Nano Omni",
+    hint: "OMNI — Google's latest next-gen unified model, ultra-high fidelity and context awareness.",
+  },
+  {
     key: "NANO_BANANA_2",
     label: "Nano Banana 2",
     hint: "NARWHAL — faster, lighter checkpoint",

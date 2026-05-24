@@ -43,13 +43,14 @@ def _media_get_url(media_id: str) -> str:
 # + edit_image at request time. Update when Google rotates model names.
 IMAGE_MODELS: dict[str, str] = {
     "NANO_BANANA_PRO": "GEM_PIX_2",
+    "NANO_OMNI": "GEM_OMNI_1",
     "NANO_BANANA_2": "NARWHAL",
 }
 DEFAULT_IMAGE_MODEL_KEY = "NANO_BANANA_PRO"
 
 
 def resolve_image_model(key: Optional[str]) -> str:
-    """Map a nickname (`NANO_BANANA_PRO` / `NANO_BANANA_2`) to the actual
+    """Map a nickname (`NANO_BANANA_PRO` / `NANO_BANANA_2` / `NANO_OMNI`) to the actual
     Flow model identifier. Falls back to the Pro default for unknown /
     missing keys so a stale frontend can't break dispatch."""
     if isinstance(key, str) and key in IMAGE_MODELS:

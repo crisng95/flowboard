@@ -24,6 +24,7 @@ const ICON: Record<string, string> = {
 const IMAGE_MODEL_LABELS: Record<string, string> = {
   NANO_BANANA_PRO: "Banana Pro",
   NANO_BANANA_2: "Banana 2",
+  NANO_OMNI: "Nano Omni",
 };
 const VIDEO_QUALITY_LABELS: Record<string, string> = {
   lite: "Lite",

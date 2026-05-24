@@ -712,15 +712,40 @@ def _build_reference_system_prompt(records: list[dict]) -> str:
                 f"  2. Anchor the description on {structure_slots} - keep "
                 "its silhouette, proportions, anatomy, and design "
                 "intact.\n"
-                "  3. Bake every line under MATERIAL DIRECTIVE into "
+                f"  3. TRANSFORMATION STRUCTURE RULE (CRITICAL): Do NOT "
+                "attempt to reinvent or add new structural / silhouette "
+                f"descriptors for the final subject. {structure_slots} owns "
+                "100% of the shape, pauldrons, waist, tassets, and overall "
+                "design. You MUST write the prompt as a MATERIAL "
+                "TRANSFORMATION: state the base subject by referring to "
+                f"{structure_slots} first, and then explicitly direct the "
+                "model to transform / re-render its surfaces using the "
+                "material directives - use phrases like 'with its surface "
+                "material completely replaced by...', 'sculpted out of...', "
+                "'re-rendered in the texture of...'. Forbidden: any free-form "
+                "redescription of the subject's geometry (e.g. "
+                "'broad-shouldered', 'layered tassets', 'high collar', "
+                "'tapered waist') - those words override the structural ref "
+                "and cause the model to invent a brand-new design.\n"
+                "  4. Bake every line under MATERIAL DIRECTIVE into "
                 "the structural subject's surface description: "
                 "finish, palette, translucency, sub-surface glow, "
                 "brushwork, lighting feel. Describe the subject AS IF "
                 "it were re-rendered with that material language.\n"
-                "  4. DO NOT introduce a second object beside the "
+                "  5. NO GEOMETRY ECHO FROM THE DIRECTIVE: do NOT extract "
+                "or repeat geometric / form / silhouette words from the "
+                "MATERIAL DIRECTIVE if they conflict with or duplicate the "
+                "structural reference. Focus PURELY on color, subsurface "
+                "glow, transparency, roughness, and finish. Banned families "
+                "include shape nouns ('blade', 'edge', 'curve', 'plate', "
+                "'panel'), proportion adjectives ('broad', 'narrow', "
+                "'tall', 'slender', 'layered'), and anatomy words "
+                "('shoulder', 'waist', 'hip', 'collar') unless they are "
+                "already present in the structural subject's name.\n"
+                "  6. DO NOT introduce a second object beside the "
                 "subject. The material directive is a shader, not a "
                 "prop.\n"
-                "  5. CRITICAL - STRIP OBJECT NOUNS FROM THE "
+                "  7. CRITICAL - STRIP OBJECT NOUNS FROM THE "
                 "DIRECTIVE: the MATERIAL DIRECTIVE source brief was "
                 "vision-captioned and may name the original object "
                 "(e.g. 'two ornate fantasy daggers', 'a glowing "
@@ -736,13 +761,23 @@ def _build_reference_system_prompt(records: list[dict]) -> str:
                 "-> use 'glowing cyan crystalline material with "
                 "bone-white finish' (no 'daggers', no 'hilts', no "
                 "'two').\n"
-                "  6. Worked example: structural ref = a skull in a "
+                "  8. Worked example: structural ref = a skull in a "
                 "tall helmet; MATERIAL DIRECTIVE = glowing translucent "
                 "green organism. Correct output: 'a helmeted skull "
                 "rendered with glowing translucent green organic "
                 "surfaces and sub-surface light' - NOT 'a skull next "
                 "to a green organism' (the noun 'organism' must NOT "
                 "appear in the final prompt).\n"
+                "  9. Worked example (armor + crystal daggers): "
+                f"structural ref ({structure_slots}) = a piece of fantasy "
+                "torso armor; MATERIAL DIRECTIVE = translucent cyan-blue "
+                "crystal daggers. Correct output: 'Center front-facing "
+                f"torso armor from {structure_slots}, with its entire "
+                "surface beautifully transformed into translucent "
+                "cyan-blue crystal, sub-surface glow, glassy finish' - "
+                "NOT 'broad-shouldered crystal armor with layered "
+                "tassets' (re-invents geometry) and NOT 'crystal daggers "
+                "on torso armor' (composite bug).\n"
             )
         else:
             combination_rules = (
@@ -1429,6 +1464,169 @@ async def auto_prompt_batch(
         return prompts
 
 
+
+def _try_i2i_direct_concat(records: list[dict], target_node) -> Optional[str]:
+    """Build a structured Omni I2I command when the upstream is a base
+    media node + one or more add_reference nodes.
+
+    Output shape (matches the manually-tuned template that performs best
+    on real Omni runs):
+
+        Based on the provided input images, perform a precise attribute
+        synthesis onto the primary subject from the main upload node
+        (defined as ref_image_1). You must strictly isolate attributes
+        and enforce the following rules:
+        - <per-refType action clause referencing ref_image_N>
+        - <per-refType action clause referencing ref_image_M>
+
+        [NEGATIVE DIRECTIVE]: ...   <- appended only when pose / material
+                                       / texture refs are upstream, since
+                                       those are the cases where Omni has
+                                       historically dragged peripheral
+                                       props (weapons, hats, backgrounds)
+                                       from the reference images.
+
+    Per-tag templates use the slot label ``ref_image_{ref_index}`` so the
+    model binds each clause to the correct positional input. ``pose``
+    intentionally omits the user-provided brief because the structural
+    pose comes from the image itself; the brief would just be a redundant
+    text caption that risks polluting the silhouette.
+
+    Returns ``None`` when the upstream does not match the I2I pattern
+    (caller falls through to Claude prose synthesis).
+    """
+    media_records = [
+        r for r in records
+        if r.get("type") != "add_reference" and r.get("has_media")
+    ]
+    ref_records = [
+        r for r in records
+        if r.get("type") == "add_reference"
+    ]
+    if not media_records or not ref_records:
+        return None
+
+    def _slot(r: dict) -> str:
+        # Material refs may have been demoted by
+        # `_burn_material_refs_in_place` (ref_index cleared, original
+        # value preserved on `original_ref_index`). The burn was meant
+        # for the text-only Claude prose flow; on the I2I direct path
+        # every upstream media id IS dispatched to Omni, so we want
+        # the original positional slot back when building clauses.
+        idx = r.get("ref_index") or r.get("original_ref_index")
+        return f"ref_image_{idx}" if isinstance(idx, int) and idx > 0 else "the matching reference"
+
+    def _desc(r: dict) -> str:
+        return (
+            (r.get("brief") or "").strip()
+            or (r.get("prompt") or "").strip()
+            or (r.get("title") or "").strip()
+        )
+
+    clauses: list[str] = []
+    saw_pose = False
+    saw_material = False
+    for r in ref_records:
+        ref_type = (r.get("refType") or "").strip().lower()
+        slot = _slot(r)
+        desc = _desc(r)
+
+        if ref_type == "pose":
+            # Pose: skeletal extraction + camera/framing inheritance +
+            # filter peripheral props. Earlier revisions dropped `desc`
+            # entirely to avoid leaking prop nouns ("holding gun"), but
+            # that also dropped the framing context the vision pass
+            # captured ("low angle", "three-quarter view", …).
+            # We now inject `desc` behind a CRITICAL CAMERA RULE so Omni
+            # locks the perspective from the reference image, while the
+            # FILTER sentence keeps it from drawing peripheral items.
+            if desc:
+                clauses.append(
+                    f"- Adopt ONLY the underlying skeletal pose, posture, "
+                    f"body mechanics, and weight distribution from {slot}. "
+                    f"CRITICAL CAMERA RULE: You MUST strictly replicate "
+                    f"the exact camera angle, perspective, lens framing "
+                    f"(e.g., low angle, eye level, full-body, or "
+                    f"three-quarter view) implied in {slot} and described "
+                    f"here: {desc}. FILTER: Ignore all characters, "
+                    f"clothing, weapons, hats, and handheld objects from "
+                    f"{slot}."
+                )
+            else:
+                clauses.append(
+                    f"- Adopt ONLY the underlying skeletal pose, posture, "
+                    f"and weight distribution from {slot}, while matching "
+                    f"its exact camera perspective and framing."
+                )
+            saw_pose = True
+            continue
+
+        if ref_type == "lighting":
+            tail = f" described here: {desc}" if desc else ""
+            clauses.append(
+                f"- Apply the exact 3D lighting direction, key-light setup, "
+                f"shadow falloff, and studio atmosphere from {slot}{tail}."
+            )
+            continue
+
+        if ref_type in ("texture", "material"):
+            tail = f": {desc}" if desc else ""
+            clauses.append(
+                f"- Completely transform and re-render its surface material "
+                f"using the texture definition from {slot}, while strictly "
+                f"maintaining the underlying shapes and identity of "
+                f"ref_image_1{tail}."
+            )
+            saw_material = True
+            continue
+
+        # Other tags: keep the per-refType verb but bind to the slot.
+        # Skip when there is no descriptive text to add - a slot-only
+        # clause without context is noise.
+        if not desc:
+            continue
+        _GENERIC_PREFIX = {
+            "style":       "Adopt the overall artistic style, rendering technique, and visual language",
+            "mood":        "Infuse the scene with the mood, atmosphere, and emotional tone",
+            "environment": "Place the subject into the environment and scene context",
+            "blueprint":   "Reconstruct the subject following the structural blueprint",
+            "sketch":      "Preserve the structural silhouette and design intent from the sketch",
+            "photo":       "Match the photographic style, lens characteristics, and real-world grounding",
+            "3d_render":   "Apply the 3-D rendering style, surface shading, and lighting rig",
+            "concept_art": "Adopt the concept-art style, color script, and design language",
+        }
+        verb = _GENERIC_PREFIX.get(ref_type, "Apply the visual qualities and characteristics")
+        clauses.append(f"- {verb} from {slot} described here: {desc}")
+
+    if not clauses:
+        return None
+
+    base_prefix = (
+        "Based on the provided input images, perform a precise attribute "
+        "synthesis onto the primary subject from the main upload node "
+        "(defined as ref_image_1). You must strictly isolate attributes "
+        "and enforce the following rules:"
+    )
+    body = "\n".join(clauses)
+    combined = base_prefix + "\n" + body
+
+    # Negative directive: only emitted when there is a pose / material /
+    # texture ref in play. Those are the upstream patterns where Omni has
+    # historically pulled peripheral props or background details from the
+    # reference image. Pure lighting / style / mood refs don’t need the
+    # extra guardrail because the reference is intentionally style-only.
+    if saw_pose or saw_material:
+        combined += (
+            "\n\n[NEGATIVE DIRECTIVE]: No extra weapons, no firearms, no "
+            "pistols, no hats, no background elements from reference "
+            "images. Focus purely on modifying ref_image_1 using the "
+            "isolated mechanics of references."
+        )
+
+    if len(combined) > 1500:
+        combined = combined[:1500].rstrip() + "…"
+    return combined
+
 async def auto_prompt(node_id: int, *, camera: Optional[str] = None) -> str:
     """Compose a generation prompt by walking upstream + asking the
     configured Auto-Prompt provider.
@@ -1446,6 +1644,19 @@ async def auto_prompt(node_id: int, *, camera: Optional[str] = None) -> str:
     records, target = _collect_upstream(node_id)
     if target is None:
         raise PromptSynthError(f"node {node_id} not found")
+
+    # I2I direct-concat: base-image + add_reference upstream ? Omni
+    # agent-style transformation prompt. Bypasses the full Claude
+    # prose-synthesis pipeline when the pattern matches.
+    i2i_prompt = _try_i2i_direct_concat(records, target)
+    if i2i_prompt is not None:
+        async with record_activity(
+            "auto_prompt",
+            params={"node_id": node_id, "camera": camera},
+            node_id=node_id,
+        ) as activity:
+            activity.set_result({"prompt": i2i_prompt})
+            return i2i_prompt
 
     is_video = target.type == "video"
     is_concept = target.type == "concept"
