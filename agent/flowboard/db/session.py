@@ -11,13 +11,11 @@ engine = create_engine(
     connect_args={"check_same_thread": False},
 )
 
-
 @event.listens_for(engine, "connect")
 def _enable_sqlite_fk(dbapi_conn, _connection_record) -> None:
     cur = dbapi_conn.cursor()
     cur.execute("PRAGMA foreign_keys=ON")
     cur.close()
-
 
 def init_db() -> None:
     from sqlalchemy import inspect
@@ -36,11 +34,11 @@ def init_db() -> None:
                 models.Asset.__table__.drop(conn, checkfirst=True)
                 conn.commit()
 
-        # Edge.source_variant_idx — added when per-edge variant pinning
+        # Edge.source_variant_idx - added when per-edge variant pinning
         # shipped. SQLite ALTER TABLE ADD COLUMN is non-destructive (and
         # idempotent via the column-existence check), so existing DBs
         # pick up the new column on first boot without losing data.
-        # `create_all` below won't help because it skips ALTERs on
+        # `create_all` below won''t help because it skips ALTERs on
         # existing tables.
         if insp.has_table("edge"):
             edge_cols = {c["name"] for c in insp.get_columns("edge")}
@@ -49,9 +47,31 @@ def init_db() -> None:
                     "ALTER TABLE edge ADD COLUMN source_variant_idx INTEGER"
                 )
                 conn.commit()
+            if "source_handle" not in edge_cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE edge ADD COLUMN source_handle VARCHAR"
+                )
+                conn.commit()
+            if "target_handle" not in edge_cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE edge ADD COLUMN target_handle VARCHAR"
+                )
+                conn.commit()
+
+        # Node.parent_id - added when Node Group support shipped. Same
+        # rationale as the edge migration above: ALTER TABLE ADD COLUMN
+        # is the only way to extend an existing SQLite table without
+        # losing rows, and the column-existence guard keeps the call
+        # idempotent across reboots.
+        if insp.has_table("node"):
+            node_cols = {c["name"] for c in insp.get_columns("node")}
+            if "parent_id" not in node_cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE node ADD COLUMN parent_id INTEGER"
+                )
+                conn.commit()
 
     SQLModel.metadata.create_all(engine)
-
 
 @contextmanager
 def get_session():

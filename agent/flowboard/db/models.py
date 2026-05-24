@@ -26,6 +26,17 @@ class Node(SQLModel, table=True):
     data: dict = Field(default_factory=dict, sa_column=Column(JSON))
     status: str = "idle"
     created_at: datetime = Field(default_factory=_utcnow)
+    # Optional reference to a parent Node when this node belongs to a
+    # Group (type == "group"). Children store positions RELATIVE to
+    # their group's origin so dragging the group transitively moves
+    # every child by the same delta. NULL when the node is at the
+    # board root (the common case).
+    #
+    # Self-referential FK — SQLite needs the explicit `node.id` string
+    # because the class isn't fully defined at field-resolution time.
+    parent_id: Optional[int] = Field(
+        default=None, foreign_key="node.id", index=True, nullable=True
+    )
 
 
 class Edge(SQLModel, table=True):
@@ -34,6 +45,8 @@ class Edge(SQLModel, table=True):
     source_id: int = Field(foreign_key="node.id")
     target_id: int = Field(foreign_key="node.id")
     kind: str = "ref"
+    source_handle: Optional[str] = None
+    target_handle: Optional[str] = None
     # Per-edge variant pin: when the source node holds multiple variants
     # (`data.mediaIds`), this index selects WHICH variant feeds the
     # downstream as a reference. None = "fall back to the source's

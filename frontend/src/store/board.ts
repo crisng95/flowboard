@@ -11,6 +11,8 @@ import {
   deleteNode,
   createEdge,
   deleteEdge,
+  groupNodes as apiGroupNodes,
+  ungroupNodes as apiUngroupNodes,
   type Board,
   type NodeType,
   type NodeStatus as ApiNodeStatus,
@@ -147,6 +149,13 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   shots?: StoryboardShot[];
   shotCount?: number; // 1..8; mirrors shots.length
   narrativeSeed?: string; // user free-text feeding the planner
+
+  // Group node fields (type === "group"). The frame container that
+  // owns child nodes via parent_id. `groupColor` drives the header /
+  // border tint, `locked` cascades a draggable=false flag onto every
+  // child so the whole cluster moves as one unit (or not at all).
+  groupColor?: string;
+  locked?: boolean;
 }
 
 export type FlowNode = Node<FlowboardNodeData>;
@@ -164,14 +173,49 @@ function edgeFromDto(dto: {
   id: number;
   source_id: number;
   target_id: number;
+  source_handle?: string | null;
+  target_handle?: string | null;
   source_variant_idx?: number | null;
 }): Edge<FlowboardEdgeData> {
   return {
     id: String(dto.id),
     source: String(dto.source_id),
     target: String(dto.target_id),
+    sourceHandle: dto.source_handle ?? undefined,
+    targetHandle: dto.target_handle ?? undefined,
     data: { sourceVariantIdx: dto.source_variant_idx ?? null },
   };
+}
+
+function defaultTargetHandleForConnection(sourceNode?: FlowNode, targetNode?: FlowNode): string | undefined {
+  if (!sourceNode || !targetNode) return undefined;
+  if (targetNode.data?.type !== "reference" && targetNode.data?.type !== "variant") {
+    return "target";
+  }
+  const sourceType = sourceNode.type ?? sourceNode.data?.type;
+  return sourceType === "text" ? "target-text" : "target-image";
+}
+
+// ── React Flow internal-update bridge ────────────────────────────────
+// React Flow caches each node's handle positions in absolute screen
+// coords; flipping a node's `parentId` (= switching coordinate
+// space) invalidates that cache but RF only refreshes it when
+// `updateNodeInternals(ids)` is called explicitly. The hook lives in
+// React land, so we let Board.tsx hand the function to the store on
+// mount and the group / ungroup actions call back through this ref.
+let updateNodeInternalsRef: ((ids: string[]) => void) | null = null;
+export function registerUpdateNodeInternals(fn: ((ids: string[]) => void) | null) {
+  updateNodeInternalsRef = fn;
+}
+function flushNodeInternals(ids: string[]) {
+  if (!updateNodeInternalsRef || ids.length === 0) return;
+  // Defer 100ms so React Flow has applied the node array change
+  // (parentId / position) before we ask it to remeasure handles.
+  setTimeout(() => {
+    if (updateNodeInternalsRef) {
+      updateNodeInternalsRef(ids);
+    }
+  }, 100);
 }
 
 // ── Tiny per-node debounce (no external deps) ─────────────────────────────
@@ -207,7 +251,8 @@ const TYPE_TITLE: Record<NodeType, string> = {
   turntable: "Turntable",
   upload: "Upload",
   text: "Text",
-    add_reference: "Add Reference",
+  add_reference: "Add Reference",
+  group: "Group",
 };
 
 /**
@@ -223,17 +268,68 @@ type NodeDTO = {
   short_id: string;
   x: number;
   y: number;
+  // Persisted width / height. Only consumed for `group` containers
+  // (regular nodes self-size from their content). Stored on the
+  // Node row so the frame keeps its dimensions across reloads.
+  w?: number;
+  h?: number;
   data: Record<string, unknown>;
   status: ApiNodeStatus;
+  parent_id?: number | null;
 };
 
-function nodeFromDto(n: NodeDTO): FlowNode {
-  const d = n.data;
+function nodeFromDto(
+  n: NodeDTO,
+  fallbackData?: Partial<FlowboardNodeData>,
+): FlowNode {
+  const d =
+    n.data && typeof n.data === "object" && !Array.isArray(n.data)
+      ? n.data
+      : {};
+  const parentId = n.parent_id ?? undefined;
+  const groupLocked = (d["locked"] as boolean | undefined) ?? false;
+  // Group containers persist their own (w, h) on the Node row -
+  // surface them as `style` so React Flow renders the frame at the
+  // exact size we stored. Regular nodes self-size from content and
+  // ignore this field.
+  const baseFlowNode: Partial<FlowNode> = parentId !== undefined
+    ? { parentId: String(parentId), extent: "parent" as const }
+    : {};
+  if (n.type === "group" && n.w && n.h) {
+    baseFlowNode.style = { width: n.w, height: n.h };
+    // Group frame sits beneath children + edges so it never
+    // obscures handles or wires running between siblings.
+    baseFlowNode.zIndex = -1;
+  }
+  if (parentId !== undefined) {
+    // Children stack above the frame so their handles + edges
+    // remain interactive even when the group has a tinted body.
+    baseFlowNode.zIndex = 1;
+  }
   return {
     id: String(n.id),
     type: n.type,
     position: { x: n.x, y: n.y },
+    ...baseFlowNode,
+    // When the group itself (or any locked child) is locked we
+    // disable React Flow drag at the node level. Selection +
+    // toolbars stay interactive; only positional drift is gated.
+    draggable: groupLocked ? false : undefined,
     data: {
+      // When a caller already has a richer local copy of the node
+      // (for example right before a group / ungroup response rewrites
+      // only parent/position), keep those keys as a fallback and let
+      // the freshly persisted DTO win for any field it explicitly
+      // returned.
+      ...fallbackData,
+      // Pass-through every field the backend persisted so newly added
+      // node-data keys (model selections, aspect ratio, refType, tags,
+      // future settings...) survive a reload without each new feature
+      // having to register itself in this whitelist. The explicit
+      // overrides below still win for typed fields like `type` /
+      // `shortId` / `status` that come from sibling NodeDTO columns,
+      // not from the JSON `data` blob.
+      ...d,
       type: n.type,
       shortId: n.short_id,
       title: (d["title"] as string | undefined) ?? TYPE_TITLE[n.type],
@@ -245,8 +341,17 @@ function nodeFromDto(n: NodeDTO): FlowNode {
       slotErrors: d["slotErrors"] as (string | null)[] | undefined,
       variantCount: d["variantCount"] as number | undefined,
       aspectRatio: d["aspectRatio"] as string | undefined,
-      aiBrief: d["aiBrief"] as string | undefined,
+      aspectKey: d["aspectKey"] as string | undefined,
+      aspectRatioOverride: d["aspectRatioOverride"] as string | undefined,
+      imageWidth: d["imageWidth"] as number | undefined,
+      imageHeight: d["imageHeight"] as number | undefined,
+      aiBrief: d["aiBrief"] as string | null | undefined,
+      aiBriefStatus: d["aiBriefStatus"] as FlowboardNodeData["aiBriefStatus"],
+      autoPromptStatus:
+        d["autoPromptStatus"] as FlowboardNodeData["autoPromptStatus"],
+      renderedAt: d["renderedAt"] as string | undefined,
       imageModel: d["imageModel"] as string | undefined,
+      modelKey: d["modelKey"] as string | undefined,
       videoQuality: d["videoQuality"] as string | undefined,
       // Legacy character builder (still loaded for old boards)
       charCountry: d["charCountry"] as string | undefined,
@@ -265,12 +370,65 @@ function nodeFromDto(n: NodeDTO): FlowNode {
       regionKey: d["regionKey"] as string | undefined,
       axisKey: d["axisKey"] as string | undefined,
       variantInstruction: d["variantInstruction"] as string | undefined,
+      refType: d["refType"] as string | undefined,
+      // Group node fields
+      groupColor: d["groupColor"] as string | undefined,
+      locked: d["locked"] as boolean | undefined,
       // User-resized width persisted per node — read here so a refresh
       // doesn't snap the node back to its default size.
       nodeWidth: d["nodeWidth"] as number | undefined,
       error: d["error"] as string | undefined,
     },
   };
+}
+
+/**
+ * Cascade `data.locked` from each group node down to its children by
+ * flipping every interactive flag (draggable / selectable /
+ * connectable) to false. Run after mapping a board response so every
+ * load path (initial / switch / refresh) ends up with a consistent
+ * lock state. Children do not persist their own `data.locked`, so
+ * without this pass a locked group would silently lose its grip on
+ * its children after every reload.
+ */
+function applyGroupLockCascade(nodes: FlowNode[]): FlowNode[] {
+  const lockedGroupIds = new Set(
+    nodes.filter((n) => n.data.type === "group" && n.data.locked === true).map((n) => n.id),
+  );
+  if (lockedGroupIds.size === 0) return nodes;
+  return nodes.map((n) => {
+    if (n.parentId && lockedGroupIds.has(n.parentId)) {
+      return {
+        ...n,
+        draggable: false,
+        selectable: false,
+        connectable: false,
+      };
+    }
+    return n;
+  });
+}
+
+/**
+ * React Flow v12 requires every parent node to appear BEFORE any of
+ * its children in the `nodes` array; otherwise it cannot resolve the
+ * parent reference at the time it processes the child and falls back
+ * to treating the relative `(x, y)` as absolute - which is exactly
+ * what was making grouped clusters drift on reload. The backend
+ * returns rows in created_at order, which has no guarantee of
+ * parent-first ordering, so we re-sort here.
+ */
+function sortNodesParentFirst(nodes: FlowNode[]): FlowNode[] {
+  // One-pass partition: roots / groups first (preserving relative
+  // order), then every child appended. Stable sort keeps non-group
+  // ordering intact for downstream code that relies on it.
+  const roots: FlowNode[] = [];
+  const children: FlowNode[] = [];
+  for (const n of nodes) {
+    if (n.parentId !== undefined) children.push(n);
+    else roots.push(n);
+  }
+  return [...roots, ...children];
 }
 
 // ── Persisted active-board id ─────────────────────────────────────────────
@@ -353,6 +511,36 @@ interface BoardState {
   // sharing the original's source refs.
   cloneNodeWithUpstream(rfId: string): Promise<string | null>;
 
+  // Group operations -----------------------------------------------
+  // Pack the supplied root nodes into a fresh `group` container.
+  // Returns the new group rfId on success, or null when the
+  // selection is invalid (empty / contains a node that already has
+  // a parent / contains a group). The store recomputes the
+  // bounding box client-side so the new group sits exactly around
+  // the rendered nodes.
+  groupNodes(rfIds: string[]): Promise<string | null>;
+  // Inverse of `groupNodes`: detach every child, restore their
+  // absolute coordinates, then drop the group node.
+  ungroupNodes(groupRfId: string): Promise<void>;
+  // Update the group accent color (palette pick from the toolbar).
+  updateGroupColor(groupRfId: string, color: string): Promise<void>;
+  // Toggle the lock flag on a group; cascades draggable=false to
+  // every child so the entire cluster freezes in place.
+  toggleGroupLock(groupRfId: string): Promise<void>;
+  // Inline-rename helper for the group header.
+  renameGroup(groupRfId: string, title: string): Promise<void>;
+  // Duplicate a group plus every child + every internal edge. The
+  // clone lands offset by (60, 60) so the user can immediately see
+  // it next to the original. Returns the new group rfId.
+  duplicateGroup(groupRfId: string): Promise<string | null>;
+  // Cascade-delete a group and every child (backend handles the
+  // children automatically; we mirror the state update here).
+  deleteGroupCascade(groupRfId: string): Promise<void>;
+  // Persist a new (width, height) for a group after the user
+  // finishes a NodeResizer drag. Updates local React Flow state
+  // immediately and PATCHes the row so the size survives reloads.
+  persistGroupSize(groupRfId: string, width: number, height: number): Promise<void>;
+
   updateNodeData(rfId: string, partial: Partial<FlowboardNodeData>): void;
   /** Merge `partial` into edge.data — used to refresh the local cache
    * after a PATCH /api/edges/{id} so the badge updates without waiting
@@ -389,7 +577,9 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       }
       const detail = await getBoard(board.id);
 
-      const nodes: FlowNode[] = detail.nodes.map(nodeFromDto);
+      const nodes: FlowNode[] = applyGroupLockCascade(
+        sortNodesParentFirst(detail.nodes.map((dto) => nodeFromDto(dto))),
+      );
 
       const edges: Edge[] = detail.edges.map(edgeFromDto);
 
@@ -421,7 +611,9 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const detail = await getBoard(id);
-      const nodes: FlowNode[] = detail.nodes.map(nodeFromDto);
+      const nodes: FlowNode[] = applyGroupLockCascade(
+        sortNodesParentFirst(detail.nodes.map((dto) => nodeFromDto(dto))),
+      );
       const edges: Edge[] = detail.edges.map(edgeFromDto);
       set({
         boardId: detail.board.id,
@@ -481,7 +673,9 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     if (boardId === null) return;
     try {
       const detail = await getBoard(boardId);
-      const nodes: FlowNode[] = detail.nodes.map(nodeFromDto);
+      const nodes: FlowNode[] = applyGroupLockCascade(
+        sortNodesParentFirst(detail.nodes.map((dto) => nodeFromDto(dto))),
+      );
       const edges: Edge[] = detail.edges.map(edgeFromDto);
       set({ nodes, edges });
     } catch {
@@ -528,18 +722,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         y: Math.round(position.y),
         data: seedData,
       });
-      const node: FlowNode = {
-        id: String(dto.id),
-        type: dto.type,
-        position: { x: dto.x, y: dto.y },
-        data: {
-          type: dto.type,
-          shortId: dto.short_id,
-          title: (dto.data["title"] as string | undefined) ?? title,
-          status: dto.status,
-          refType: (dto.data["refType"] as string | undefined) ?? (type === "add_reference" ? "texture" : undefined),
-        },
-      };
+      const node = nodeFromDto(dto);
       set((s) => ({ nodes: [...s.nodes, node] }));
 
       // ── Auto-connect (Concepta workflow UX) ──────────────────────
@@ -579,7 +762,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       }
 
       return node.id;
-    } catch {
+    } catch (err) { console.error("addNodeOfType failed:", err);
       // surface silently for now
     }
     return null;
@@ -672,16 +855,30 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   },
 
   async addEdgeFromConnection(source, target, sourceHandle?, targetHandle?) {
-    const { boardId } = get();
+    const { boardId, nodes } = get();
     if (boardId === null) return;
     const sourceId = parseInt(source, 10);
     const targetId = parseInt(target, 10);
     if (isNaN(sourceId) || isNaN(targetId)) return;
+    const resolvedSourceHandle = sourceHandle || "source";
+    const resolvedTargetHandle =
+      targetHandle && targetHandle.trim()
+        ? targetHandle
+        : defaultTargetHandleForConnection(
+            nodes.find((n) => n.id === source),
+            nodes.find((n) => n.id === target),
+          );
     try {
-      const dto = await createEdge({ board_id: boardId, source_id: sourceId, target_id: targetId });
+      const dto = await createEdge({
+        board_id: boardId,
+        source_id: sourceId,
+        target_id: targetId,
+        source_handle: resolvedSourceHandle,
+        target_handle: resolvedTargetHandle,
+      });
       const edge = edgeFromDto(dto);
-      if (sourceHandle) edge.sourceHandle = sourceHandle;
-      if (targetHandle) edge.targetHandle = targetHandle;
+      if (!edge.sourceHandle) edge.sourceHandle = resolvedSourceHandle;
+      if (!edge.targetHandle && resolvedTargetHandle) edge.targetHandle = resolvedTargetHandle;
       set((s) => ({ edges: [...s.edges, edge] }));
     } catch {
       // ignore
@@ -734,29 +931,367 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     set((s) => ({ nodes: [...s.nodes, newNode] }));
 
     // Replicate upstream edges: every (upstream → src) becomes (upstream → clone).
-    const upstreamSourceRfIds = edges
-      .filter((e) => e.target === rfId)
-      .map((e) => e.source);
-    for (const usrc of upstreamSourceRfIds) {
-      const sourceId = parseInt(usrc, 10);
+    const upstreamEdges = edges.filter((e) => e.target === rfId);
+    for (const upstreamEdge of upstreamEdges) {
+      const sourceId = parseInt(upstreamEdge.source, 10);
       if (isNaN(sourceId)) continue;
       try {
         const eDto = await createEdge({
           board_id: boardId,
           source_id: sourceId,
           target_id: nodeDto.id,
+          source_handle: upstreamEdge.sourceHandle ?? "source",
+          target_handle: upstreamEdge.targetHandle ?? defaultTargetHandleForConnection(
+            nodes.find((n) => n.id === upstreamEdge.source),
+            newNode,
+          ),
         });
-        const newEdge: Edge = {
-          id: String(eDto.id),
-          source: String(eDto.source_id),
-          target: String(eDto.target_id),
-        };
+        const newEdge = edgeFromDto(eDto);
         set((s) => ({ edges: [...s.edges, newEdge] }));
       } catch {
         // best-effort — partial edge replication still useful
       }
     }
     return newNode.id;
+  },
+
+  // ── Group operations ──────────────────────────────────────────────
+  async groupNodes(rfIds) {
+    const { boardId, nodes } = get();
+    if (boardId === null || rfIds.length === 0) return null;
+
+    // Validate selection: every node must exist, must be at the board
+    // root (no nested groups), and must not itself be a group.
+    const selected = rfIds
+      .map((id) => nodes.find((n) => n.id === id))
+      .filter((n): n is FlowNode => Boolean(n));
+    if (selected.length === 0) return null;
+    if (selected.some((n) => n.parentId !== undefined)) return null;
+    if (selected.some((n) => n.data.type === "group")) return null;
+
+    // Compute bounding box from React Flow node positions. We use the
+    // persisted `nodeWidth` (or the default per-type width) for x extent
+    // because `n.measured` is async-populated and undefined right after
+    // a fresh load. Height defaults to 200 as a reasonable lower bound
+    // — the resulting box gets a generous bottom padding so labels and
+    // toolbars stay inside the frame.
+    // Uniform breathing room around every child. The 40px gap is
+    // generous enough to leave a clearly clickable margin between
+    // the frame border and the outermost child node, even after the
+    // header bar is overlaid on top.
+    const GROUP_PADDING = 40;
+    const minX = Math.min(...selected.map((n) => n.position.x));
+    const minY = Math.min(...selected.map((n) => n.position.y));
+    const maxX = Math.max(
+      ...selected.map((n) => n.position.x + (n.measured?.width ?? n.data.nodeWidth ?? 280)),
+    );
+    const maxY = Math.max(
+      ...selected.map((n) => n.position.y + (n.measured?.height ?? 200)),
+    );
+    const groupX = Math.round(minX - GROUP_PADDING);
+    const groupY = Math.round(minY - GROUP_PADDING);
+    const groupW = Math.round(maxX - minX + GROUP_PADDING * 2);
+    const groupH = Math.round(maxY - minY + GROUP_PADDING * 2);
+
+    let response;
+    try {
+      response = await apiGroupNodes({
+        board_id: boardId,
+        child_ids: selected.map((n) => parseInt(n.id, 10)).filter((n) => !isNaN(n)),
+        title: "Group",
+        x: groupX,
+        y: groupY,
+        w: groupW,
+        h: groupH,
+      });
+    } catch {
+      return null;
+    }
+
+    const groupRfId = String(response.group.id);
+    const groupNode: FlowNode = {
+      ...nodeFromDto(response.group),
+      // Groups sit at z-index -1 so edges and child nodes always
+      // render on top of the frame background.
+      zIndex: -1,
+    };
+    // Backend rewrote children with relative coords; mirror locally so
+    // the React Flow render matches the persisted state without waiting
+    // for a full board refresh.
+    const childUpdates = new Map<string, FlowNode>();
+    for (const child of response.children) {
+      const existingChild = nodes.find((n) => n.id === String(child.id));
+      const mapped = nodeFromDto(child, existingChild?.data);
+      childUpdates.set(String(child.id), {
+        ...(existingChild ?? {}),
+        ...mapped,
+        data: { ...(existingChild?.data ?? {}), ...mapped.data },
+        // Explicit extent + draggable so RF knows the child is
+        // constrained to its parent frame from the first render.
+        extent: "parent" as const,
+        draggable: !(groupNode.data.locked ?? false),
+        // Children sit above the group frame so their handles are
+        // never obscured by the group background.
+        zIndex: 1,
+      });
+    }
+    set((s) => {
+      // React Flow requires parents to appear BEFORE their children in
+      // the array; place the new group at the front of the list and
+      // splice updated children right after it.
+      const others = s.nodes.filter((n) => !childUpdates.has(n.id));
+      const updatedChildren = s.nodes
+        .filter((n) => childUpdates.has(n.id))
+        .map((n) => ({ ...n, ...childUpdates.get(n.id)!, selected: false }));
+      return {
+        nodes: [...others, groupNode, ...updatedChildren],
+      };
+    });
+    // Ask React Flow to recalculate handle positions for every child
+    // now that their coordinate space has changed (relative to parent).
+    flushNodeInternals([groupRfId, ...Array.from(childUpdates.keys())]);
+    return groupRfId;
+  },
+
+  async ungroupNodes(groupRfId) {
+    const groupId = parseInt(groupRfId, 10);
+    if (isNaN(groupId)) return;
+    let response;
+    try {
+      response = await apiUngroupNodes(groupId);
+    } catch {
+      return;
+    }
+    const childUpdates = new Map<string, FlowNode>();
+    for (const child of response.children) {
+      const existingChild = get().nodes.find((n) => n.id === String(child.id));
+      const mapped = nodeFromDto(child, existingChild?.data);
+      childUpdates.set(String(child.id), {
+        ...(existingChild ?? {}),
+        ...mapped,
+        data: { ...(existingChild?.data ?? {}), ...mapped.data },
+        // Detached - drop parent-extent + restore default draggable
+        // so the freed children behave like normal root nodes.
+        parentId: undefined,
+        extent: undefined,
+        draggable: undefined,
+        selectable: undefined,
+        connectable: undefined,
+        zIndex: undefined,
+      });
+    }
+    set((s) => ({
+      nodes: s.nodes
+        .filter((n) => n.id !== groupRfId)
+        .map((n) => (childUpdates.has(n.id) ? { ...n, ...childUpdates.get(n.id)! } : n)),
+    }));
+    flushNodeInternals(Array.from(childUpdates.keys()));
+  },
+
+  async updateGroupColor(groupRfId, color) {
+    const dbId = parseInt(groupRfId, 10);
+    if (isNaN(dbId)) return;
+    // Optimistic local update first so the palette feels instant.
+    set((s) => ({
+      nodes: s.nodes.map((n) =>
+        n.id === groupRfId ? { ...n, data: { ...n.data, groupColor: color } } : n,
+      ),
+    }));
+    try {
+      await patchNode(dbId, { data: { groupColor: color } });
+    } catch {
+      // surface silently — local state already reflects the choice
+    }
+  },
+
+  async toggleGroupLock(groupRfId) {
+    const { nodes } = get();
+    const group = nodes.find((n) => n.id === groupRfId);
+    if (!group) return;
+    const nextLocked = !(group.data.locked ?? false);
+    const childIds = nodes.filter((n) => n.parentId === groupRfId).map((n) => n.id);
+    set((s) => ({
+      nodes: s.nodes.map((n) => {
+        if (n.id === groupRfId) {
+          // Group itself: keep selectable so the user can still pick
+          // it and toggle the lock back off via the toolbar.
+          return {
+            ...n,
+            draggable: nextLocked ? false : undefined,
+            data: { ...n.data, locked: nextLocked },
+          };
+        }
+        if (childIds.includes(n.id)) {
+          // Cascade: every interactive flag follows the parent so
+          // children are fully frozen (no drag, no click-select,
+          // no edge dragging out of their handles).
+          return {
+            ...n,
+            draggable: nextLocked ? false : undefined,
+            selectable: nextLocked ? false : undefined,
+            connectable: nextLocked ? false : undefined,
+          };
+        }
+        return n;
+      }),
+    }));
+    const dbId = parseInt(groupRfId, 10);
+    if (!isNaN(dbId)) {
+      try {
+        await patchNode(dbId, { data: { locked: nextLocked } });
+      } catch {
+        // ignore — local state already reflects the toggle
+      }
+    }
+  },
+
+  async renameGroup(groupRfId, title) {
+    const trimmed = title.trim() || "Group";
+    set((s) => ({
+      nodes: s.nodes.map((n) =>
+        n.id === groupRfId ? { ...n, data: { ...n.data, title: trimmed } } : n,
+      ),
+    }));
+    const dbId = parseInt(groupRfId, 10);
+    if (!isNaN(dbId)) {
+      try {
+        await patchNode(dbId, { data: { title: trimmed } });
+      } catch {
+        // ignore
+      }
+    }
+  },
+
+  async duplicateGroup(groupRfId) {
+    const { boardId, nodes, edges } = get();
+    if (boardId === null) return null;
+    const group = nodes.find((n) => n.id === groupRfId);
+    if (!group || group.data.type !== "group") return null;
+    const children = nodes.filter((n) => n.parentId === groupRfId);
+
+    const offset = { x: 60, y: 60 };
+    // Carry the original group's dimensions through the clone so
+    // the duplicate frame surrounds its child copies with the same
+    // breathing room rather than collapsing back to the default
+    // 240x160 fallback.
+    const groupStyle = (group.style ?? {}) as { width?: number; height?: number };
+    const cloneW = group.measured?.width ?? groupStyle.width ?? 320;
+    const cloneH = group.measured?.height ?? groupStyle.height ?? 200;
+    let groupDto;
+    try {
+      groupDto = await createNode({
+        board_id: boardId,
+        type: "group",
+        x: Math.round(group.position.x + offset.x),
+        y: Math.round(group.position.y + offset.y),
+        w: cloneW,
+        h: cloneH,
+        data: {
+          title: `${group.data.title ?? "Group"} (copy)`,
+          groupColor: group.data.groupColor,
+          locked: false,
+        },
+      });
+    } catch {
+      return null;
+    }
+
+    // Map old child rfId -> new child rfId so we can replicate any
+    // edges that ran entirely between siblings inside the group.
+    const childIdMap = new Map<string, string>();
+    const newChildNodes: FlowNode[] = [];
+    for (const child of children) {
+      try {
+        const childDto = await createNode({
+          board_id: boardId,
+          type: child.data.type,
+          x: Math.round(child.position.x),
+          y: Math.round(child.position.y),
+          parent_id: groupDto.id,
+          data: { ...child.data, locked: false },
+        });
+        const newChild = nodeFromDto(childDto);
+        newChildNodes.push(newChild);
+        childIdMap.set(child.id, newChild.id);
+      } catch {
+        // best-effort — keep going so we at least get a partial copy
+      }
+    }
+
+    // Replicate edges whose BOTH endpoints landed inside the group.
+    const internalEdges = edges.filter(
+      (e) => childIdMap.has(e.source) && childIdMap.has(e.target),
+    );
+    const newEdges: Edge[] = [];
+    for (const e of internalEdges) {
+      const newSource = childIdMap.get(e.source)!;
+      const newTarget = childIdMap.get(e.target)!;
+      try {
+        const eDto = await createEdge({
+          board_id: boardId,
+          source_id: parseInt(newSource, 10),
+          target_id: parseInt(newTarget, 10),
+          source_handle: e.sourceHandle ?? "source",
+          target_handle: e.targetHandle ?? defaultTargetHandleForConnection(
+            newChildNodes.find((n) => n.id === newSource),
+            newChildNodes.find((n) => n.id === newTarget),
+          ),
+        });
+        newEdges.push(edgeFromDto(eDto));
+      } catch {
+        // ignore individual edge failures
+      }
+    }
+
+    const newGroupNode = nodeFromDto(groupDto);
+    set((s) => ({
+      nodes: [...s.nodes, newGroupNode, ...newChildNodes],
+      edges: [...s.edges, ...newEdges],
+    }));
+    return newGroupNode.id;
+  },
+
+  async persistGroupSize(groupRfId, width, height) {
+    const dbId = parseInt(groupRfId, 10);
+    if (isNaN(dbId)) return;
+    const w = Math.round(width);
+    const h = Math.round(height);
+    // Optimistic local update first - keeps the next paint anchored
+    // to the size React Flow already showed during the drag.
+    set((s) => ({
+      nodes: s.nodes.map((n) =>
+        n.id === groupRfId
+          ? { ...n, style: { ...(n.style ?? {}), width: w, height: h } }
+          : n,
+      ),
+    }));
+    try {
+      await patchNode(dbId, { w, h });
+    } catch {
+      // ignore - local state still reflects the resize
+    }
+  },
+
+  async deleteGroupCascade(groupRfId) {
+    const dbId = parseInt(groupRfId, 10);
+    if (isNaN(dbId)) return;
+    try {
+      await deleteNode(dbId);
+    } catch {
+      return;
+    }
+    set((s) => {
+      const removed = new Set<string>([groupRfId]);
+      for (const n of s.nodes) {
+        if (n.parentId === groupRfId) removed.add(n.id);
+      }
+      return {
+        nodes: s.nodes.filter((n) => !removed.has(n.id)),
+        edges: s.edges.filter(
+          (e) => !removed.has(e.source) && !removed.has(e.target),
+        ),
+      };
+    });
   },
 
   async deleteEdgeByRfId(rfId) {

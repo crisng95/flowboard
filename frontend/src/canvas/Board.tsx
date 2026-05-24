@@ -8,6 +8,7 @@ import {
   applyEdgeChanges,
   applyNodeChanges,
   useReactFlow,
+  useUpdateNodeInternals,
   type Connection,
   type Edge,
   type EdgeChange,
@@ -17,7 +18,7 @@ import {
 } from "@xyflow/react";
 
 import { deleteNode as apiDeleteNode } from "../api/client";
-import { useBoardStore, type FlowNode, type NodeType } from "../store/board";
+import { useBoardStore, type FlowNode, type NodeType, registerUpdateNodeInternals } from "../store/board";
 import { NodeCard } from "./NodeCard";
 import { VariantEdge } from "./VariantEdge";
 import { useGenerationStore } from "../store/generation";
@@ -32,6 +33,9 @@ import { UploadNode } from "./v2/UploadNode";
 import { ImageGeneratorNode } from "./v2/ImageGeneratorNode";
 import { AddNodePanel } from "./AddNodePalette";
 import { TextNode } from "./v2/TextNode";
+import { NoteNode } from "./v2/NoteNode";
+import { GroupNodeShell } from "./v2/GroupNodeShell";
+import { SelectionContextMenu } from "./SelectionContextMenu";
 import { DashedConnectionLine } from "./DashedConnectionLine";
 
 // V2 components are opt-in via `localStorage.flowboard_ui = "v2"`. For
@@ -44,48 +48,50 @@ const useV2 = getUiVersion() === "v2";
 
 const nodeTypes = useV2
   ? {
-      // Legacy types — keep rendering with the old NodeCard so old
-      // boards still load. Palette doesn't surface these in V2 mode.
-      character: NodeCard,
-      image: NodeCard,
-      video: NodeCard,
-      prompt: NodeCard,
-      note: NodeCard,
-      visual_asset: ReferenceNode, // alias old type to new node body
-      Storyboard: NodeCard,
-      // Concepta fork V2
-      reference: ImageGeneratorNode,
-      style_pack: NodeCard, // TODO Phase 1 polish
-      concept: ConceptNode,
-      multiview: MultiviewNode,
-      part: PartNode,
-      variant: VariantNode,
-      upload: UploadNode,
-      text: TextNode,
-        add_reference: AddReferenceNode,
-      pose: NodeCard, // TODO Phase 3
-      turntable: NodeCard, // TODO Phase 3
-    }
+    // Legacy types — keep rendering with the old NodeCard so old
+    // boards still load. Palette doesn't surface these in V2 mode.
+    character: NodeCard,
+    image: NodeCard,
+    video: NodeCard,
+    prompt: NodeCard,
+    note: NoteNode,
+    visual_asset: ReferenceNode, // alias old type to new node body
+    Storyboard: NodeCard,
+    // Concepta fork V2
+    reference: ImageGeneratorNode,
+    style_pack: NodeCard, // TODO Phase 1 polish
+    concept: ConceptNode,
+    multiview: MultiviewNode,
+    part: PartNode,
+    variant: VariantNode,
+    upload: UploadNode,
+    text: TextNode,
+    add_reference: AddReferenceNode,
+    group: GroupNodeShell,
+    pose: NodeCard, // TODO Phase 3
+    turntable: NodeCard, // TODO Phase 3
+  }
   : {
-      character: NodeCard,
-      image: NodeCard,
-      video: NodeCard,
-      prompt: NodeCard,
-      note: NodeCard,
-      visual_asset: NodeCard,
-      Storyboard: NodeCard,
-      reference: NodeCard,
-      style_pack: NodeCard,
-      concept: NodeCard,
-      multiview: NodeCard,
-      part: NodeCard,
-      variant: NodeCard,
-      upload: NodeCard,
-      text: NodeCard,
-      pose: NodeCard,
-      turntable: NodeCard,
-      add_reference: AddReferenceNode,
-    };
+    character: NodeCard,
+    image: NodeCard,
+    video: NodeCard,
+    prompt: NodeCard,
+    note: NodeCard,
+    visual_asset: NodeCard,
+    Storyboard: NodeCard,
+    reference: NodeCard,
+    style_pack: NodeCard,
+    concept: NodeCard,
+    multiview: NodeCard,
+    part: NodeCard,
+    variant: NodeCard,
+    upload: NodeCard,
+    text: NodeCard,
+    pose: NodeCard,
+    turntable: NodeCard,
+    add_reference: AddReferenceNode,
+    group: GroupNodeShell,
+  };
 
 // Single edge type used for everything — VariantEdge renders the
 // default bezier line and additionally surfaces a `v{N}` chip when the
@@ -101,6 +107,7 @@ const defaultEdgeOptions = {
   // the CSS rule in globals.css.
   style: { stroke: "rgba(124, 92, 255, 0.45)", strokeWidth: 2, cursor: "pointer" },
   interactionWidth: 24,
+  zIndex: 5,
 };
 
 // Quick-add popover that appears when the user drops a connection drag on
@@ -176,9 +183,20 @@ export function Board() {
   const addNodeOfType = useBoardStore((s) => s.addNodeOfType);
   const deleteEdgeByRfId = useBoardStore((s) => s.deleteEdgeByRfId);
   const { screenToFlowPosition } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
   const wrapperRef = useRef<HTMLDivElement>(null);
 
-    const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  // Hook up ReactFlow's internal cache-invalidation callback to the board store
+  // so that grouping/ungrouping actions can ask RF to re-measure parent-relative coordinates.
+  useEffect(() => {
+    registerUpdateNodeInternals(updateNodeInternals);
+    return () => {
+      registerUpdateNodeInternals(null);
+    };
+  }, [updateNodeInternals]);
+
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [selectionContextMenu, setSelectionContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   const [dropPopover, setDropPopover] = useState<
     { clientX: number; clientY: number; sourceId: string } | null
@@ -305,15 +323,42 @@ export function Board() {
       const { sourceId, didConnect } = connectStateRef.current;
       connectStateRef.current = { sourceId: null, didConnect: false };
       if (!sourceId || didConnect) return;
+
+      // Extract client coordinates from either MouseEvent or TouchEvent
+      const isTouch = "changedTouches" in event;
+      const clientX = isTouch
+        ? (event as TouchEvent).changedTouches[0]?.clientX
+        : (event as MouseEvent).clientX;
+      const clientY = isTouch
+        ? (event as TouchEvent).changedTouches[0]?.clientY
+        : (event as MouseEvent).clientY;
+
+      let targetEl: Element | null = null;
+      if (typeof clientX === "number" && typeof clientY === "number") {
+        targetEl = document.elementFromPoint(clientX, clientY);
+      }
+      if (!targetEl) {
+        targetEl = event.target as Element;
+      }
+
+      // Check if dropped on a node body
+      const nodeEl = targetEl?.closest?.(".react-flow__node");
+      const targetNodeId = nodeEl?.getAttribute("data-id");
+
+      if (targetNodeId && targetNodeId !== sourceId) {
+        // Drop on a node body! Add connection using smart edge routing.
+        addEdgeFromConnection(sourceId, targetNodeId);
+        return;
+      }
+
       // Drop on empty canvas — pop up a quick-add menu at the release
       // point. Coords are in client (screen) space; the popover will
       // convert to flow space for the new node's position.
-      const e = event as MouseEvent;
-      const cx = typeof e.clientX === "number" ? e.clientX : 0;
-      const cy = typeof e.clientY === "number" ? e.clientY : 0;
+      const cx = typeof clientX === "number" ? clientX : 0;
+      const cy = typeof clientY === "number" ? clientY : 0;
       setDropPopover({ clientX: cx, clientY: cy, sourceId });
     },
-    [],
+    [addEdgeFromConnection],
   );
 
   const handlePickAdd = useCallback(
@@ -329,9 +374,10 @@ export function Board() {
     [dropPopover, addNodeOfType, addEdgeFromConnection],
   );
 
-      // Close context menu on any pane click
+  // Close context menu on any pane click
   const onPaneClick = useCallback(() => {
     setContextMenu(null);
+    setSelectionContextMenu(null);
   }, []);
 
   const onPaneContextMenu = useCallback(
@@ -342,11 +388,30 @@ export function Board() {
     [],
   );
 
+  const onNodeContextMenu = useCallback(
+    (event: React.MouseEvent, _node: FlowNode) => {
+      event.preventDefault();
+      const selectedNodes = useBoardStore.getState().nodes.filter((n) => n.selected);
+      if (selectedNodes.length >= 2) {
+        setSelectionContextMenu({ x: event.clientX, y: event.clientY });
+      }
+    },
+    [],
+  );
+
+  const onSelectionContextMenu = useCallback(
+    (event: React.MouseEvent) => {
+      event.preventDefault();
+      setSelectionContextMenu({ x: event.clientX, y: event.clientY });
+    },
+    [],
+  );
+
   const onNodesDelete = useCallback(
     (deletedNodes: FlowNode[]) => {
       deletedNodes.forEach((n) => {
         const dbId = parseInt(n.id, 10);
-        if (!isNaN(dbId)) apiDeleteNode(dbId).catch(() => {});
+        if (!isNaN(dbId)) apiDeleteNode(dbId).catch(() => { });
       });
     },
     [],
@@ -414,6 +479,39 @@ export function Board() {
     return () => el.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // Keyboard shortcut: Ctrl+G (or Cmd+G) to group selected nodes
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+      if (!isCtrlOrMeta || e.key.toLowerCase() !== "g" || e.altKey) return;
+
+      // Skip if focus is in an editable element
+      const active = document.activeElement;
+      const tag = (active?.tagName ?? "").toLowerCase();
+      if (
+        tag === "input" ||
+        tag === "textarea" ||
+        tag === "select" ||
+        (active instanceof HTMLElement && active.isContentEditable)
+      ) {
+        return;
+      }
+
+      const { nodes, groupNodes } = useBoardStore.getState();
+      const selectedIds = nodes
+        .filter((n) => n.selected && n.data.type !== "group" && n.parentId === undefined)
+        .map((n) => n.id);
+
+      if (selectedIds.length >= 2) {
+        e.preventDefault();
+        e.stopPropagation();
+        void groupNodes(selectedIds);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   return (
     <div
       ref={wrapperRef}
@@ -442,24 +540,32 @@ export function Board() {
         connectionRadius={32}
         onPaneContextMenu={onPaneContextMenu}
         onPaneClick={onPaneClick}
+        onNodeContextMenu={onNodeContextMenu}
+        onSelectionContextMenu={onSelectionContextMenu}
         isValidConnection={isValidConnection}
         connectionLineComponent={DashedConnectionLine}
         fitView
         proOptions={{ hideAttribution: true }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="rgba(255,255,255,0.04)" />
+        <Background variant={BackgroundVariant.Dots} gap={24} size={1.3} color="rgba(255,255,255,0.15)" />
         <MiniMap pannable zoomable />
         <Controls />
         {contextMenu && (
-        <div style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y, zIndex: 100 }}>
-          <AddNodePanel onClose={() => setContextMenu(null)} position={contextMenu} />
-        </div>
-      )}
+          <div style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y, zIndex: 100 }}>
+            <AddNodePanel onClose={() => setContextMenu(null)} position={contextMenu} />
+          </div>
+        )}
         <DropAddPopover
           popover={dropPopover}
           onPick={handlePickAdd}
           onClose={() => setDropPopover(null)}
         />
+        {selectionContextMenu && (
+          <SelectionContextMenu
+            position={selectionContextMenu}
+            onClose={() => setSelectionContextMenu(null)}
+          />
+        )}
       </ReactFlow>
     </div>
   );

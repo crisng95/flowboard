@@ -25,14 +25,14 @@
        this file is loaded first. The v1 var names stay so existing CSS
        keeps working; values change to match the Magnific-inspired
        darker scheme. */
-    --bg: #0f0f0f;
+    --bg: #111111;
     --panel: #141414;
     --panel-high: #1a1a1a;
     --panel-higher: #262626;
     --border: #2a2a2a;
     --text: #f5f5f5;
     --muted: #ababab;
-    --accent: #7c5cff;
+    --accent: #3b3b3b;
   }
 
   html,
@@ -51,6 +51,7 @@
 }
 
 @layer components {
+
   /* Glass surface â€” used by toolbar v2 + spotlight âŒ˜K. Backdrop blur
      with a soft edge highlight gives the "floating panel" depth that
      Magnific's chrome relies on. */
@@ -66,50 +67,82 @@
      grid yet stay clearly opaque. */
   .node-surface {
     background-color: #1a1a1a;
-    border: 1.5px solid #2a2a2a;
+    border: 3px solid transparent;
     border-radius: 16px;
     box-shadow:
       0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
       0 8px 28px -10px rgba(0, 0, 0, 0.6);
-    transition: box-shadow 150ms ease, border-color 150ms ease, background-color 150ms ease;
+    transition: box-shadow 150ms ease, background-color 150ms ease;
   }
+
+  .node-surface::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border: 3px solid var(--node-border-color, rgba(255, 255, 255, 0.14));
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 10;
+    transition: border-color 150ms ease;
+  }
+
   .node-surface:hover {
     background-color: #1f1f1f;
-    border-color: #333333;
     box-shadow:
       0 1px 0 0 rgba(255, 255, 255, 0.05) inset,
       0 14px 40px -10px rgba(0, 0, 0, 0.75);
   }
+
+  .node-surface:hover::after {
+    border-color: var(--node-border-hover-color, var(--node-border-color, rgba(255, 255, 255, 0.22)));
+  }
+
   .node-surface[data-selected="true"] {
-    border-color: rgba(124, 92, 255, 0.55);
     box-shadow:
       0 1px 0 0 rgba(124, 92, 255, 0.18) inset,
       0 0 0 1px rgba(124, 92, 255, 0.3),
       0 14px 40px -8px rgba(124, 92, 255, 0.22);
   }
+
+  .node-surface[data-selected="true"]::after {
+    border-color: var(--node-border-selected-color, var(--node-border-color, rgba(124, 92, 255, 0.55)));
+  }
+
   /* Status feedback ring - low-cost visual cue beyond the status
      dot in the header. Tints the card outline so the user can see
      a generation is in flight even when the title bar is offscreen. */
   .node-surface[data-status="running"] {
-    border-color: rgba(124, 92, 255, 0.45);
     animation: node-running-pulse 1.6s ease-in-out infinite;
   }
-  .node-surface[data-status="queued"] {
-    border-color: rgba(255, 196, 87, 0.35);
+
+  .node-surface[data-status="running"]::after {
+    border-color: var(--node-border-running-color, var(--node-border-color, rgba(124, 92, 255, 0.45)));
   }
+
+  .node-surface[data-status="queued"]::after {
+    border-color: var(--node-border-queued-color, var(--node-border-color, rgba(255, 196, 87, 0.35)));
+  }
+
   .node-surface[data-status="error"] {
-    border-color: rgba(239, 68, 68, 0.5);
     box-shadow:
       0 1px 0 0 rgba(239, 68, 68, 0.12) inset,
       0 14px 40px -10px rgba(239, 68, 68, 0.18);
   }
+
+  .node-surface[data-status="error"]::after {
+    border-color: var(--node-border-error-color, var(--node-border-color, rgba(239, 68, 68, 0.5)));
+  }
+
   @keyframes node-running-pulse {
-    0%, 100% {
+
+    0%,
+    100% {
       box-shadow:
         0 1px 0 0 rgba(124, 92, 255, 0.10) inset,
         0 0 0 1px rgba(124, 92, 255, 0.20),
         0 14px 40px -10px rgba(124, 92, 255, 0.20);
     }
+
     50% {
       box-shadow:
         0 1px 0 0 rgba(124, 92, 255, 0.18) inset,
@@ -117,15 +150,26 @@
         0 14px 40px -8px rgba(124, 92, 255, 0.35);
     }
   }
+
+  /* Node surface variant with no borders */
+  .node-surface-no-border {
+    border: none !important;
+  }
+  .node-surface-no-border::after {
+    display: none !important;
+  }
 }
 
+
 @layer utilities {
+
   /* Hide scrollbar but keep scrollable. Inline scrollers in node bodies
      (mention list, asset preview) need to scroll without the gnarly
      OS scrollbar showing up. */
   .scrollbar-none {
     scrollbar-width: none;
   }
+
   .scrollbar-none::-webkit-scrollbar {
     display: none;
   }
@@ -139,9 +183,11 @@
   --xy-edge-stroke-default: rgba(124, 92, 255, 0.55);
   --xy-edge-stroke-selected: rgba(124, 92, 255, 0.9);
 }
+
 .react-flow__edge-path {
   stroke-width: 2;
 }
+
 .react-flow__edge.selected .react-flow__edge-path,
 .react-flow__edge:focus .react-flow__edge-path,
 .react-flow__edge:focus-visible .react-flow__edge-path {
@@ -153,7 +199,7 @@
    surface tint; ReactFlow toggles `.connecting` on the host handle
    during a drag. We can't use a Tailwind hover variant for the
    connecting case (no parent selector), so the rule lives here. */
-.react-flow__handle.connecting > div > div {
+.react-flow__handle.connecting>div>div {
   background-color: var(--accent);
   border-color: var(--accent);
   color: #fff;
@@ -182,13 +228,16 @@
 .shadow-glass::-webkit-scrollbar {
   width: 6px;
 }
+
 .shadow-glass::-webkit-scrollbar-track {
   background: transparent;
 }
+
 .shadow-glass::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.08);
   border-radius: 3px;
 }
+
 .shadow-glass::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.16);
 }
@@ -234,32 +283,84 @@
     stroke-dashoffset: -28;
   }
 }
+
 .animated-dash {
   animation: dash-flow 0.6s linear infinite;
 }
 
-/* Connection line and edges below handles */
+/* Let React Flow manage edge/node layer ordering.
+   Hard-coding `.react-flow__edges` below `.react-flow__nodes` hides sub-flow
+   edges behind large group nodes even though the connections still exist.
+   Edge stacking should be controlled through edge `zIndex` / React Flow's
+   parent-aware sub-flow layering, not by overriding the root layers here. */
 .react-flow__connectionline {
-  z-index: 1 !important;
-}
-.react-flow__edges {
-  z-index: 1 !important;
-}
-.react-flow__nodes {
-  z-index: 2 !important;
+  z-index: 10 !important;
 }
 
 /* Image Generator prompt textarea - thin subtle scrollbar */
 .img-gen-prompt::-webkit-scrollbar {
   width: 4px;
 }
+
 .img-gen-prompt::-webkit-scrollbar-track {
   background: transparent;
 }
+
 .img-gen-prompt::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.15);
   border-radius: 2px;
 }
+
 .img-gen-prompt::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.25);
+}
+
+/* Magnific dropdown custom scrollbar based on img-gen-prompt */
+.magnific-dropdown-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.magnific-dropdown-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.magnific-dropdown-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+}
+
+.magnific-dropdown-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Premium ContentEditable Placeholder */
+[contenteditable]:empty::before {
+  content: attr(data-placeholder);
+  color: rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  display: block;
+}
+
+/* Premium Note Editor List Styling */
+.note-editor-content ul {
+  list-style-type: disc !important;
+  padding-left: 1.25rem !important;
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.note-editor-content ol {
+  list-style-type: decimal !important;
+  padding-left: 1.25rem !important;
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+/* Premium Note Editor Inset Line (Horizontal Rule) */
+.note-editor-content hr {
+  margin-top: 1.5rem !important;
+  margin-bottom: 1.5rem !important;
+  border: 0 !important;
+  border-top: 1px solid rgba(0, 0, 0, 0.12) !important;
+  height: 0 !important;
 }

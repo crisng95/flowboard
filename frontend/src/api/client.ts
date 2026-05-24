@@ -1,5 +1,151 @@
+import { invoke } from "@tauri-apps/api/core";
+
+export function getBaseUrl(): string {
+  const isTauri = typeof window !== "undefined" && 
+    (!!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__);
+  return isTauri ? "http://127.0.0.1:8101" : "";
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  // Check if we are running inside Tauri
+  const isTauri = typeof window !== "undefined" && 
+    (!!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__);
+
+  if (isTauri) {
+    // Intercept paths for upload and media caching to route via loopback HTTP Axum on port 8101
+    if (
+      path.startsWith("/api/upload") ||
+      path.startsWith("/api/upload-url") ||
+      path.startsWith("/api/media/") ||
+      path.startsWith("/media/")
+    ) {
+      const url = `${getBaseUrl()}${path}`;
+      const res = await fetch(url, init);
+      if (!res.ok) {
+        throw new Error(await extractErrorMessage(res));
+      }
+      return res.json() as Promise<T>;
+    }
+
+    const method = init?.method || "GET";
+    let body: any = {};
+    if (init?.body) {
+      try {
+        if (typeof init.body === "string") {
+          body = JSON.parse(init.body);
+        } else if (init.body instanceof FormData) {
+          // Skip parsing for FormData, handled in the upload branch above
+        }
+      } catch (e) {
+        // Fallback for raw text bodies
+      }
+    }
+
+    // 1. Board CRUD
+    if (path === "/api/boards") {
+      if (method === "GET") {
+        return invoke<T>("list_boards");
+      } else if (method === "POST") {
+        return invoke<T>("create_board", { name: body.name });
+      }
+    }
+
+    // boards/:id or boards/:id/project
+    if (path.startsWith("/api/boards/")) {
+      const parts = path.split("/");
+      const id = parseInt(parts[3], 10);
+
+      if (parts[4] === "project") {
+        if (method === "GET") {
+          return invoke<T>("get_board_project", { boardId: id });
+        } else if (method === "POST") {
+          return invoke<T>("ensure_board_project", { boardId: id });
+        }
+      } else if (parts.length === 4) {
+        if (method === "GET") {
+          return invoke<T>("get_board", { id });
+        } else if (method === "PATCH") {
+          return invoke<T>("patch_board", { id, name: body.name });
+        } else if (method === "DELETE") {
+          return invoke<T>("delete_board", { id });
+        }
+      }
+    }
+
+    // 2. Node CRUD
+    if (path === "/api/nodes") {
+      if (method === "POST") {
+        return invoke<T>("create_node", { input: body });
+      }
+    }
+
+    if (path === "/api/nodes/group") {
+      if (method === "POST") {
+        return invoke<T>("group_nodes", { input: body });
+      }
+    }
+
+    if (path.startsWith("/api/nodes/")) {
+      const parts = path.split("/");
+      const id = parseInt(parts[3], 10);
+      if (parts[4] === "ungroup") {
+        return invoke<T>("ungroup_nodes", { groupId: id });
+      } else if (parts.length === 4) {
+        if (method === "PATCH") {
+          return invoke<T>("patch_node", { id, patch: body });
+        } else if (method === "DELETE") {
+          return invoke<T>("delete_node", { id });
+        }
+      }
+    }
+
+    // 3. Edge CRUD
+    if (path === "/api/edges") {
+      if (method === "POST") {
+        return invoke<T>("create_edge", { input: body });
+      }
+    }
+
+    if (path.startsWith("/api/edges/")) {
+      const parts = path.split("/");
+      const id = parseInt(parts[3], 10);
+      if (method === "PATCH") {
+        return invoke<T>("patch_edge", { id, sourceVariantIdx: body.source_variant_idx });
+      } else if (method === "DELETE") {
+        return invoke<T>("delete_edge", { id });
+      }
+    }
+
+    // 4. Auth & Extension
+    if (path === "/api/auth/me") {
+      return invoke<T>("get_auth_me");
+    }
+    if (path === "/api/auth/logout") {
+      return invoke<T>("logout_extension");
+    }
+    if (path === "/api/auth/scan") {
+      return invoke<T>("scan_extension");
+    }
+
+    // 5. Requests
+    if (path === "/api/requests") {
+      if (method === "POST") {
+        return invoke<T>("create_request", { input: body });
+      }
+    }
+    if (path.startsWith("/api/requests/")) {
+      const parts = path.split("/");
+      const id = parseInt(parts[3], 10);
+      if (method === "GET") {
+        return invoke<T>("get_request", { id });
+      }
+    }
+
+  }
+
+  // Fallback base URL for developer WebView running Vite dev server
+  const baseUrl = getBaseUrl();
+  const res = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -7,7 +153,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
-    throw new Error(`${res.status} ${res.statusText}`);
+    throw new Error(await extractErrorMessage(res));
   }
   return res.json() as Promise<T>;
 }
@@ -130,7 +276,8 @@ export type NodeType =
   | "turntable"
   | "upload"
   | "text"
-    | "add_reference";
+  | "add_reference"
+  | "group";
 export type NodeStatus = "idle" | "queued" | "running" | "done" | "error" | "partial";
 
 export interface Board {
@@ -151,6 +298,9 @@ export interface NodeDTO {
   data: Record<string, unknown>;
   status: NodeStatus;
   created_at: string;
+  // Optional reference to a parent group node. When set, (x, y) are
+  // interpreted RELATIVE to the parent's origin. null otherwise.
+  parent_id: number | null;
 }
 
 export interface EdgeDTO {
@@ -159,6 +309,8 @@ export interface EdgeDTO {
   source_id: number;
   target_id: number;
   kind: string;
+  source_handle: string | null;
+  target_handle: string | null;
   // null when the upstream is single-variant (or the edge hasn't been
   // pinned yet â€” natural fallback to source.mediaId at dispatch time).
   // 0-based index into the source node's `data.mediaIds[]` when the
@@ -205,7 +357,15 @@ export function createNode(input: {
   type: NodeType;
   x: number;
   y: number;
+  // Width / height override. Group containers persist their own
+  // dimensions; regular nodes can leave these unset and the backend
+  // applies its 240x160 default.
+  w?: number;
+  h?: number;
   data?: object;
+  // Optional parent group id. Backend re-validates that the parent
+  // exists and belongs to the same board.
+  parent_id?: number | null;
 }): Promise<NodeDTO> {
   return api<NodeDTO>("/api/nodes", {
     method: "POST",
@@ -242,7 +402,7 @@ export type DataPatch = Record<string, unknown>;
 export function patchNode(
   id: number,
   patch: Partial<
-    Pick<Omit<NodeDTO, "data">, "x" | "y" | "w" | "h" | "status">
+    Pick<Omit<NodeDTO, "data">, "x" | "y" | "w" | "h" | "status" | "parent_id">
   > & { data?: DataPatch },
 ): Promise<NodeDTO> {
   return api<NodeDTO>(`/api/nodes/${id}`, {
@@ -251,9 +411,55 @@ export function patchNode(
   });
 }
 
-export function deleteNode(id: number): Promise<{ ok: true; deleted_edges: number[] }> {
-  return api<{ ok: true; deleted_edges: number[] }>(`/api/nodes/${id}`, {
+export function deleteNode(id: number): Promise<{ ok: true; deleted_edges: number[]; deleted_child_ids?: number[] }> {
+  return api<{ ok: true; deleted_edges: number[]; deleted_child_ids?: number[] }>(`/api/nodes/${id}`, {
     method: "DELETE",
+  });
+}
+
+// Node group helpers - shipped with the Node Group feature.
+//
+// `groupNodes` packages a selection of root-level nodes into a new
+// frame node and returns the freshly persisted group + the rewritten
+// children (their (x, y) come back relative to the group origin).
+//
+// `ungroupNodes` reverses the operation atomically: children are
+// detached and their absolute coordinates restored before the group
+// node is removed. Both operations are single round-trips so the
+// canvas can never end up in a half-grouped state.
+
+export interface GroupCreateInput {
+  board_id: number;
+  child_ids: number[];
+  title?: string;
+  color?: string;
+  locked?: boolean;
+  x: number;
+  y: number;
+  w?: number;
+  h?: number;
+}
+
+export interface GroupResponseDTO {
+  group: NodeDTO;
+  children: NodeDTO[];
+}
+
+export interface UngroupResponseDTO {
+  deleted_group_id: number;
+  children: NodeDTO[];
+}
+
+export function groupNodes(input: GroupCreateInput): Promise<GroupResponseDTO> {
+  return api<GroupResponseDTO>("/api/nodes/group", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function ungroupNodes(groupId: number): Promise<UngroupResponseDTO> {
+  return api<UngroupResponseDTO>(`/api/nodes/${groupId}/ungroup`, {
+    method: "POST",
   });
 }
 
@@ -262,6 +468,8 @@ export function createEdge(input: {
   source_id: number;
   target_id: number;
   kind?: string;
+  source_handle?: string | null;
+  target_handle?: string | null;
   source_variant_idx?: number | null;
 }): Promise<EdgeDTO> {
   return api<EdgeDTO>("/api/edges", {
@@ -321,6 +529,9 @@ export interface ChatSendResponse {
   user: ChatMessageDTO;
   assistant: ChatMessageDTO;
   plan?: PlanDTO;
+  agentSessionId?: string;
+  turnNumber?: number;
+  chatProvider?: "omni";
 }
 
 export function listChatMessages(boardId: number) {
@@ -331,10 +542,20 @@ export function sendChatMessage(
   boardId: number,
   message: string,
   mentions: string[],
+  meta?: {
+    agentSessionId?: string | null;
+    turnNumber?: number | null;
+  },
 ) {
   return api<ChatSendResponse>("/api/chat", {
     method: "POST",
-    body: JSON.stringify({ board_id: boardId, message, mentions }),
+    body: JSON.stringify({
+      board_id: boardId,
+      message,
+      mentions,
+      agent_session_id: meta?.agentSessionId ?? null,
+      turn_number: meta?.turnNumber ?? null,
+    }),
   });
 }
 
@@ -508,8 +729,8 @@ export async function uploadImage(
   if (nodeId !== undefined) form.append("node_id", String(nodeId));
   form.append("file", file);
 
-  // Don't set Content-Type â€” the browser sets it with the correct boundary.
-  const res = await fetch("/api/upload", { method: "POST", body: form });
+  // Don't set Content-Type — the browser sets it with the correct boundary.
+  const res = await fetch(`${getBaseUrl()}/api/upload`, { method: "POST", body: form });
   if (!res.ok) {
     throw new Error(await extractErrorMessage(res));
   }
@@ -679,7 +900,7 @@ export async function uploadImageFromUrl(
   projectId: string,
   nodeId?: number,
 ): Promise<UploadResponse> {
-  const res = await fetch("/api/upload-url", {
+  const res = await fetch(`${getBaseUrl()}/api/upload-url`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url, project_id: projectId, node_id: nodeId }),
@@ -695,8 +916,8 @@ export async function uploadImageFromUrl(
 // See .omc/plans/multi-llm-provider-legacy.md â†’ UI Specification â†’ Frontend â†”
 // backend contract for the full shape.
 
-export type LLMProviderName = "claude" | "gemini" | "openai";
-export type LLMFeature = "auto_prompt" | "vision" | "planner";
+export type LLMProviderName = "claude" | "gemini" | "openai" | "omni";
+export type LLMFeature = "auto_prompt" | "vision" | "planner" | "chat";
 export type LLMProviderMode = "cli" | "api" | "none";
 export type LLMLastError =
   | "not_installed"
@@ -723,6 +944,7 @@ export interface LLMConfig {
   auto_prompt: LLMProviderName | null;
   vision: LLMProviderName | null;
   planner: LLMProviderName | null;
+  chat?: LLMProviderName | null;
   // True only when all 3 features are pinned at the same provider â€”
   // the single-provider UI invariant. Drives the forced-setup dialog.
   configured: boolean;

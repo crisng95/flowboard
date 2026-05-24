@@ -16,6 +16,8 @@ class EdgeCreate(BaseModel):
     source_id: int
     target_id: int
     kind: EdgeKind = "ref"
+    source_handle: Optional[str] = None
+    target_handle: Optional[str] = None
     # Optional pin to a specific variant of the source's `mediaIds[]`.
     # Frontend passes when the user picks a variant before drawing the
     # edge (or when right-click → pin variant on an existing edge).
@@ -44,6 +46,8 @@ def create_edge(body: EdgeCreate):
             source_id=body.source_id,
             target_id=body.target_id,
             kind=body.kind,
+            source_handle=body.source_handle,
+            target_handle=body.target_handle,
             source_variant_idx=body.source_variant_idx,
         )
         s.add(edge)

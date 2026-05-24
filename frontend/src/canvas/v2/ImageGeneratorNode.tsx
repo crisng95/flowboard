@@ -37,20 +37,32 @@ const ASPECT_TO_FLOW: Record<AspectOption, string> = {
 type ModelOption = { key: string; label: string };
 const MODEL_OPTIONS: ModelOption[] = [
   { key: "NANO_BANANA_PRO", label: "Nano Banana Pro" },
+  { key: "NANO_OMNI", label: "Nano Omni" },
   { key: "NANO_BANANA_2", label: "Nano Banana 2" },
 ];
 
 export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
   const { id: rfId, data, selected } = props;
-  const mediaId = data.mediaId as string | undefined;
+  const mediaIds = Array.isArray(data.mediaIds)
+    ? data.mediaIds.filter((m): m is string => typeof m === "string" && !!m)
+    : [];
+  const mediaId = mediaIds[0] ?? (data.mediaId as string | undefined);
   const prompt = (data.prompt as string | undefined) ?? "";
-  const imageCount = (data.imageCount as number | undefined) ?? 1;
+  const imageCount = Math.max(
+    1,
+    Math.min(
+      (data.imageCount as number | undefined)
+        ?? (data.variantCount as number | undefined)
+        ?? 1,
+      4,
+    ),
+  );
   const aspectKey = (data.aspectKey as AspectOption | undefined) ?? "1:1";
   const modelKey = (data.modelKey as string | undefined) ?? "NANO_BANANA_PRO";
   const shortId = data.shortId as string | undefined;
   const status = data.status as string | undefined;
 
-    const { width: nodeWidth, onResize, onResizeEnd } = useNodeWidth({
+  const { width: nodeWidth, onResize, onResizeEnd } = useNodeWidth({
     nodeId: rfId, data, min: MIN_WIDTH, max: MAX_WIDTH, fallback: DEFAULT_WIDTH,
   });
 
@@ -73,13 +85,22 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
   const showSourceHandle = showControls || hasSourceEdge || isConnecting;
   const anyConnectionInProgress = connection.inProgress;
   const showTargetHandles = showControls || hasTargetEdge || anyConnectionInProgress;
+  const targetHandleClassName = cn(
+    "!absolute !-left-0 !h-7 !w-7 !border-0 !bg-transparent",
+    "transition-opacity duration-300 ease-out",
+    anyConnectionInProgress
+      ? "!opacity-100 !pointer-events-auto !z-50"
+      : showTargetHandles
+      ? "!opacity-100"
+      : "!opacity-0 !pointer-events-none",
+  );
 
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [showAspectPicker, setShowAspectPicker] = useState(false);
   const [promptFocused, setPromptFocused] = useState(false);
   const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null);
 
-    const allNodes = useBoardStore.getState().nodes;
+  const allNodes = useBoardStore.getState().nodes;
   const upstreamTextEdge = edges.find((e) => {
     if (e.target !== rfId) return false;
     if (e.targetHandle === "target-text") return true;
@@ -99,7 +120,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     persistNodeData(rfId, { prompt: value });
   }
   function setImageCount(delta: number) {
-    const next = Math.max(1, Math.min(8, imageCount + delta));
+    const next = Math.max(1, Math.min(4, imageCount + delta));
     useBoardStore.getState().updateNodeData(rfId, { imageCount: next });
     persistNodeData(rfId, { imageCount: next });
   }
@@ -114,9 +135,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     setShowModelPicker(false);
   }
   function handleGenerate() {
-    // Use local prompt, or fall back to upstream text node prompt
     const finalPrompt = hasTextConnection ? upstreamText : prompt.trim();
-    // Allow empty prompt when upstream image references exist
     const hasImageRefs = edges.some((e) => {
       if (e.target !== rfId) return false;
       const src = allNodes.find((n) => n.id === e.source);
@@ -136,6 +155,8 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
   }
 
   const isRunning = status === "running" || status === "queued";
+  const showVariantGrid = mediaIds.length > 1 || (isRunning && imageCount > 1);
+  const visibleSlots = showVariantGrid ? Math.max(mediaIds.length, imageCount) : 1;
 
   return (
     <div
@@ -163,15 +184,112 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
         style={{ borderRadius: BORDER_RADIUS, backgroundColor: "#1a1a1a" }}
       >
         {/* Image area */}
-        <div className="relative overflow-hidden" style={{ aspectRatio: ASPECT_CSS[aspectKey], minHeight: 200, borderRadius: BORDER_RADIUS - 3 }}>
-          {mediaId && (
+        <div
+          className="relative overflow-hidden"
+          style={{ aspectRatio: ASPECT_CSS[aspectKey], minHeight: 200, borderRadius: BORDER_RADIUS - 3 }}
+        >
+          {/* Variant grid (multiple results) */}
+          {showVariantGrid ? (
+            <div
+              className={cn(
+                "absolute inset-0 grid gap-px bg-black/20",
+                visibleSlots === 1 ? "grid-cols-1" : "grid-cols-2",
+              )}
+            >
+              {Array.from({ length: visibleSlots }).map((_, idx) => {
+                const slotMediaId = mediaIds[idx] ?? null;
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      if (slotMediaId) useGenerationStore.getState().openResultViewer(rfId, idx);
+                    }}
+                    className="relative min-h-0 min-w-0 overflow-hidden bg-white/[0.04] disabled:cursor-default"
+                    disabled={!slotMediaId}
+                  >
+                    {slotMediaId ? (
+                      <img
+                        src={mediaUrl(slotMediaId)}
+                        alt={`generated ${idx + 1}`}
+                        className={cn(
+                          "absolute inset-0 size-full object-cover transition-all duration-300",
+                          promptFocused && "blur-sm scale-[1.02]",
+                        )}
+                        onDoubleClick={() => useGenerationStore.getState().openResultViewer(rfId, idx)}
+                      />
+                    ) : (
+                      /* Loading slot placeholder */
+                      <div className="absolute inset-0 bg-white/[0.05]">
+                        {isRunning && (
+                          <div
+                            className="absolute inset-0"
+                            style={{
+                              background: "linear-gradient(105deg, transparent 40%, rgba(124,92,255,0.2) 50%, transparent 60%)",
+                              backgroundSize: "200% 100%",
+                              animation: "shimmer 1.6s ease-in-out infinite",
+                            }}
+                          />
+                        )}
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ) : mediaId ? (
+            /* Single image */
             <img
               src={mediaUrl(mediaId)}
               alt="generated"
-              className={cn("absolute inset-0 size-full object-cover transition-all duration-300", promptFocused && "blur-sm scale-[1.02]")}
+              className={cn(
+                "absolute inset-0 size-full object-cover transition-all duration-300",
+                promptFocused && "blur-sm scale-[1.02]",
+              )}
               onLoad={onImageLoad}
               onDoubleClick={() => useGenerationStore.getState().openResultViewer(rfId)}
             />
+          ) : (
+            /* ── Empty state ────────────────────────────────────────────────
+               Visible when node has no image yet and is not running. */
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 select-none">
+              <div
+                className="flex items-center justify-center rounded-full"
+                style={{
+                  width: 48, height: 48,
+                  backgroundColor: "rgba(124,92,255,0.12)",
+                  border: "1px solid rgba(124,92,255,0.25)",
+                }}
+              >
+                <ImageUp size={22} strokeWidth={1.5} style={{ color: "rgba(124,92,255,0.7)" }} />
+              </div>
+              <p
+                className="text-xs text-center leading-relaxed"
+                style={{ color: "rgba(255,255,255,0.35)", maxWidth: 160 }}
+              >
+                Describe your image below and hit generate
+              </p>
+            </div>
+          )}
+
+          {/* ── Running shimmer overlay ──────────────────────────────────────
+              Gradient sweep animation while generation is in progress.
+              Works over both the empty state and any existing image. */}
+          {isRunning && !showVariantGrid && (
+            <div
+              className="absolute inset-0 z-[4] overflow-hidden"
+              style={{ borderRadius: BORDER_RADIUS - 3 }}
+            >
+              <div
+                className="absolute inset-0"
+                style={{
+                  background: "linear-gradient(105deg, transparent 35%, rgba(124,92,255,0.22) 50%, transparent 65%)",
+                  backgroundSize: "200% 100%",
+                  animation: "shimmer 1.6s ease-in-out infinite",
+                }}
+              />
+              <div className="absolute inset-0 bg-black/25" />
+            </div>
           )}
 
           {/* Dark overlay when editing prompt */}
@@ -179,8 +297,31 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
             <div className="absolute inset-0 bg-black/50 transition-opacity duration-300 z-[5]" />
           )}
 
-          {/* Size badge */}
-          {imgSize && showControls && mediaId && (
+          {/* ── Expand / quick-view button ───────────────────────────────────
+              Top-left on hover when an image exists. Opens ResultViewer. */}
+          {mediaId && showControls && !showVariantGrid && !promptFocused && (
+            <button
+              type="button"
+              onClick={() => useGenerationStore.getState().openResultViewer(rfId)}
+              className="absolute top-2.5 left-2.5 z-[6] flex items-center justify-center rounded-full transition-all duration-150 hover:scale-110"
+              style={{
+                width: 28, height: 28,
+                backgroundColor: "rgba(0,0,0,0.55)",
+                backdropFilter: "blur(6px)",
+                border: "1px solid rgba(255,255,255,0.15)",
+                color: "rgba(255,255,255,0.85)",
+              }}
+              title="View fullscreen"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" />
+                <line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+              </svg>
+            </button>
+          )}
+
+          {/* Size badge — top-right */}
+          {imgSize && showControls && mediaId && !showVariantGrid && (
             <div
               className="absolute top-3 right-3 px-2.5 py-1 rounded-full text-2xs font-medium text-ink-primary z-10"
               style={{ backgroundColor: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }}
@@ -189,19 +330,9 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
             </div>
           )}
 
-          {/* Bottom overlay: prompt + toolbar ON the image */}
-          <div
-            className={cn(
-              "absolute bottom-0 left-0 right-0 z-10",
-              "transition-all duration-300 ease-out",
-            )}
-          >
-            {/* Prompt - bottom-anchored. When collapsed, render as a
-                single row so the placeholder/text hugs the toolbar; on
-                focus, the textarea expands upward (the wrapper is
-                `bottom-0` anchored, so growing rows pushes the top up
-                rather than the bottom down). Removes the empty "row 2"
-                gap that previously made the prompt feel detached. */}
+          {/* Bottom overlay: prompt textarea + toolbar */}
+          <div className={cn("absolute bottom-0 left-0 right-0 z-10", "transition-all duration-300 ease-out")}>
+            {/* Prompt */}
             <div className={cn("px-4 pb-1 transition-all duration-300 ease-out", promptFocused ? "pt-4" : "pt-2")}>
               <textarea
                 value={hasTextConnection ? upstreamText : prompt}
@@ -282,25 +413,24 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
                 disabled={isRunning}
                 className={cn("p-2 rounded-full transition-all duration-150", isRunning ? "bg-accent/30 text-accent/50 cursor-not-allowed" : "bg-accent/30 text-accent hover:bg-accent/40 cursor-pointer")}
               >
-                {mediaId ? <RefreshCw size={14} strokeWidth={2} /> : <Play size={14} strokeWidth={2} fill="currentColor" />}
+                {mediaId || mediaIds.length > 0 ? <RefreshCw size={14} strokeWidth={2} /> : <Play size={14} strokeWidth={2} fill="currentColor" />}
               </button>
             </div>
           </div>
         </div>
 
-        {/* Resize handle - relative to card, visible when selected */}
+        {/* Resize handle */}
         <ResizeHandle
-            minWidth={MIN_WIDTH}
-            maxWidth={MAX_WIDTH}
-            currentWidth={nodeWidth}
-            onResize={onResize}
-            onResizeEnd={onResizeEnd}
-            forceVisible={!!selected}
-          />
-
+          minWidth={MIN_WIDTH}
+          maxWidth={MAX_WIDTH}
+          currentWidth={nodeWidth}
+          onResize={onResize}
+          onResizeEnd={onResizeEnd}
+          forceVisible={!!selected}
+        />
       </div>
 
-      {/* Source handle (output) - right side, 48px from top */}
+      {/* Source handle — right side */}
       <Handle type="source" position={Position.Right} id="source"
         className={cn("!absolute !-right-0 !top-[48px] !h-7 !w-7 !border-0 !bg-transparent", "transition-opacity duration-300 ease-out", showSourceHandle ? "!opacity-100" : "!opacity-0 !pointer-events-none")}
       >
@@ -309,21 +439,21 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
         </div>
       </Handle>
 
-      {/* Target handle (image input) - left side */}
-      <Handle type="target" position={Position.Left} id="target-image" style={{ bottom: 14, top: "auto" }}
-        className={cn("!absolute !-left-0 !h-7 !w-7 !border-0 !bg-transparent", "transition-opacity duration-300 ease-out", showTargetHandles ? "!opacity-100" : "!opacity-0 !pointer-events-none")}
-      >
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full border transition-all duration-150" style={{ backgroundColor: "#2b2b2b", borderColor: hasTargetEdge ? "rgba(124,92,255,0.7)" : "rgba(124,92,255,0.4)", color: "rgba(255,255,255,0.7)" }}>
-          <ImageUp size={11} strokeWidth={2} />
-        </div>
-      </Handle>
-
-      {/* Target handle (text input) - left side */}
+      {/* Target handle (text input) — left side */}
       <Handle type="target" position={Position.Left} id="target-text" style={{ bottom: 54, top: "auto" }}
-        className={cn("!absolute !-left-0 !h-7 !w-7 !border-0 !bg-transparent", "transition-opacity duration-300 ease-out", showTargetHandles ? "!opacity-100" : "!opacity-0 !pointer-events-none")}
+        className={targetHandleClassName}
       >
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full border transition-all duration-150" style={{ backgroundColor: "#2b2b2b", borderColor: hasTargetEdge ? "rgba(124,92,255,0.7)" : "rgba(124,92,255,0.4)", color: "rgba(255,255,255,0.7)" }}>
           <Type size={11} strokeWidth={2} />
+        </div>
+      </Handle>
+
+      {/* Target handle (image input) — left side */}
+      <Handle type="target" position={Position.Left} id="target-image" style={{ bottom: 14, top: "auto" }}
+        className={targetHandleClassName}
+      >
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full border transition-all duration-150" style={{ backgroundColor: "#2b2b2b", borderColor: hasTargetEdge ? "rgba(124,92,255,0.7)" : "rgba(124,92,255,0.4)", color: "rgba(255,255,255,0.7)" }}>
+          <ImageUp size={11} strokeWidth={2} />
         </div>
       </Handle>
     </div>
