@@ -26,6 +26,7 @@ const PROVIDER_LABEL: Record<LLMProviderName, string> = {
   claude: "Claude",
   gemini: "Gemini",
   openai: "OpenAI",
+  omni: "Omni",
 };
 
 const POLL_INTERVAL_MS = 30_000;

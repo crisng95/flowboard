@@ -147,6 +147,7 @@ def test_read_active_providers_ignores_garbage_values(tmp_secrets_path: Path):
             "auto_prompt": "gemini",
             "vision": 42,        # bad — non-string
             "planner": None,     # bad — non-string
+            "chat": {"provider": "omni"},  # bad — non-string
         }
     })
     cfg = secrets.read_active_providers()
@@ -179,6 +180,14 @@ def test_is_active_providers_configured_true_when_all_match(tmp_secrets_path: Pa
     secrets.set_feature_provider("auto_prompt", "gemini")
     secrets.set_feature_provider("vision", "gemini")
     secrets.set_feature_provider("planner", "gemini")
+    assert secrets.is_active_providers_configured() is True
+
+
+def test_is_active_providers_configured_ignores_chat_override(tmp_secrets_path: Path):
+    secrets.set_feature_provider("auto_prompt", "gemini")
+    secrets.set_feature_provider("vision", "gemini")
+    secrets.set_feature_provider("planner", "gemini")
+    secrets.set_feature_provider("chat", "omni")
     assert secrets.is_active_providers_configured() is True
 
 

@@ -7,6 +7,7 @@
 
 const AGENT_WS_URL  = 'ws://127.0.0.1:9223';
 const CALLBACK_URL  = 'http://127.0.0.1:8101/api/ext/callback';
+const FALLBACK_SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
 
 let ws               = null;
 let flowKey          = null;
@@ -20,6 +21,7 @@ let metrics = {
   failedCount:     0,
   lastError:       null,
 };
+let observedCaptchaActions = {};
 
 const flowUrls = ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'];
 
@@ -69,10 +71,11 @@ async function init() {
   // extensions on the profile that hold the `storage` permission.
   // The agent replays user_info on every WS reconnect anyway via
   // fetchAndPushUserInfo(token), so persistence buys nothing.
-  const data = await chrome.storage.local.get(['flowKey', 'metrics', 'callbackSecret']);
+  const data = await chrome.storage.local.get(['flowKey', 'metrics', 'callbackSecret', 'observedCaptchaActions']);
   if (data.flowKey)        flowKey        = data.flowKey;
   if (data.metrics)        Object.assign(metrics, data.metrics);
   if (data.callbackSecret) callbackSecret = data.callbackSecret;
+  if (data.observedCaptchaActions) observedCaptchaActions = data.observedCaptchaActions;
   connectToAgent();
   chrome.alarms.create('keepAlive', { periodInMinutes: 0.4 });
 }
@@ -188,6 +191,18 @@ function connectToAgent() {
       ws.send(JSON.stringify({ type: 'user_info', userInfo: cachedUserInfo }));
     } else if (flowKey) {
       fetchAndPushUserInfo(flowKey);
+    }
+    for (const [scope, snapshot] of Object.entries(observedCaptchaActions)) {
+      if (snapshot?.action) {
+        ws.send(JSON.stringify({
+          type: 'captcha_action_observed',
+          scope,
+          action: snapshot.action,
+          siteKey: snapshot.siteKey || null,
+          href: snapshot.href || null,
+          observedAt: snapshot.observedAt || Date.now(),
+        }));
+      }
     }
   };
 
@@ -309,7 +324,8 @@ async function handleApiRequest(msg) {
   }
 
   setState('running');
-  const hasCaptcha = !!captchaAction;
+  const effectiveCaptchaAction = resolveCaptchaAction(url, captchaAction);
+  const hasCaptcha = !!effectiveCaptchaAction;
   if (hasCaptcha) metrics.requestCount++;
 
   addRequestLog({
@@ -335,12 +351,12 @@ async function handleApiRequest(msg) {
 
     // Step 1: Solve captcha if needed
     let captchaToken = null;
-    if (captchaAction) {
-      const captchaResult = await solveCaptcha(id, captchaAction);
+    if (effectiveCaptchaAction) {
+      const captchaResult = await solveCaptcha(id, effectiveCaptchaAction);
       captchaToken = captchaResult?.token || null;
       if (!captchaToken) {
         const err = captchaResult?.error || 'CAPTCHA_FAILED';
-        console.error(`[Flowboard] Captcha failed for ${captchaAction}: ${err}`);
+        console.error(`[Flowboard] Captcha failed for ${effectiveCaptchaAction}: ${err}`);
         sendToAgent({ id, status: 403, error: `CAPTCHA_FAILED: ${err}` });
         if (hasCaptcha) { metrics.failedCount++; metrics.lastError = `CAPTCHA_FAILED: ${err}`; }
         chrome.storage.local.set({ metrics });
@@ -357,6 +373,10 @@ async function handleApiRequest(msg) {
       if (finalBody.clientContext?.recaptchaContext) {
         finalBody.clientContext.recaptchaContext.token = captchaToken;
       }
+      if (finalBody.agentClientContext?.recaptchaContext) {
+        finalBody.agentClientContext.recaptchaContext.token = captchaToken;
+        console.log('[Bridge] Successfully patched ReCAPTCHA token into agentClientContext for Omni');
+      }
       if (finalBody.requests && Array.isArray(finalBody.requests)) {
         for (const req of finalBody.requests) {
           if (req.clientContext?.recaptchaContext) {
@@ -366,31 +386,82 @@ async function handleApiRequest(msg) {
       }
     }
 
-    const fetchHeaders = { ...(headers || {}), authorization: `Bearer ${flowKey}` };
+    const fetchHeaders = { ...(headers || {}) };
+    const useOmniTabForward = url.includes('flowCreationAgent:streamChat');
+    if (useOmniTabForward) {
+      fetchHeaders.Authorization = `Bearer ${flowKey}`;
+      fetchHeaders['Content-Type'] = 'application/json';
+      fetchHeaders['X-Same-Domain'] = '1';
+      fetchHeaders.Accept = 'text/event-stream, text/event-stream';
+      fetchHeaders['sec-ch-ua'] = '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"';
+      fetchHeaders['sec-ch-ua-platform'] = '"Windows"';
+    } else {
+      fetchHeaders.authorization = `Bearer ${flowKey}`;
+    }
 
-    const response = await fetch(url, {
-      method:      method || 'POST',
-      headers:     fetchHeaders,
-      credentials: 'include',
-      body:        method === 'GET' ? undefined : JSON.stringify(finalBody),
-    });
+    let responseStatus;
+    let responseText;
+    if (useOmniTabForward) {
+      const response = await fetch(url, {
+        method: method || 'POST',
+        headers: fetchHeaders,
+        credentials: 'include',
+        mode: 'cors',
+        body: method === 'GET' ? undefined : JSON.stringify(finalBody),
+      });
+      responseStatus = response.status;
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('response body is not readable');
+      }
+      const decoder = new TextDecoder();
+      let finalFullText = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        const rawChunk = decoder.decode(value || new Uint8Array(), { stream: !done });
+        if (rawChunk) {
+          console.log('[Bridge Omni Raw Chunk]:', rawChunk);
+          finalFullText += rawChunk;
+        }
+        if (done) {
+          finalFullText += decoder.decode();
+          break;
+        }
+      }
+      responseText = finalFullText;
+    } else {
+      const response = await fetch(url, {
+        method:      method || 'POST',
+        headers:     fetchHeaders,
+        credentials: 'include',
+        body:        method === 'GET' ? undefined : JSON.stringify(finalBody),
+      });
+      responseStatus = response.status;
+      responseText = await response.text();
+    }
 
-    const responseText = await response.text();
     let responseData;
     try {
       responseData = JSON.parse(responseText);
     } catch {
       responseData = responseText;
     }
+    if (!(responseStatus >= 200 && responseStatus < 300)) {
+      if (responseData && typeof responseData === 'object') {
+        console.log('[Bridge] Omni error response JSON:\n' + JSON.stringify(responseData, null, 2));
+      } else {
+        console.log('[Bridge] Omni error response text:', responseData);
+      }
+    }
 
-    sendToAgent({ id, status: response.status, data: responseData });
+    sendToAgent({ id, status: responseStatus, data: responseData });
 
-    if (response.ok) {
+    if (responseStatus >= 200 && responseStatus < 300) {
       if (hasCaptcha) { metrics.successCount++; metrics.lastError = null; }
-      updateRequestLog(id, { status: 'success', httpStatus: response.status });
+      updateRequestLog(id, { status: 'success', httpStatus: responseStatus });
     } else {
-      if (hasCaptcha) { metrics.failedCount++; metrics.lastError = `API_${response.status}`; }
-      updateRequestLog(id, { status: 'failed', httpStatus: response.status, error: `API_${response.status}` });
+      if (hasCaptcha) { metrics.failedCount++; metrics.lastError = `API_${responseStatus}`; }
+      updateRequestLog(id, { status: 'failed', httpStatus: responseStatus, error: `API_${responseStatus}` });
     }
   } catch (e) {
     sendToAgent({ id, status: 500, error: e.message || 'API_REQUEST_FAILED' });
@@ -400,6 +471,30 @@ async function handleApiRequest(msg) {
 
   chrome.storage.local.set({ metrics });
   setState('idle');
+}
+
+function resolveCaptchaAction(url, requestedAction) {
+  if (url?.includes('flowCreationAgent:streamChat')) {
+    const observed = observedCaptchaActions.omni_chat;
+    if (observed?.action) {
+      return observed.action;
+    }
+    if (requestedAction === 'OMNI_DYNAMIC') {
+      return null;
+    }
+  }
+  return requestedAction || null;
+}
+
+function resolveCaptchaSiteKey(url) {
+  if (url?.includes('flowCreationAgent:streamChat')) {
+    const observed = observedCaptchaActions.omni_chat;
+    if (typeof observed?.siteKey === 'string' && observed.siteKey) {
+      return observed.siteKey;
+    }
+  }
+  console.warn('[Bridge] Dynamic siteKey not found, falling back to default system key.');
+  return FALLBACK_SITE_KEY;
 }
 
 // ─── Token Refresh (minimal) ────────────────────────────────
@@ -469,11 +564,15 @@ function sleep(ms) {
 }
 
 async function requestCaptchaFromTab(tabId, requestId, pageAction) {
+  const candidates = await chrome.tabs.query({ url: flowUrls });
+  const flowTab = candidates.find((t) => t.id === tabId);
+  const siteKey = resolveCaptchaSiteKey(flowTab?.url || '');
   try {
     return await chrome.tabs.sendMessage(tabId, {
       type: 'GET_CAPTCHA',
       requestId,
       pageAction,
+      siteKey,
     });
   } catch (error) {
     const msg = error?.message || '';
@@ -496,6 +595,34 @@ async function requestCaptchaFromTab(tabId, requestId, pageAction) {
       type: 'GET_CAPTCHA',
       requestId,
       pageAction,
+      siteKey,
+    });
+  }
+}
+
+async function requestOmniFetchFromTab(tabId, requestId, payload) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, {
+      action: 'FORWARD_OMNI_FETCH',
+      requestId,
+      payload,
+    });
+  } catch (error) {
+    const msg = error?.message || '';
+    const shouldInject =
+      msg.includes('Receiving end does not exist') ||
+      msg.includes('Could not establish connection');
+    if (!shouldInject) throw error;
+
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content.js'],
+    });
+    await sleep(200);
+    return await chrome.tabs.sendMessage(tabId, {
+      action: 'FORWARD_OMNI_FETCH',
+      requestId,
+      payload,
     });
   }
 }
@@ -580,6 +707,57 @@ async function solveCaptcha(requestId, captchaAction) {
   }
 }
 
+async function forwardOmniFetchViaTab(requestId, payload) {
+  const tabs = await chrome.tabs.query({ url: flowUrls });
+  if (!tabs.length) {
+    try {
+      await openFlowTabResilient(false);
+      await sleep(3000);
+    } catch (e) {
+      return { error: e.message || 'NO_FLOW_TAB' };
+    }
+  }
+
+  const candidates = await chrome.tabs.query({ url: flowUrls });
+  const errors = [];
+  for (const tab of candidates) {
+    const live = await reviveTabIfNeeded(tab);
+    if (!live) continue;
+    try {
+      const resp = await Promise.race([
+        requestOmniFetchFromTab(live.id, requestId, payload),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('OMNI_FORWARD_TIMEOUT')), 120000)),
+      ]);
+      return resp;
+    } catch (e) {
+      const msg = e?.message || '';
+      errors.push(msg);
+      if (
+        msg.includes('No current window') ||
+        msg.includes('No tab with id') ||
+        msg.includes('Receiving end does not exist')
+      ) {
+        continue;
+      }
+      return { error: msg };
+    }
+  }
+
+  try {
+    await openFlowTabResilient(false);
+    await sleep(3000);
+    const fresh = await chrome.tabs.query({ url: flowUrls });
+    const target = fresh.find((t) => !t.discarded) || fresh[0];
+    if (!target) return { error: 'NO_FLOW_TAB' };
+    return await Promise.race([
+      requestOmniFetchFromTab(target.id, requestId, payload),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('OMNI_FORWARD_TIMEOUT')), 120000)),
+    ]);
+  } catch (e) {
+    return { error: e?.message || (errors[0] ?? 'NO_FLOW_TAB') };
+  }
+}
+
 // ─── TRPC Request Proxy ─────────────────────────────────────
 
 async function handleTrpcRequest(msg) {
@@ -638,6 +816,32 @@ function broadcastStatus() {
 // ─── Popup Message Handlers ─────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, _, reply) => {
+  if (msg.type === 'CAPTCHA_ACTION_OBSERVED') {
+    const action = typeof msg.action === 'string' ? msg.action.trim() : '';
+    const siteKey = typeof msg.siteKey === 'string' ? msg.siteKey.trim() : '';
+    const scope = typeof msg.scope === 'string' && msg.scope ? msg.scope : 'default';
+    if (action && siteKey) {
+      observedCaptchaActions[scope] = {
+        action,
+        siteKey,
+        href: typeof msg.href === 'string' ? msg.href : null,
+        observedAt: typeof msg.observedAt === 'number' ? msg.observedAt : Date.now(),
+      };
+      chrome.storage.local.set({ observedCaptchaActions });
+      console.log(`[Flowboard] Observed grecaptcha action for ${scope}: ${action} (siteKey=${siteKey})`);
+      sendToAgent({
+        type: 'captcha_action_observed',
+        scope,
+        action,
+        siteKey,
+        href: observedCaptchaActions[scope].href,
+        observedAt: observedCaptchaActions[scope].observedAt,
+      });
+    }
+    reply({ ok: true });
+    return true;
+  }
+
   if (msg.type === 'STATUS') {
     reply({
       connected:       ws?.readyState === WebSocket.OPEN,

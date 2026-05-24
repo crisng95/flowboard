@@ -33,6 +33,7 @@ const PROVIDER_META: Record<
   claude:  { name: "Claude Code",   tagline: "Anthropic CLI · OAuth" },
   gemini:  { name: "Gemini CLI",    tagline: "Google CLI · OAuth" },
   openai:  { name: "OpenAI Codex",  tagline: "ChatGPT CLI · OAuth" },
+  omni:    { name: "Omni Agent",    tagline: "Google Labs Agent · Chat only" },
 };
 
 function statusLabel(p: LLMProviderInfo): string {

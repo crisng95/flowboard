@@ -137,3 +137,93 @@ def test_send_chat_omits_plan_when_planner_returns_none(client):
     body = r.json()
     assert "plan" not in body
     assert body["assistant"]["content"] == "Just chatting."
+
+
+def test_send_chat_uses_omni_provider_when_chat_configured(client, monkeypatch):
+    b = _board(client)
+    monkeypatch.setattr(
+        "flowboard.routes.chat.secrets.read_active_providers",
+        lambda: {"chat": "omni"},
+    )
+    with patch(
+        "flowboard.routes.chat.stream_chat",
+        new=AsyncMock(
+            return_value={
+                "content": "Hello from Omni.",
+                "agent_session_id": "sess-123",
+                "turn_number": 1,
+                "project_id": "projects/test",
+            }
+        ),
+    ) as omni_mock:
+        r = client.post(
+            "/api/chat",
+            json={
+                "board_id": b["id"],
+                "message": "hello omni",
+                "mentions": [],
+                "agent_session_id": None,
+                "turn_number": 1,
+            },
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["assistant"]["content"] == "Hello from Omni."
+    assert body["chatProvider"] == "omni"
+    assert body["agentSessionId"] == "sess-123"
+    assert body["turnNumber"] == 1
+    assert "plan" not in body
+    omni_mock.assert_awaited_once()
+
+
+def test_send_chat_passes_agent_session_and_turn_to_omni(client, monkeypatch):
+    b = _board(client)
+    monkeypatch.setattr(
+        "flowboard.routes.chat.secrets.read_active_providers",
+        lambda: {"chat": "omni"},
+    )
+    with patch(
+        "flowboard.routes.chat.stream_chat",
+        new=AsyncMock(
+            return_value={
+                "content": "Turn two",
+                "agent_session_id": "sess-abc",
+                "turn_number": 2,
+                "project_id": "projects/test",
+            }
+        ),
+    ) as omni_mock:
+        r = client.post(
+            "/api/chat",
+            json={
+                "board_id": b["id"],
+                "message": "continue",
+                "mentions": [],
+                "agent_session_id": "sess-abc",
+                "turn_number": 2,
+            },
+        )
+    assert r.status_code == 200
+    kwargs = omni_mock.await_args.kwargs
+    assert kwargs["agent_session_id"] == "sess-abc"
+    assert kwargs["turn_number"] == 2
+
+
+def test_send_chat_omni_failure_returns_502(client, monkeypatch):
+    from flowboard.services.omni_agent import OmniAgentError
+
+    b = _board(client)
+    monkeypatch.setattr(
+        "flowboard.routes.chat.secrets.read_active_providers",
+        lambda: {"chat": "omni"},
+    )
+    with patch(
+        "flowboard.routes.chat.stream_chat",
+        new=AsyncMock(side_effect=OmniAgentError("NO_FLOW_KEY")),
+    ):
+        r = client.post(
+            "/api/chat",
+            json={"board_id": b["id"], "message": "hello", "mentions": []},
+        )
+    assert r.status_code == 502
+    assert "NO_FLOW_KEY" in r.text

@@ -190,6 +190,7 @@ def test_get_config_fresh_install_has_no_providers(client, tmp_secrets_path):
         "auto_prompt": None,
         "vision": None,
         "planner": None,
+        "chat": None,
         "configured": False,
     }
 
@@ -204,6 +205,7 @@ def test_get_config_returns_user_picks(client, tmp_secrets_path):
         "auto_prompt": None,
         "vision": "gemini",
         "planner": "openai",
+        "chat": None,
         "configured": False,
     }
 
@@ -216,6 +218,21 @@ def test_get_config_configured_when_all_three_match(client, tmp_secrets_path):
     secrets.set_feature_provider("planner", "gemini")
     resp = client.get("/api/llm/config")
     assert resp.json()["configured"] is True
+
+
+def test_get_config_still_configured_when_chat_uses_omni(client, tmp_secrets_path):
+    secrets.set_feature_provider("auto_prompt", "gemini")
+    secrets.set_feature_provider("vision", "gemini")
+    secrets.set_feature_provider("planner", "gemini")
+    secrets.set_feature_provider("chat", "omni")
+    resp = client.get("/api/llm/config")
+    assert resp.json() == {
+        "auto_prompt": "gemini",
+        "vision": "gemini",
+        "planner": "gemini",
+        "chat": "omni",
+        "configured": True,
+    }
 
 
 def test_get_config_not_configured_when_one_feature_diverges(
@@ -241,6 +258,7 @@ def test_set_config_single_feature(client, tmp_secrets_path):
     # Other features stay null until the user picks them — no default.
     assert cfg["auto_prompt"] is None
     assert cfg["planner"] is None
+    assert cfg["chat"] is None
     assert cfg["configured"] is False
 
 
@@ -255,6 +273,7 @@ def test_set_config_multiple_features(client, tmp_secrets_path):
         "auto_prompt": "claude",
         "vision": "gemini",
         "planner": "openai",
+        "chat": None,
         "configured": False,  # 3 different providers, not single-provider
     }
 
@@ -291,3 +310,17 @@ def test_set_config_does_not_validate_provider_availability(
     resp = client.put("/api/llm/config", json={"vision": "openai"})
     assert resp.status_code == 200
     assert client.get("/api/llm/config").json()["vision"] == "openai"
+
+
+def test_set_config_accepts_omni_for_chat_only(client, tmp_secrets_path):
+    resp = client.put("/api/llm/config", json={"chat": "omni"})
+    assert resp.status_code == 200
+    cfg = client.get("/api/llm/config").json()
+    assert cfg["chat"] == "omni"
+    assert cfg["configured"] is False
+
+
+def test_set_config_rejects_omni_for_non_chat_features(client, tmp_secrets_path):
+    resp = client.put("/api/llm/config", json={"planner": "omni"})
+    assert resp.status_code == 400
+    assert "unknown provider" in resp.json()["detail"]

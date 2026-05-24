@@ -45,13 +45,21 @@ class _ConfigBody(BaseModel):
     auto_prompt: Optional[str] = None
     vision: Optional[str] = None
     planner: Optional[str] = None
+    chat: Optional[str] = None
 
 
 # Whitelist for the writable feature → provider mapping. Hand-edited
 # secrets.json with garbage values is tolerated by `read_active_providers`,
 # but the HTTP surface must reject input that wouldn't route anywhere.
-_VALID_PROVIDER_NAMES = {"claude", "gemini", "openai"}
-_VALID_FEATURES = ("auto_prompt", "vision", "planner")
+_VALID_FEATURES = ("auto_prompt", "vision", "planner", "chat")
+_VALID_PROVIDERS_BY_FEATURE = {
+    "auto_prompt": {"claude", "gemini", "openai"},
+    "vision": {"claude", "gemini", "openai"},
+    "planner": {"claude", "gemini", "openai"},
+    "chat": {"claude", "gemini", "openai", "omni"},
+}
+_CONFIG_PROVIDER_NAMES = set().union(*_VALID_PROVIDERS_BY_FEATURE.values())
+_REGISTRY_PROVIDER_NAMES = {"claude", "gemini", "openai"}
 
 
 # ── GET /api/llm/providers ────────────────────────────────────────────
@@ -116,7 +124,7 @@ async def set_provider_key(name: str, body: _ApiKeyBody) -> dict:
     Setting a key on a CLI-only provider is a 400 — the UI shouldn't
     reach this endpoint for them in the first place, but defend in depth.
     """
-    if name not in _VALID_PROVIDER_NAMES:
+    if name not in _REGISTRY_PROVIDER_NAMES:
         raise HTTPException(status_code=404, detail=f"unknown provider {name!r}")
     if name != "openai":
         raise HTTPException(
@@ -144,7 +152,7 @@ async def test_provider(name: str) -> dict:
     button. Returns `{ok, latencyMs}` on success or `{ok: false, error}`
     on any failure mode.
     """
-    if name not in _VALID_PROVIDER_NAMES:
+    if name not in _REGISTRY_PROVIDER_NAMES:
         raise HTTPException(status_code=404, detail=f"unknown provider {name!r}")
     provider = registry.get_provider(name)
     if provider is None:
@@ -217,9 +225,10 @@ def set_config(body: _ConfigBody) -> dict:
     for feature, provider_name in updates.items():
         if feature not in _VALID_FEATURES:
             raise HTTPException(status_code=400, detail=f"unknown feature {feature!r}")
-        if provider_name not in _VALID_PROVIDER_NAMES:
+        if provider_name not in _VALID_PROVIDERS_BY_FEATURE[feature]:
             raise HTTPException(
-                status_code=400, detail=f"unknown provider {provider_name!r}"
+                status_code=400,
+                detail=f"unknown provider {provider_name!r} for feature {feature!r}",
             )
     for feature, provider_name in updates.items():
         secrets.set_feature_provider(feature, provider_name)

@@ -72,6 +72,11 @@ const CLI_REFERENCE: Record<
     docsUrl: "https://github.com/openai/codex",
     docsLabel: "Codex CLI repo",
   },
+  omni: {
+    installCmd: "Open Google Labs Flow and enable the Flowboard bridge extension",
+    docsUrl: "https://labs.google/fx/tools/flow",
+    docsLabel: "Google Labs Flow",
+  },
 };
 type TestState = "untested" | "testing" | "ok" | "fail";
 interface ConnectionTestResult {
@@ -253,6 +258,7 @@ export function AiProvidersSection() {
     claude: providers!.find((p) => p.name === "claude"),
     gemini: providers!.find((p) => p.name === "gemini"),
     openai: providers!.find((p) => p.name === "openai"),
+    omni: providers!.find((p) => p.name === "omni"),
   };
 
   const pendingProvider = pending ? byName[pending] : null;
@@ -512,5 +518,7 @@ function labelOf(name: LLMProviderName): string {
       return "Gemini";
     case "openai":
       return "OpenAI";
+    case "omni":
+      return "Omni";
   }
 }

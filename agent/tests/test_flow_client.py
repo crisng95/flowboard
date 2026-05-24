@@ -7,6 +7,7 @@ callback handler uses).
 """
 import asyncio
 import json
+import time
 
 import pytest
 
@@ -150,4 +151,29 @@ async def test_api_request_4xx_counts_as_failed():
     stats = client.ws_stats
     assert stats["failed_count"] == 1
     assert stats["success_count"] == 0
-    assert stats["last_error"] == "API_403"
+    assert stats["last_error"] == '{"e": "CAPTCHA_FAILED"}'
+
+
+@pytest.mark.asyncio
+async def test_handle_captcha_action_observed_caches_scope():
+    client = FlowClient()
+    now_ms = int(time.time() * 1000)
+    await client.handle_message({
+        "type": "captcha_action_observed",
+        "scope": "omni_chat",
+        "action": "labs_flow_omni_chat",
+        "href": "https://labs.google/fx/tools/flow",
+        "observedAt": now_ms,
+    })
+    assert client.get_observed_captcha_action("omni_chat") == "labs_flow_omni_chat"
+    assert client.ws_stats["observed_captcha_actions"]["omni_chat"] == "labs_flow_omni_chat"
+
+
+def test_get_observed_captcha_action_ignores_stale_values():
+    client = FlowClient()
+    client._observed_captcha_actions["omni_chat"] = {
+        "action": "stale",
+        "href": None,
+        "observed_at": time.time() - 4000,
+    }
+    assert client.get_observed_captcha_action("omni_chat", max_age_s=10) is None

@@ -75,6 +75,9 @@ class FlowClient:
         self._paygate_tier: Optional[str] = None
         self._sku: Optional[str] = None  # e.g. "WS_ULTRA" / "WS_PRO"
         self._credits: Optional[int] = None
+        # Dynamic grecaptcha labels observed from the real Flow UI.
+        # Example scope: "omni_chat".
+        self._observed_captcha_actions: dict[str, dict[str, Any]] = {}
         self._request_count = 0
         self._success_count = 0
         self._failed_count = 0
@@ -101,6 +104,7 @@ class FlowClient:
         self._paygate_tier = None
         self._sku = None
         self._credits = None
+        self._observed_captcha_actions = {}
         for fut in self._pending.values():
             if not fut.done():
                 fut.set_exception(ConnectionError("extension_disconnected"))
@@ -121,6 +125,18 @@ class FlowClient:
     @property
     def credits(self) -> Optional[int]:
         return self._credits
+
+    def get_observed_captcha_action(self, scope: str, *, max_age_s: float = 1800.0) -> Optional[str]:
+        row = self._observed_captcha_actions.get(scope)
+        if not isinstance(row, dict):
+            return None
+        action = row.get("action")
+        observed_at = row.get("observed_at")
+        if not isinstance(action, str) or not action:
+            return None
+        if isinstance(observed_at, (int, float)) and (time.time() - float(observed_at)) > max_age_s:
+            return None
+        return action
 
     async def fetch_paygate_tier(self) -> bool:
         """Authoritative paygate tier resolution via the official Flow
@@ -238,6 +254,21 @@ class FlowClient:
                     self._user_info.get("email") or "<no email>",
                 )
             return
+        if t == "captcha_action_observed":
+            scope = data.get("scope")
+            action = data.get("action")
+            if isinstance(scope, str) and scope and isinstance(action, str) and action:
+                self._observed_captcha_actions[scope] = {
+                    "action": action,
+                    "href": data.get("href") if isinstance(data.get("href"), str) else None,
+                    "observed_at": (
+                        float(data["observedAt"]) / 1000.0
+                        if isinstance(data.get("observedAt"), (int, float))
+                        else time.time()
+                    ),
+                }
+                logger.info("captcha_action_observed scope=%s action=%s", scope, action)
+            return
         if t == "pong":
             return
         # Inbound response (legacy path; production flow uses HTTP callback)
@@ -267,8 +298,19 @@ class FlowClient:
         explicit_error = bool(data.get("error"))
         if http_error or explicit_error:
             self._failed_count += 1
-            msg = data.get("error") or f"API_{status}"
-            self._last_error = str(msg)[:200]
+            msg = data.get("error")
+            if not msg and http_error:
+                detail = data.get("data")
+                if isinstance(detail, dict):
+                    try:
+                        msg = json.dumps(detail, ensure_ascii=True)
+                    except Exception:  # noqa: BLE001
+                        msg = f"API_{status}"
+                elif detail is not None:
+                    msg = str(detail)
+            if not msg:
+                msg = f"API_{status}"
+            self._last_error = str(msg)[:500]
             fut.set_result(data)
         else:
             self._success_count += 1
@@ -383,6 +425,11 @@ class FlowClient:
             "success_count": self._success_count,
             "failed_count": self._failed_count,
             "last_error": self._last_error,
+            "observed_captcha_actions": {
+                scope: row.get("action")
+                for scope, row in self._observed_captcha_actions.items()
+                if isinstance(row, dict) and isinstance(row.get("action"), str)
+            },
         }
 
 

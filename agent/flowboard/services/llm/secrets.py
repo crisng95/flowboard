@@ -101,9 +101,16 @@ def set_api_key(provider: str, key: Optional[str]) -> None:
 
 # ── Active-providers helpers ───────────────────────────────────────────
 
-# Features the UI configures. Order matters only for display; iteration
-# order in this module is deterministic on Python 3.7+.
-_FEATURES: tuple[str, ...] = ("auto_prompt", "vision", "planner")
+# Features the UI / chat layer configure. Order matters only for display;
+# iteration order in this module is deterministic on Python 3.7+.
+#
+# `chat` is intentionally OPTIONAL for the "configured" invariant. The
+# forced-setup gate only protects the node-generation stack
+# (auto_prompt/vision/planner). Chat can independently opt into Omni
+# without forcing the rest of the app off the existing single-provider
+# setup path.
+_FEATURES: tuple[str, ...] = ("auto_prompt", "vision", "planner", "chat")
+_CORE_CONFIGURED_FEATURES: tuple[str, ...] = ("auto_prompt", "vision", "planner")
 
 
 def read_active_providers() -> dict[str, str]:
@@ -126,15 +133,18 @@ def read_active_providers() -> dict[str, str]:
 def is_active_providers_configured() -> bool:
     """True when the user has completed the AI Provider setup flow.
 
-    Single-provider model: every feature must be pinned AND all three
-    must point at the same provider. Mixed config (legacy hand-edits
-    or older versions that allowed per-feature) returns False so the
-    forced-setup gate prompts the user to consolidate.
+    Node-generation stack only: auto_prompt + vision + planner must be
+    pinned AND all three must point at the same provider. `chat` is
+    intentionally excluded so Omni can be configured independently
+    without tripping the existing forced-setup gate for the rest of the
+    product. Mixed config (legacy hand-edits or older versions that
+    allowed per-feature) returns False so the forced-setup gate prompts
+    the user to consolidate.
     """
     saved = read_active_providers()
-    if not all(f in saved for f in _FEATURES):
+    if not all(f in saved for f in _CORE_CONFIGURED_FEATURES):
         return False
-    values = {saved[f] for f in _FEATURES}
+    values = {saved[f] for f in _CORE_CONFIGURED_FEATURES}
     return len(values) == 1
 
 
