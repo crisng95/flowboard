@@ -8,6 +8,7 @@ import pytest
 _TMPDIR = tempfile.mkdtemp(prefix="flowboard-test-")
 os.environ["FLOWBOARD_STORAGE"] = _TMPDIR
 os.environ["FLOWBOARD_DB"] = str(Path(_TMPDIR) / "test.db")
+os.environ["FLOWBOARD_SECRETS_PATH"] = str(Path(_TMPDIR) / "secrets.json")
 # Force the deterministic mock planner in tests — never spawn `claude` subprocess.
 # Individual tests that want to exercise the CLI path patch the module directly.
 os.environ["FLOWBOARD_PLANNER_BACKEND"] = "mock"

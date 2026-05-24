@@ -100,6 +100,7 @@ export default {
         "fade-in": "fadeIn 120ms ease-out",
         "scale-in": "scaleIn 140ms cubic-bezier(0.16, 1, 0.3, 1)",
         "pulse-soft": "pulseSoft 2.4s ease-in-out infinite",
+        "shimmer": "shimmer 1.6s ease-in-out infinite",
       },
       keyframes: {
         fadeIn: {
@@ -113,6 +114,10 @@ export default {
         pulseSoft: {
           "0%, 100%": { opacity: "0.6" },
           "50%": { opacity: "1" },
+        },
+        shimmer: {
+          "0%": { backgroundPosition: "200% 0" },
+          "100%": { backgroundPosition: "-200% 0" },
         },
       },
     },

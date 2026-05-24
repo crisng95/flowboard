@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { Handle, Position, useConnection, useEdges, type NodeProps } from "@xyflow/react";
+import { type NodeProps } from "@xyflow/react";
 import { ImageUp, Replace, Upload } from "lucide-react";
 
 import { type FlowNode } from "../../store/board";
@@ -9,18 +9,55 @@ import { useUploadFlow, mediaUrl } from "./shared/useUploadFlow";
 import { UploadingOverlay } from "./shared/UploadingOverlay";
 import { ResizeHandle } from "./shared/ResizeHandle";
 import { useNodeWidth } from "./shared/useNodeWidth";
+import { persistNodeData } from "./shared/persistNodeData";
+import { NodeShell } from "./NodeShell";
+import { EmptyState } from "./shared/EmptyState";
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 500;
 const DEFAULT_WIDTH = 280;
-const BORDER_RADIUS = 16;
 const HOVER_LEAVE_DELAY = 200;
+
+function flowAspectToCss(value: string | undefined): string | null {
+  if (!value) return null;
+  if (value.includes("/")) return value;
+  switch (value) {
+    case "IMAGE_ASPECT_RATIO_SQUARE":
+    case "VIDEO_ASPECT_RATIO_SQUARE":
+      return "1 / 1";
+    case "IMAGE_ASPECT_RATIO_PORTRAIT":
+    case "VIDEO_ASPECT_RATIO_PORTRAIT":
+      return "9 / 16";
+    case "IMAGE_ASPECT_RATIO_LANDSCAPE":
+    case "VIDEO_ASPECT_RATIO_LANDSCAPE":
+      return "16 / 9";
+    case "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE":
+      return "4 / 3";
+    case "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR":
+      return "3 / 4";
+    default:
+      return null;
+  }
+}
+
+function normaliseStatus(status: any): "idle" | "queued" | "running" | "done" | "error" {
+  if (!status) return "idle";
+  const s = String(status).toLowerCase();
+  if (s === "queued" || s === "running" || s === "done" || s === "error") {
+    return s as any;
+  }
+  return "idle";
+}
 
 export function UploadNode(props: NodeProps<FlowNode>) {
   const { id: rfId, data, selected } = props;
   const flow = useUploadFlow(rfId, data);
-    const { width: nodeWidth, onResize, onResizeEnd } = useNodeWidth({
-    nodeId: rfId, data, min: MIN_WIDTH, max: MAX_WIDTH, fallback: DEFAULT_WIDTH,
+  const { width: nodeWidth, onResize, onResizeEnd } = useNodeWidth({
+    nodeId: rfId,
+    data,
+    min: MIN_WIDTH,
+    max: MAX_WIDTH,
+    fallback: DEFAULT_WIDTH,
   });
 
   const mediaId = data.mediaId as string | undefined;
@@ -32,7 +69,10 @@ export function UploadNode(props: NodeProps<FlowNode>) {
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const onMouseEnter = useCallback(() => {
-    if (leaveTimer.current) { clearTimeout(leaveTimer.current); leaveTimer.current = null; }
+    if (leaveTimer.current) {
+      clearTimeout(leaveTimer.current);
+      leaveTimer.current = null;
+    }
     setHovered(true);
   }, []);
 
@@ -42,22 +82,21 @@ export function UploadNode(props: NodeProps<FlowNode>) {
 
   const showControls = hovered || !!selected;
 
-  const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null);
-
-  // Check if this node has any connected edges (source)
-  const edges = useEdges();
-  const hasConnectedEdge = edges.some((e) => e.source === rfId);
-
-  // Check if currently dragging a connection from this node
-  const connection = useConnection();
-  const isConnecting = connection.inProgress && connection.fromNode?.id === rfId;
-
-  // Handle visible when hovered OR has connected edge OR currently connecting
-  const showHandle = showControls || hasConnectedEdge || isConnecting;
+  // Seed imgSize from persisted node data
+  const persistedW = data.imageWidth as number | undefined;
+  const persistedH = data.imageHeight as number | undefined;
+  const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(
+    persistedW && persistedH ? { w: persistedW, h: persistedH } : null,
+  );
 
   function onImageLoad(e: React.SyntheticEvent<HTMLImageElement>) {
     const img = e.currentTarget;
-    setImgSize({ w: img.naturalWidth, h: img.naturalHeight });
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    setImgSize({ w, h });
+    if (w && h && (persistedW !== w || persistedH !== h)) {
+      persistNodeData(rfId, { imageWidth: w, imageHeight: h });
+    }
   }
 
   function truncateId(id: string, len = 24) {
@@ -68,27 +107,18 @@ export function UploadNode(props: NodeProps<FlowNode>) {
     <div
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      className="relative font-sans"
-      style={{ width: nodeWidth, padding: "0 16px 0 0" }}
+      className="relative"
     >
-      {/* External header - outside card, Magnific style */}
-      <div className="flex items-center gap-1.5 mb-2 pl-1">
-        <ImageUp size={12} strokeWidth={1.5} className="text-ink-muted shrink-0" />
-        <span className="text-2xs text-ink-muted font-mono truncate leading-none">
-          {mediaId ? truncateId(mediaId) : "Upload"}
-        </span>
-      </div>
-
-      {/* Card */}
-      <div
-        data-selected={selected || undefined}
-        className={cn(
-          "relative overflow-visible transition-all duration-300 ease-out",
-          "border-[3px] border-white/[0.14] shadow-lg",
-          selected && "ring-2 ring-accent/50",
-          flow.dragOver && "ring-2 ring-accent/40",
-        )}
-        style={{ borderRadius: BORDER_RADIUS, backgroundColor: "#1a1a1a" }}
+      <NodeShell
+        id={rfId}
+        Icon={ImageUp}
+        title={data.title || (mediaId ? truncateId(mediaId) : "Upload")}
+        shortId={data.shortId}
+        selected={selected}
+        width={nodeWidth}
+        status={normaliseStatus(data.status)}
+        sourceHandle={{ id: "source", icon: ImageUp, label: "Upload output" }}
+        padded={false}
       >
         {/* Image slot */}
         <div
@@ -96,13 +126,20 @@ export function UploadNode(props: NodeProps<FlowNode>) {
           onDragOver={flow.onDragOver}
           onDragLeave={flow.onDragLeave}
           className={cn(
-            "relative flex items-center justify-center cursor-pointer overflow-hidden",
+            "w-full relative flex items-center justify-center cursor-pointer overflow-hidden",
             "transition-all duration-300 ease-out",
-            !mediaId && "min-h-[180px]",
+            flow.dragOver && "ring-2 ring-accent/40",
+            flow.bodyState === "uploading" && "ring-2 ring-accent/30",
+            flow.bodyState === "error" && "ring-2 ring-red-500/40",
           )}
           style={{
-            aspectRatio: mediaId ? aspectRatio || "1 / 1" : "4 / 3",
-            borderRadius: BORDER_RADIUS - 3,
+            backgroundColor: "#1a1d25",
+            borderRadius: "13px",
+            aspectRatio: mediaId
+              ? imgSize
+                ? `${imgSize.w} / ${imgSize.h}`
+                : flowAspectToCss(aspectRatio) ?? "1 / 1"
+              : "4 / 3",
           }}
         >
           {/* Filled state */}
@@ -111,7 +148,7 @@ export function UploadNode(props: NodeProps<FlowNode>) {
               <img
                 src={mediaUrl(mediaId)}
                 alt={fileName ?? "upload"}
-                className="size-full object-contain"
+                className="absolute inset-0 size-full object-cover rounded-[13px] animate-fade-in"
                 onLoad={onImageLoad}
                 onDoubleClick={() => useGenerationStore.getState().openResultViewer(rfId)}
               />
@@ -132,19 +169,20 @@ export function UploadNode(props: NodeProps<FlowNode>) {
 
           {/* Empty state */}
           {flow.bodyState === "empty" && !flow.dragOver && (
-            <div
-              className="flex flex-col items-center gap-2 text-ink-muted"
-              onClick={flow.pickFile}
-            >
-              <ImageUp size={24} strokeWidth={1.5} className="opacity-50" />
-              <span className="text-xs">Drop an image here</span>
+            <div onClick={flow.pickFile} className="w-full h-full flex items-center justify-center">
+              <EmptyState
+                Icon={ImageUp}
+                title="Drop an image here"
+                hint="Or click to browse files"
+                minHeight={100}
+              />
             </div>
           )}
 
           {/* Drag over */}
           {flow.bodyState === "empty" && flow.dragOver && (
             <div className="flex flex-col items-center gap-1.5 text-accent">
-              <Upload size={20} strokeWidth={1.75} />
+              <Upload size={18} strokeWidth={1.75} />
               <span className="text-2xs font-medium">Drop to upload</span>
             </div>
           )}
@@ -191,40 +229,16 @@ export function UploadNode(props: NodeProps<FlowNode>) {
           </div>
         )}
 
-        {/* Resize handle - relative to card border, visible when selected + hover on handle */}
+        {/* Resize handle */}
         <ResizeHandle
-            minWidth={MIN_WIDTH}
-            maxWidth={MAX_WIDTH}
-            currentWidth={nodeWidth}
-            onResize={onResize}
-            onResizeEnd={onResizeEnd}
-            forceVisible={!!selected}
-          />
-
-      </div>
-
-      {/* Source handle (output only) - right side fixed 48px from top */}
-      <Handle
-        type="source"
-        position={Position.Right}
-        id="source"
-        className={cn(
-          "!absolute !-right-0 !top-[48px] !h-7 !w-7 !border-0 !bg-transparent",
-          "transition-opacity duration-300 ease-out",
-          showHandle ? "!opacity-100" : "!opacity-0 !pointer-events-none",
-        )}
-      >
-        <div
-          className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full border transition-all duration-300 ease-out"
-          style={{
-            backgroundColor: "#2b2b2b",
-            borderColor: hasConnectedEdge ? "rgba(124,92,255,0.7)" : "rgba(124,92,255,0.4)",
-            color: "rgba(255,255,255,0.7)",
-          }}
-        >
-          <ImageUp size={11} strokeWidth={2} />
-        </div>
-      </Handle>
+          minWidth={MIN_WIDTH}
+          maxWidth={MAX_WIDTH}
+          currentWidth={nodeWidth}
+          onResize={onResize}
+          onResizeEnd={onResizeEnd}
+          forceVisible={!!selected}
+        />
+      </NodeShell>
 
       {/* Hidden file input */}
       <input

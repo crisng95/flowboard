@@ -252,3 +252,83 @@ def test_delete_node_cascades_edges(client):
     # edge is gone server-side
     detail = client.get(f"/api/boards/{b['id']}").json()
     assert detail["edges"] == []
+
+
+def test_group_preserves_child_data_payload(client):
+    b = _make_board(client)
+    child = client.post(
+        "/api/nodes",
+        json={
+            "board_id": b["id"],
+            "type": "add_reference",
+            "x": 120,
+            "y": 80,
+            "data": {
+                "title": "Material ref",
+                "refType": "material",
+                "aspectRatio": "IMAGE_ASPECT_RATIO_PORTRAIT",
+                "modelKey": "NANO_OMNI",
+                "groupColor": "#22c55e",
+                "locked": False,
+            },
+        },
+    ).json()
+
+    r = client.post(
+        "/api/nodes/group",
+        json={
+            "board_id": b["id"],
+            "child_ids": [child["id"]],
+            "title": "Group",
+            "x": 100,
+            "y": 60,
+            "w": 300,
+            "h": 220,
+        },
+    )
+    assert r.status_code == 200
+    grouped_child = r.json()["children"][0]
+    assert grouped_child["parent_id"] is not None
+    assert grouped_child["x"] == 20
+    assert grouped_child["y"] == 20
+    assert grouped_child["data"] == child["data"]
+
+
+def test_ungroup_preserves_child_data_payload(client):
+    b = _make_board(client)
+    child = client.post(
+        "/api/nodes",
+        json={
+            "board_id": b["id"],
+            "type": "image",
+            "x": 75,
+            "y": 55,
+            "data": {
+                "title": "Generator",
+                "modelKey": "NANO_OMNI",
+                "aspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+                "refType": "texture",
+            },
+        },
+    ).json()
+    grouped = client.post(
+        "/api/nodes/group",
+        json={
+            "board_id": b["id"],
+            "child_ids": [child["id"]],
+            "title": "Group",
+            "x": 50,
+            "y": 35,
+            "w": 300,
+            "h": 220,
+        },
+    ).json()
+    group_id = grouped["group"]["id"]
+
+    r = client.post(f"/api/nodes/{group_id}/ungroup")
+    assert r.status_code == 200
+    ungrouped_child = r.json()["children"][0]
+    assert ungrouped_child["parent_id"] is None
+    assert ungrouped_child["x"] == child["x"]
+    assert ungrouped_child["y"] == child["y"]
+    assert ungrouped_child["data"] == child["data"]

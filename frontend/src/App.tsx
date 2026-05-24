@@ -1,11 +1,10 @@
-﻿import { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { Board } from "./canvas/Board";
 import { AddNodePalette } from "./canvas/AddNodePalette";
 import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
 import { ToolbarV2 } from "./components/ToolbarV2";
-// import { ChatSidebar } from "./components/ChatSidebar";
 import { ProjectSidebar } from "./components/ProjectSidebar";
 import { ProjectSidebarV2 } from "./components/ProjectSidebarV2";
 import { ReferencesPanel } from "./components/ReferencesPanel";
@@ -37,6 +36,29 @@ export function App() {
     void loadReferences();
   }, [loadInitialBoard, loadReferences]);
 
+  useEffect(() => {
+    // Disable right-click context menu to prevent conflicts with app actions
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+    document.addEventListener("contextmenu", handleContextMenu);
+
+    // Disable browser default Find Widget & Find Next conflict hotkeys (Ctrl+F, Cmd+F, Ctrl+G, Cmd+G, F3)
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
+      if ((isCtrlOrMeta && (key === "f" || key === "g")) || e.key === "F3") {
+        e.preventDefault();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("contextmenu", handleContextMenu);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
   return (
     <div className="app">
       {useV2Sidebar ? <ProjectSidebarV2 /> : <ProjectSidebar />}
@@ -44,7 +66,7 @@ export function App() {
         <div className="canvas-wrap">
           {useV2Toolbar ? <ToolbarV2 /> : <Toolbar />}
           {loading && boardId === null ? (
-            <div className="canvas-loading">Loading boardâ€¦</div>
+            <div className="canvas-loading">Loading board…</div>
           ) : (
             <>
               <Board />
@@ -55,7 +77,6 @@ export function App() {
           <ReferencesPanel />
         </div>
       </ReactFlowProvider>
-      {/* <ChatSidebar /> */}
       <Toaster />
       <GenerationDialog />
       {useV2Sidebar ? <ResultViewerV2 /> : <ResultViewer />}
@@ -63,4 +84,3 @@ export function App() {
     </div>
   );
 }
-

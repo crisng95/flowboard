@@ -24,7 +24,7 @@ export function cn(...inputs: ClassValue[]): string {
  */
 export type UiVersion = "v1" | "v2";
 export function getUiVersion(): UiVersion {
-  if (typeof window === "undefined") return "v1";
+  if (typeof window === "undefined") return "v2";
   const v = window.localStorage.getItem("flowboard_ui");
-  return v === "v2" ? "v2" : "v1";
+  return v === "v1" ? "v1" : "v2";
 }

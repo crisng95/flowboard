@@ -116,6 +116,7 @@ export function MultiviewNode(props: NodeProps<FlowNode>) {
   return (
     <div {...bind}>
       <NodeShell
+        id={rfId}
         Icon={Grid3x3}
         title={data.title || "Multi-view"}
         shortId={data.shortId}

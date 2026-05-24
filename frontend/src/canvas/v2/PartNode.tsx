@@ -96,6 +96,7 @@ export function PartNode(props: NodeProps<FlowNode>) {
   return (
     <div {...bind}>
       <NodeShell
+        id={rfId}
         Icon={Crop}
         title={data.title || "Part"}
         shortId={data.shortId}

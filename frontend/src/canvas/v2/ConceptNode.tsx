@@ -99,6 +99,7 @@ export function ConceptNode(props: NodeProps<FlowNode>) {
     <>
       <div {...bind}>
         <NodeShell
+          id={rfId}
           Icon={Box}
           title={data.title || "Concept"}
           shortId={data.shortId}

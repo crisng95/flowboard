@@ -66,6 +66,7 @@ export function ReferenceNode(props: NodeProps<FlowNode>) {
   return (
     <div {...bind}>
       <NodeShell
+        id={rfId}
         Icon={FileImage}
         title={data.title || "Reference"}
         shortId={data.shortId}
