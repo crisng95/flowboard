@@ -100,6 +100,8 @@ export function SettingsPanel({ open, onClose, onLogout, logoutPending }: Settin
   const setVideoQuality = useSettingsStore((s) => s.setVideoQuality);
   const videoModel = useSettingsStore((s) => s.videoModel);
   const setVideoModel = useSettingsStore((s) => s.setVideoModel);
+  const showVeoQuality = videoModel === "veo";
+  const isOmniSelected = videoModel === "omni_flash";
 
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -202,13 +204,13 @@ export function SettingsPanel({ open, onClose, onLogout, logoutPending }: Settin
             </div>
           </label>
           <label
-            className={`settings-panel__radio${videoModel === "omni_flash" ? " settings-panel__radio--active" : ""}`}
+            className={`settings-panel__radio${isOmniSelected ? " settings-panel__radio--active" : ""}`}
           >
             <input
               type="radio"
               name="video-model-family"
               value="omni_flash"
-              checked={videoModel === "omni_flash"}
+              checked={isOmniSelected}
               onChange={() => setVideoModel("omni_flash")}
             />
             <div>
@@ -223,7 +225,7 @@ export function SettingsPanel({ open, onClose, onLogout, logoutPending }: Settin
         </div>
       </div>
 
-      {videoModel === "veo" && (
+      {showVeoQuality && (
       <div className="settings-panel__section">
         <div className="settings-panel__label">Veo quality tier</div>
         <div className="settings-panel__radio-group">
@@ -259,13 +261,13 @@ export function SettingsPanel({ open, onClose, onLogout, logoutPending }: Settin
             );
           })}
           <label
-            className={`settings-panel__radio${videoModel === "omni_flash" ? " settings-panel__radio--active" : ""}`}
+            className={`settings-panel__radio${isOmniSelected ? " settings-panel__radio--active" : ""}`}
           >
             <input
               type="radio"
               name="video-model"
               value="omni_flash"
-              checked={videoModel === "omni_flash"}
+              checked={isOmniSelected}
               onChange={() => setVideoModel("omni_flash")}
             />
             <div>

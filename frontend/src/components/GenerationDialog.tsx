@@ -206,8 +206,6 @@ export function GenerationDialog() {
   const paygateTier = useGenerationStore((s) => s.paygateTier);
   const targetType = (node?.data.type as string | undefined) ?? "reference";
   const isVideo = targetType === "video";
-  const isCharacter = targetType === "character";
-  const isStoryboard = targetType === "Storyboard";
   // Omni Flash is a video model but with image-target semantics: it
   // takes ingredients (multi reference images), NOT a single i2v start
   // frame. So the dialog should show the same "Source references" chip

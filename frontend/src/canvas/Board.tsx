@@ -155,6 +155,7 @@ export function Board({
   const setEdges = useBoardStore((s) => s.setEdges);
   const addEdgeFromConnection = useBoardStore((s) => s.addEdgeFromConnection);
   const addNodeOfType = useBoardStore((s) => s.addNodeOfType);
+  const deleteNodeByRfId = useBoardStore((s) => s.deleteNodeByRfId);
   const deleteEdgeByRfId = useBoardStore((s) => s.deleteEdgeByRfId);
   const { screenToFlowPosition } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
