@@ -631,11 +631,14 @@ interface BoardState {
   refreshBoardState(): Promise<void>;
   refreshBoardList(): Promise<void>;
   renameBoard(name: string): Promise<void>;
+  renameBoardById(id: number, name: string): Promise<void>;
   // Switch the active board: load detail, replace nodes/edges, reset
   // poll-state on the generation store.
   switchBoard(id: number): Promise<void>;
   // Create a new board, switch to it, return id.
   createNewBoard(name: string): Promise<number | null>;
+  createBoardFromSnapshot(name: string, snapshot: BoardSnapshot): Promise<number | null>;
+  duplicateBoardById(id: number, name?: string): Promise<number | null>;
   // Delete a board. If it's the active one, switch to first remaining
   // board (or create a fresh "Untitled" if list ends up empty).
   deleteBoardById(id: number): Promise<void>;
@@ -811,17 +814,30 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   async loadInitialBoard() {
     set({ loading: true, error: null });
     try {
-      let boards = await listBoards();
+      const boards = await listBoards();
       // Prefer the user's last-active board if it still exists; fall back
       // to the first board in the list. Without this, refresh always
       // snapped back to boards[0] regardless of what was selected before.
       const persistedId = loadPersistedBoardId();
-      let board =
+      const board =
         (persistedId !== null && boards.find((b) => b.id === persistedId)) ||
         boards[0];
       if (!board) {
-        board = await createBoard("Untitled");
-        boards = [board];
+        persistBoardId(null);
+        set({
+          boardId: null,
+          boardName: "",
+          boards: [],
+          nodes: [],
+          edges: [],
+          loading: false,
+          currentView: "spaces",
+          historyPast: [],
+          historyFuture: [],
+          historyPresent: null,
+          historySuspend: false,
+        });
+        return;
       }
       const detail = await getBoard(board.id);
       const snapshot = snapshotFromDetail(detail);
@@ -890,6 +906,112 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     }
   },
 
+  async createBoardFromSnapshot(name, snapshot) {
+    try {
+      const board = await createBoard(name?.trim() || "Untitled space");
+      const idMap = new Map<string, number>();
+      const sourceNodes = sortNodesParentFirst(snapshot.nodes);
+
+      for (const node of sourceNodes) {
+        const persistedData = stripNodeDataForPersistence(node.data);
+        const frame = nodeFrame(node);
+        const created = await createNode({
+          board_id: board.id,
+          type: node.data.type,
+          x: Math.round(node.position.x),
+          y: Math.round(node.position.y),
+          w: frame.w,
+          h: frame.h,
+          parent_id:
+            node.parentId && idMap.has(node.parentId)
+              ? idMap.get(node.parentId) ?? null
+              : null,
+          data: persistedData,
+        });
+        idMap.set(node.id, created.id);
+        if (node.data.status && node.data.status !== created.status) {
+          await patchNode(created.id, { status: node.data.status });
+        }
+      }
+
+      for (const edge of snapshot.edges) {
+        const nextSource = idMap.get(edge.source);
+        const nextTarget = idMap.get(edge.target);
+        if (!nextSource || !nextTarget) continue;
+        await createEdge({
+          board_id: board.id,
+          source_id: nextSource,
+          target_id: nextTarget,
+          kind: "default",
+          source_handle: edge.sourceHandle ?? null,
+          target_handle: edge.targetHandle ?? null,
+          source_variant_idx: edge.data?.sourceVariantIdx ?? null,
+        });
+      }
+
+      set((s) => ({ boards: [board, ...s.boards] }));
+      await get().switchBoard(board.id);
+      return board.id;
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
+      return null;
+    }
+  },
+
+  async duplicateBoardById(id, name) {
+    try {
+      const detail = await getBoard(id);
+      const board = await createBoard(name?.trim() || `${detail.board.name || "Untitled space"} (Copy)`);
+      const idMap = new Map<number, number>();
+      const sourceNodes = sortNodesParentFirst(detail.nodes.map((dto) => nodeFromDto(dto)));
+
+      for (const node of sourceNodes) {
+        const sourceDbId = parseInt(node.id, 10);
+        if (Number.isNaN(sourceDbId)) continue;
+        const persistedData = stripNodeDataForPersistence(node.data);
+        const frame = nodeFrame(node);
+        const created = await createNode({
+          board_id: board.id,
+          type: node.data.type,
+          x: Math.round(node.position.x + 40),
+          y: Math.round(node.position.y + 40),
+          w: frame.w,
+          h: frame.h,
+          parent_id:
+            node.parentId && idMap.has(parseInt(node.parentId, 10))
+              ? idMap.get(parseInt(node.parentId, 10)) ?? null
+              : null,
+          data: persistedData,
+        });
+        idMap.set(sourceDbId, created.id);
+        if (node.data.status && node.data.status !== created.status) {
+          await patchNode(created.id, { status: node.data.status });
+        }
+      }
+
+      for (const edge of detail.edges) {
+        const nextSource = idMap.get(edge.source_id);
+        const nextTarget = idMap.get(edge.target_id);
+        if (!nextSource || !nextTarget) continue;
+        await createEdge({
+          board_id: board.id,
+          source_id: nextSource,
+          target_id: nextTarget,
+          kind: edge.kind,
+          source_handle: edge.source_handle,
+          target_handle: edge.target_handle,
+          source_variant_idx: edge.source_variant_idx,
+        });
+      }
+
+      set((s) => ({ boards: [board, ...s.boards] }));
+      return board.id;
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
+      return null;
+    }
+  },
+
   async deleteBoardById(id) {
     try {
       await apiDeleteBoard(id);
@@ -905,13 +1027,19 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       if (remaining.length > 0) {
         await get().switchBoard(remaining[0].id);
       } else {
-        try {
-          const board = await createBoard("Untitled");
-          set({ boards: [board] });
-          await get().switchBoard(board.id);
-        } catch (err) {
-          set({ error: err instanceof Error ? err.message : String(err) });
-        }
+        persistBoardId(null);
+        set({
+          currentView: "spaces",
+          boardId: null,
+          boardName: "",
+          nodes: [],
+          edges: [],
+          loading: false,
+          historyPast: [],
+          historyFuture: [],
+          historyPresent: null,
+          historySuspend: false,
+        });
       }
     }
   },
@@ -948,6 +1076,22 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       }));
     } catch {
       // non-fatal; keep local name
+    }
+  },
+
+  async renameBoardById(id, name) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      const updated = await apiPatchBoard(id, trimmed);
+      set((s) => ({
+        boardName: s.boardId === id ? updated.name : s.boardName,
+        boards: s.boards.map((b) =>
+          b.id === id ? { ...b, name: updated.name } : b,
+        ),
+      }));
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
     }
   },
 

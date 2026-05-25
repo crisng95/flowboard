@@ -2,40 +2,41 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ReactFlowProvider, useReactFlow, useViewport } from "@xyflow/react";
 import {
   ArrowLeft,
-  Bell,
+  Check,
   ChevronDown,
   CircleHelp,
-  FolderOpen,
-  Globe,
-  Grid2x2,
   Heart,
   Home,
-  Layers3,
   LayoutGrid,
   List,
   Map,
   MoreHorizontal,
   Plus,
+  Pencil,
   Search,
   Settings,
   Share2,
   Sparkles,
+  Trash2,
   UserCircle2,
-  Video,
+  Upload,
+  X,
 } from "lucide-react";
 
-import { mediaUrl } from "./api/client";
+import { getAuthMe, mediaUrl, type AuthMe } from "./api/client";
 import { Board } from "./canvas/Board";
 import { AddNodePalette } from "./canvas/AddNodePalette";
 import { Toaster } from "./components/Toaster";
 import { GenerationDialog } from "./components/GenerationDialog";
 import { ResultViewerV2 } from "./components/ResultViewerV2";
 import { ForcedSetupGate } from "./components/ForcedSetupGate";
+import { SPACE_TEMPLATES, type SpaceTemplate } from "./constants/spaceTemplates";
+import { useGenerationStore } from "./store/generation";
 import { useBoardStore, type FlowNode, type FlowboardEdgeData } from "./store/board";
 import { useReferencesStore } from "./store/references";
 import type { Edge } from "@xyflow/react";
 
-type SpacesTab = "my" | "shared" | "templates";
+type SpacesTab = "my" | "templates";
 
 const SPACE_PRESETS = [
   "radial-gradient(circle at 18% 22%, rgba(255,214,176,0.95) 0%, rgba(198,144,255,0.32) 28%, rgba(20,21,28,0) 56%), linear-gradient(135deg, #2d211e 0%, #101116 100%)",
@@ -46,21 +47,16 @@ const SPACE_PRESETS = [
   "linear-gradient(135deg, rgba(44,44,44,0.95) 0%, rgba(19,19,24,0.95) 100%)",
 ];
 
-const SPACE_ICONS = [
-  Sparkles,
-  Home,
-  Search,
-  Grid2x2,
-  Globe,
-  FolderOpen,
-  Layers3,
-  Video,
-  Settings,
-  Bell,
-  CircleHelp,
-];
+const SPACE_SNAPSHOTS_KEY = "flowboard.spaceSnapshots.v1";
+const SPACE_COVERS_KEY = "flowboard.spaceCoverOverrides.v1";
 
-const SPACE_THUMBNAILS_KEY = "flowboard.spaceThumbnails.v1";
+function resolveAuthTier(profile: AuthMe | null): "PAYGATE_TIER_ONE" | "PAYGATE_TIER_TWO" | null {
+  if (profile?.paygate_tier) return profile.paygate_tier;
+  const sku = profile?.sku?.trim().toUpperCase() ?? "";
+  if (sku.includes("ULTRA") || sku.includes("TIER_TWO")) return "PAYGATE_TIER_TWO";
+  if (sku.includes("PRO") || sku.includes("TIER_ONE")) return "PAYGATE_TIER_ONE";
+  return null;
+}
 
 function formatRelativeTime(iso: string): string {
   const ts = Date.parse(iso);
@@ -169,23 +165,105 @@ function createBoardThumbnail(nodes: FlowNode[], edges: Edge<FlowboardEdgeData>[
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-function SpacesPage({ thumbnails }: { thumbnails: Record<number, string> }) {
+function SpacesPage({
+  thumbnails,
+  onUploadCover,
+  onUseSnapshotCover,
+  onClearCustomCover,
+}: {
+  thumbnails: Record<number, string>;
+  onUploadCover: (boardId: number, file: File) => Promise<void>;
+  onUseSnapshotCover: (boardId: number, sourceBoardId?: number) => void;
+  onClearCustomCover: (boardId: number) => void;
+}) {
   const boards = useBoardStore((s) => s.boards);
   const loading = useBoardStore((s) => s.loading);
   const createNewBoard = useBoardStore((s) => s.createNewBoard);
   const setView = useBoardStore((s) => s.setView);
   const selectProject = useBoardStore((s) => s.selectProject);
+  const deleteBoardById = useBoardStore((s) => s.deleteBoardById);
+  const renameBoardById = useBoardStore((s) => s.renameBoardById);
+  const duplicateBoardById = useBoardStore((s) => s.duplicateBoardById);
+  const createBoardFromSnapshot = useBoardStore((s) => s.createBoardFromSnapshot);
   const [tab, setTab] = useState<SpacesTab>("my");
   const [layoutMode, setLayoutMode] = useState<"grid" | "list">("grid");
+  const [search, setSearch] = useState("");
+  const [newSpaceOpen, setNewSpaceOpen] = useState(false);
+  const [newSpaceName, setNewSpaceName] = useState("");
+  const [renameTarget, setRenameTarget] = useState<{ id: number; name: string } | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [coverTarget, setCoverTarget] = useState<number | null>(null);
+  const [menuBoardId, setMenuBoardId] = useState<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const nextUntitledName = useMemo(() => `Untitled space #${boards.length + 1}`, [boards.length]);
 
   const visibleBoards = useMemo(() => {
-    if (tab === "templates") return boards.slice(0, Math.max(boards.length, 6));
-    return boards;
-  }, [boards, tab]);
+    const query = search.trim().toLowerCase();
+    const source = boards;
+    if (!query) return source;
+    return source.filter((board) => board.name.toLowerCase().includes(query));
+  }, [boards, search]);
 
-  async function handleNewSpace() {
-    const id = await createNewBoard("Untitled space");
-    if (id !== null) setView("canvas");
+  const visibleTemplates = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return SPACE_TEMPLATES;
+    return SPACE_TEMPLATES.filter((template) => template.name.toLowerCase().includes(query));
+  }, [search]);
+
+  useEffect(() => {
+    if (!newSpaceOpen) return;
+    setNewSpaceName(nextUntitledName);
+  }, [newSpaceOpen, nextUntitledName]);
+
+  useEffect(() => {
+    if (menuBoardId === null) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && !target.closest("[data-space-menu]") && !target.closest("[data-space-menu-trigger]")) {
+        setMenuBoardId(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [menuBoardId]);
+
+  async function handleCreateSpace() {
+    const id = await createNewBoard(newSpaceName.trim() || nextUntitledName);
+    if (id !== null) {
+      setNewSpaceOpen(false);
+      setNewSpaceName("");
+      setView("canvas");
+    }
+  }
+
+  async function handleRenameBoard() {
+    if (!renameTarget) return;
+    await renameBoardById(renameTarget.id, renameDraft.trim() || renameTarget.name);
+    setRenameTarget(null);
+    setRenameDraft("");
+  }
+
+  async function handleDuplicateBoard(boardId: number, boardName: string) {
+    const id = await duplicateBoardById(boardId, `${boardName} (Copy)`);
+    if (id !== null && thumbnails[boardId]) {
+      onUseSnapshotCover(id, boardId);
+    }
+  }
+
+  async function handleCoverFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file || coverTarget === null) return;
+    await onUploadCover(coverTarget, file);
+    setCoverTarget(null);
+    event.target.value = "";
+  }
+
+  async function handleCreateFromTemplate(template: SpaceTemplate) {
+    const id = await createBoardFromSnapshot(template.name, template.snapshot);
+    if (id !== null) {
+      setView("canvas");
+    }
   }
 
   return (
@@ -193,21 +271,16 @@ function SpacesPage({ thumbnails }: { thumbnails: Record<number, string> }) {
       <aside className="magnific-rail">
         <div className="magnific-rail__top">
           <div className="magnific-logo">M</div>
-          <button type="button" className="magnific-rail__cta" onClick={handleNewSpace} aria-label="New space">
-            <Plus size={18} />
+          <button type="button" className="magnific-rail__icon magnific-rail__icon--active" aria-label="Spaces">
+            <Home size={16} />
           </button>
-          {SPACE_ICONS.map((Icon, index) => (
-            <button key={index} type="button" className="magnific-rail__icon" aria-label={`Rail action ${index + 1}`}>
-              <Icon size={16} />
-            </button>
-          ))}
         </div>
         <div className="magnific-rail__bottom">
-          <button type="button" className="magnific-rail__icon" aria-label="Notifications">
-            <Bell size={16} />
+          <button type="button" className="magnific-rail__icon" aria-label="Settings">
+            <Settings size={16} />
           </button>
-          <button type="button" className="magnific-rail__icon" aria-label="More">
-            <MoreHorizontal size={16} />
+          <button type="button" className="magnific-rail__icon" aria-label="Help">
+            <CircleHelp size={16} />
           </button>
         </div>
       </aside>
@@ -237,11 +310,11 @@ function SpacesPage({ thumbnails }: { thumbnails: Record<number, string> }) {
         <div className="magnific-spaces__toolbar">
           <div className="magnific-tabs">
             <button type="button" className={tab === "my" ? "is-active" : ""} onClick={() => setTab("my")}>My spaces</button>
-            <button type="button" className={tab === "shared" ? "is-active" : ""} onClick={() => setTab("shared")}>Shared</button>
             <button type="button" className={tab === "templates" ? "is-active" : ""} onClick={() => setTab("templates")}>Templates</button>
+            <span className="magnific-coming-soon">Shared · Coming soon</span>
           </div>
           <div className="magnific-spaces__actions">
-            <button type="button" className="magnific-primary-button" onClick={handleNewSpace}>
+            <button type="button" className="magnific-primary-button" onClick={() => setNewSpaceOpen(true)}>
               <Plus size={16} />
               New space
             </button>
@@ -251,29 +324,88 @@ function SpacesPage({ thumbnails }: { thumbnails: Record<number, string> }) {
             <button
               type="button"
               className="magnific-icon-button"
-              aria-label="Grid view"
+              aria-label="Toggle layout"
               onClick={() => setLayoutMode((m) => (m === "grid" ? "list" : "grid"))}
             >
               {layoutMode === "grid" ? <List size={16} /> : <LayoutGrid size={16} />}
             </button>
             <label className="magnific-search">
               <Search size={15} />
-              <input type="text" placeholder="Search spaces" />
+              <input value={search} onChange={(e) => setSearch(e.target.value)} type="text" placeholder="Search spaces" />
             </label>
           </div>
         </div>
 
-        {loading && boards.length === 0 ? (
+        {loading && boards.length === 0 && tab === "my" ? (
           <div className="magnific-empty-state">Loading spaces...</div>
         ) : (
           <div className={layoutMode === "grid" ? "magnific-space-grid" : "magnific-space-list"}>
-            {visibleBoards.map((board, index) => (
-              <button
+            {tab === "my"
+              ? visibleBoards.map((board, index) => (
+              <article
                 key={board.id}
-                type="button"
                 className="magnific-space-card"
                 onClick={() => void selectProject(board.id)}
               >
+                <button
+                  type="button"
+                  className="magnific-space-card__menu-trigger"
+                  data-space-menu-trigger
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMenuBoardId((current) => (current === board.id ? null : board.id));
+                  }}
+                  aria-label="Space options"
+                >
+                  <MoreHorizontal size={16} />
+                </button>
+                {menuBoardId === board.id ? (
+                  <div className="magnific-space-card__menu" data-space-menu onClick={(event) => event.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRenameTarget({ id: board.id, name: board.name });
+                        setRenameDraft(board.name);
+                        setMenuBoardId(null);
+                      }}
+                    >
+                      <Pencil size={14} />
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCoverTarget(board.id);
+                        setMenuBoardId(null);
+                      }}
+                    >
+                      <Upload size={14} />
+                      Change cover
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleDuplicateBoard(board.id, board.name);
+                        setMenuBoardId(null);
+                      }}
+                    >
+                      <Plus size={14} />
+                      Duplicate
+                    </button>
+                    <button
+                      type="button"
+                      className="is-danger"
+                      onClick={() => {
+                        onClearCustomCover(board.id);
+                        void deleteBoardById(board.id);
+                        setMenuBoardId(null);
+                      }}
+                    >
+                      <Trash2 size={14} />
+                      Move to trash
+                    </button>
+                  </div>
+                ) : null}
                 {thumbnails[board.id] ? (
                   <div className="magnific-space-card__thumb magnific-space-card__thumb--image">
                     <img src={thumbnails[board.id]} alt={board.name} />
@@ -291,11 +423,140 @@ function SpacesPage({ thumbnails }: { thumbnails: Record<number, string> }) {
                   <strong>{formatBoardTitle(board.name)}</strong>
                   <span>{formatRelativeTime(board.created_at)}</span>
                 </div>
-              </button>
-            ))}
+              </article>
+                ))
+              : visibleTemplates.map((template, index) => {
+                const templateThumb = createBoardThumbnail(template.snapshot.nodes, template.snapshot.edges);
+                return (
+                  <article
+                    key={template.id}
+                    className="magnific-space-card"
+                    onClick={() => void handleCreateFromTemplate(template)}
+                  >
+                    <div
+                      className="magnific-space-card__cover"
+                      style={{ background: SPACE_PRESETS[index % SPACE_PRESETS.length] }}
+                    >
+                      {templateThumb ? (
+                        <img src={templateThumb} alt={template.name} />
+                      ) : (
+                        <div className="magnific-space-card__placeholder">
+                          <Sparkles size={24} />
+                          <span>Template</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="magnific-space-card__meta">
+                      <strong>{template.name}</strong>
+                      <span>{template.updatedLabel}</span>
+                    </div>
+                  </article>
+                );
+              })}
           </div>
         )}
       </main>
+
+      {newSpaceOpen ? (
+        <div className="magnific-modal-backdrop">
+          <div className="magnific-modal-card">
+            <div className="magnific-modal-card__header">
+              <div>
+                <h3>Create new space</h3>
+                <p>Name your new project before opening the canvas.</p>
+              </div>
+              <button type="button" className="magnific-modal-close" onClick={() => setNewSpaceOpen(false)} aria-label="Close">
+                <X size={16} />
+              </button>
+            </div>
+            <label className="magnific-modal-field">
+              <span>Space name</span>
+              <input value={newSpaceName} onChange={(e) => setNewSpaceName(e.target.value)} autoFocus />
+            </label>
+            <div className="magnific-modal-actions">
+              <button type="button" className="magnific-secondary-button" onClick={() => setNewSpaceOpen(false)}>Cancel</button>
+              <button type="button" className="magnific-primary-button" onClick={() => void handleCreateSpace()}>
+                <Check size={15} />
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {renameTarget ? (
+        <div className="magnific-modal-backdrop">
+          <div className="magnific-modal-card">
+            <div className="magnific-modal-card__header">
+              <div>
+                <h3>Rename space</h3>
+                <p>Update the title shown in your space grid.</p>
+              </div>
+              <button type="button" className="magnific-modal-close" onClick={() => setRenameTarget(null)} aria-label="Close">
+                <X size={16} />
+              </button>
+            </div>
+            <label className="magnific-modal-field">
+              <span>Space name</span>
+              <input value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)} autoFocus />
+            </label>
+            <div className="magnific-modal-actions">
+              <button type="button" className="magnific-secondary-button" onClick={() => setRenameTarget(null)}>Cancel</button>
+              <button type="button" className="magnific-primary-button" onClick={() => void handleRenameBoard()}>
+                <Check size={15} />
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {coverTarget !== null ? (
+        <div className="magnific-modal-backdrop">
+          <div className="magnific-modal-card">
+            <div className="magnific-modal-card__header">
+              <div>
+                <h3>Change cover</h3>
+                <p>Upload a new image or reuse the latest canvas snapshot.</p>
+              </div>
+              <button type="button" className="magnific-modal-close" onClick={() => setCoverTarget(null)} aria-label="Close">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="magnific-cover-actions">
+              <button type="button" className="magnific-secondary-button" onClick={() => fileInputRef.current?.click()}>
+                <Upload size={15} />
+                Upload image
+              </button>
+              <button
+                type="button"
+                className="magnific-secondary-button"
+                onClick={() => {
+                  onUseSnapshotCover(coverTarget);
+                  setCoverTarget(null);
+                }}
+                disabled={!thumbnails[coverTarget]}
+              >
+                <Sparkles size={15} />
+                Use canvas snapshot
+              </button>
+              <button
+                type="button"
+                className="magnific-secondary-button"
+                onClick={() => {
+                  onClearCustomCover(coverTarget);
+                  setCoverTarget(null);
+                }}
+              >
+                <Trash2 size={15} />
+                Reset cover
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <input ref={fileInputRef} hidden type="file" accept="image/*" onChange={handleCoverFileChange} />
     </div>
   );
 }
@@ -370,6 +631,37 @@ function CanvasWorkspace() {
 function CanvasPage() {
   const boardName = useBoardStore((s) => s.boardName);
   const setView = useBoardStore((s) => s.setView);
+  const setGenerationState = useGenerationStore.setState;
+  const [profile, setProfile] = useState<AuthMe | null>(null);
+  const [pollsWithoutTier, setPollsWithoutTier] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      const me = await getAuthMe();
+      if (!alive) return;
+      setProfile(me);
+      const resolvedTier = resolveAuthTier(me);
+      if (resolvedTier) {
+        setGenerationState({ paygateTier: resolvedTier });
+        setPollsWithoutTier(0);
+        return;
+      }
+      if (me?.email) {
+        setGenerationState({ paygateTier: null });
+        setPollsWithoutTier((n) => n + 1);
+      } else {
+        setGenerationState({ paygateTier: null });
+      }
+      timer = setTimeout(poll, 5000);
+    };
+    void poll();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [setGenerationState]);
 
   return (
     <div className="magnific-shell magnific-canvas">
@@ -398,6 +690,17 @@ function CanvasPage() {
       </header>
 
       <div className="magnific-canvas__stage">
+        {profile?.email && !resolveAuthTier(profile) && pollsWithoutTier >= 2 ? (
+          <div className="magnific-tier-warning" role="alert">
+            <div>
+              <strong>Tier unknown</strong>
+              <span>Open Flow once so the extension can detect your plan, then retry generation.</span>
+            </div>
+            <a href="https://labs.google/fx/tools/flow" target="_blank" rel="noreferrer">
+              Open Flow
+            </a>
+          </div>
+        ) : null}
         <ReactFlowProvider>
           <CanvasWorkspace />
         </ReactFlowProvider>
@@ -416,14 +719,24 @@ export function App() {
   const undo = useBoardStore((s) => s.undo);
   const redo = useBoardStore((s) => s.redo);
   const ran = useRef(false);
-  const [spaceThumbnails, setSpaceThumbnails] = useState<Record<number, string>>(() => {
+  const [spaceSnapshots, setSpaceSnapshots] = useState<Record<number, string>>(() => {
     try {
-      const raw = localStorage.getItem(SPACE_THUMBNAILS_KEY);
+      const raw = localStorage.getItem(SPACE_SNAPSHOTS_KEY);
       return raw ? (JSON.parse(raw) as Record<number, string>) : {};
     } catch {
       return {};
     }
   });
+  const [spaceCoverOverrides, setSpaceCoverOverrides] = useState<Record<number, string>>(() => {
+    try {
+      const raw = localStorage.getItem(SPACE_COVERS_KEY);
+      return raw ? (JSON.parse(raw) as Record<number, string>) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const spaceThumbnails = useMemo(() => ({ ...spaceSnapshots, ...spaceCoverOverrides }), [spaceSnapshots, spaceCoverOverrides]);
 
   useEffect(() => {
     if (ran.current) return;
@@ -485,10 +798,10 @@ export function App() {
     const timer = window.setTimeout(() => {
       const thumbnail = createBoardThumbnail(nodes, edges);
       if (!thumbnail) return;
-      setSpaceThumbnails((prev) => {
+      setSpaceSnapshots((prev) => {
         const next = { ...prev, [boardId]: thumbnail };
         try {
-          localStorage.setItem(SPACE_THUMBNAILS_KEY, JSON.stringify(next));
+          localStorage.setItem(SPACE_SNAPSHOTS_KEY, JSON.stringify(next));
         } catch {
           // Ignore quota failures and keep in-memory state only.
         }
@@ -498,9 +811,49 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [currentView, boardId, nodes, edges]);
 
+  async function handleUploadCover(boardIdToUpdate: number, file: File) {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.onerror = () => reject(reader.error ?? new Error("Failed to read cover image"));
+      reader.readAsDataURL(file);
+    });
+    setSpaceCoverOverrides((prev) => {
+      const next = { ...prev, [boardIdToUpdate]: dataUrl };
+      localStorage.setItem(SPACE_COVERS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function handleUseSnapshotCover(boardIdToUpdate: number, sourceBoardId?: number) {
+    const snapshot = spaceSnapshots[sourceBoardId ?? boardIdToUpdate];
+    if (!snapshot) return;
+    setSpaceCoverOverrides((prev) => {
+      const next = { ...prev, [boardIdToUpdate]: snapshot };
+      localStorage.setItem(SPACE_COVERS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function handleClearCustomCover(boardIdToUpdate: number) {
+    setSpaceCoverOverrides((prev) => {
+      const next = { ...prev };
+      delete next[boardIdToUpdate];
+      localStorage.setItem(SPACE_COVERS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
   return (
     <>
-      {currentView === "spaces" ? <SpacesPage thumbnails={spaceThumbnails} /> : <CanvasPage />}
+      {currentView === "spaces" ? (
+        <SpacesPage
+          thumbnails={spaceThumbnails}
+          onUploadCover={handleUploadCover}
+          onUseSnapshotCover={handleUseSnapshotCover}
+          onClearCustomCover={handleClearCustomCover}
+        />
+      ) : <CanvasPage />}
       <Toaster />
       <GenerationDialog />
       <ResultViewerV2 />

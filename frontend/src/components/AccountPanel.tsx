@@ -12,6 +12,14 @@ import packageJson from "../../package.json";
 
 const APP_VERSION: string = packageJson.version;
 
+function resolveAuthTier(me: AuthMe | null): "PAYGATE_TIER_ONE" | "PAYGATE_TIER_TWO" | null {
+  if (me?.paygate_tier) return me.paygate_tier;
+  const sku = me?.sku?.trim().toUpperCase() ?? "";
+  if (sku.includes("ULTRA") || sku.includes("TIER_TWO")) return "PAYGATE_TIER_TWO";
+  if (sku.includes("PRO") || sku.includes("TIER_ONE")) return "PAYGATE_TIER_ONE";
+  return null;
+}
+
 /**
  * Account chip pinned to the bottom of the project sidebar.
  *
@@ -52,12 +60,13 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
       const me = await getAuthMe();
       if (!alive) return;
       setProfile(me);
+      const resolvedTier = resolveAuthTier(me);
       // Mirror the tier into the generation store so dispatch paths
       // continue to read from a single source. When tier becomes null
       // again (extension disconnect / sign-out), clear the store too —
       // otherwise dispatch would happily reuse a stale tier.
-      if (me?.paygate_tier) {
-        setStorePaygateTier({ paygateTier: me.paygate_tier });
+      if (resolvedTier) {
+        setStorePaygateTier({ paygateTier: resolvedTier });
         setPollsWithoutTier(0);
       } else if (me?.email) {
         // Email present but tier missing — extension connected but
@@ -66,7 +75,7 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
         setStorePaygateTier({ paygateTier: null });
         setPollsWithoutTier((n) => n + 1);
       }
-      if (me?.email && me?.paygate_tier) return;
+      if (me?.email && resolvedTier) return;
       timer = setTimeout(poll, 5000);
     };
     poll();
@@ -146,7 +155,7 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
     !!latestRelease?.tagName &&
     isNewerVersion(latestRelease.tagName, APP_VERSION);
 
-  const tier = profile?.paygate_tier ?? null;
+  const tier = resolveAuthTier(profile);
 
   const displayName = profile?.name?.trim() || "Flow account";
   const email = profile?.email ?? null;
@@ -309,7 +318,7 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
           )}
         </div>
       )}
-      {!collapsed && profile?.email && !profile.paygate_tier && pollsWithoutTier >= 2 && (
+      {!collapsed && profile?.email && !tier && pollsWithoutTier >= 2 && (
         // Extension connected (we got the Google profile) but hasn't
         // sniffed a Flow request body yet — tier is unknown. Without
         // this banner, the user would either see an empty tier slot

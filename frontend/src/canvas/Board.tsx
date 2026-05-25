@@ -242,6 +242,7 @@ export function Board({
 
   const onNodeDragStop: OnNodeDrag<FlowNode> = useCallback(
     (_event, node) => {
+      if (!node || !node.position) return;
       const { nodes, reparentNode, persistNodePosition } = useBoardStore.getState();
 
       // Calculate absolute position of the dragged node

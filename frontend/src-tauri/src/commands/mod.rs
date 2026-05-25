@@ -120,12 +120,105 @@ pub async fn patch_board(state: State<'_, AppState>, id: i64, name: String) -> R
 
 #[tauri::command]
 pub async fn delete_board(state: State<'_, AppState>, id: i64) -> Result<Value, String> {
-    let res = sqlx::query("DELETE FROM board WHERE id = ?")
+    let mut tx = state.db_pool.begin().await.map_err(|e| e.to_string())?;
+
+    let board_exists = sqlx::query_scalar::<_, i64>("SELECT id FROM board WHERE id = ? LIMIT 1")
         .bind(id)
-        .execute(&state.db_pool)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    if board_exists.is_none() {
+        return Err("board not found".to_string());
+    }
+
+    let node_ids = sqlx::query_scalar::<_, i64>("SELECT id FROM node WHERE board_id = ?")
+        .bind(id)
+        .fetch_all(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
 
+    if !node_ids.is_empty() {
+        let placeholders = vec!["?"; node_ids.len()].join(", ");
+        let asset_sql = format!("DELETE FROM asset WHERE node_id IN ({placeholders})");
+        let request_sql = format!("DELETE FROM request WHERE node_id IN ({placeholders})");
+
+        let mut asset_query = sqlx::query(&asset_sql);
+        let mut request_query = sqlx::query(&request_sql);
+        for node_id in &node_ids {
+            asset_query = asset_query.bind(node_id);
+            request_query = request_query.bind(node_id);
+        }
+        asset_query.execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        request_query.execute(&mut *tx).await.map_err(|e| e.to_string())?;
+    }
+
+    let plan_ids = sqlx::query_scalar::<_, i64>("SELECT id FROM plan WHERE board_id = ?")
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !plan_ids.is_empty() {
+        let placeholders = vec!["?"; plan_ids.len()].join(", ");
+        let run_sql = format!("DELETE FROM pipelinerun WHERE plan_id IN ({placeholders})");
+        let rev_sql = format!("DELETE FROM planrevision WHERE plan_id IN ({placeholders})");
+        let mut run_query = sqlx::query(&run_sql);
+        let mut rev_query = sqlx::query(&rev_sql);
+        for plan_id in &plan_ids {
+            run_query = run_query.bind(plan_id);
+            rev_query = rev_query.bind(plan_id);
+        }
+        run_query.execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        rev_query.execute(&mut *tx).await.map_err(|e| e.to_string())?;
+    }
+
+    sqlx::query("UPDATE reference SET source_board_id = NULL WHERE source_board_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM edge WHERE board_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM node WHERE board_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM pipelinerun WHERE plan_id IN (SELECT id FROM plan WHERE board_id = ?)")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM planrevision WHERE plan_id IN (SELECT id FROM plan WHERE board_id = ?)")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM plan WHERE board_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM chatmessage WHERE board_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM boardflowproject WHERE board_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    let res = sqlx::query("DELETE FROM board WHERE id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
     Ok(json!({ "deleted": res.rows_affected() }))
 }
 
@@ -640,12 +733,15 @@ pub async fn scan_extension(state: State<'_, AppState>) -> Result<Value, String>
     let mut has_user_info = false;
     let mut has_paygate_tier = false;
     let mut userinfo_nudged = false;
+    let mut tier_fetched = false;
+    let mut flow_key: Option<String> = None;
 
     if ws_connected {
         let has_info = {
             let inner = flow_client.inner.lock().unwrap();
             has_user_info = inner.user_info.is_some();
             has_paygate_tier = inner.paygate_tier.is_some();
+            flow_key = inner.flow_key.clone();
             has_user_info
         };
 
@@ -657,6 +753,16 @@ pub async fn scan_extension(state: State<'_, AppState>) -> Result<Value, String>
             let _ = flow_client.notify(welcome).await;
             userinfo_nudged = true;
         }
+
+        if !has_paygate_tier {
+            if let Some(token) = flow_key {
+                tier_fetched = flow_client.fetch_paygate_tier(&token).await;
+                has_paygate_tier = {
+                    let inner = flow_client.inner.lock().unwrap();
+                    inner.paygate_tier.is_some()
+                };
+            }
+        }
     }
 
     Ok(json!({
@@ -664,7 +770,7 @@ pub async fn scan_extension(state: State<'_, AppState>) -> Result<Value, String>
         "has_user_info": has_user_info,
         "has_paygate_tier": has_paygate_tier,
         "userinfo_nudged": userinfo_nudged,
-        "tier_fetched": false
+        "tier_fetched": tier_fetched
     }))
 }
 

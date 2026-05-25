@@ -5578,9 +5578,7 @@ button:disabled {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background:
-    radial-gradient(circle at top, rgba(255, 167, 73, 0.08), transparent 24%),
-    #101012;
+  background: #101012;
   color: #f4f1ea;
 }
 
@@ -5670,6 +5668,11 @@ button:disabled {
 .magnific-avatar:hover,
 .magnific-back-button:hover {
   background: rgba(255,255,255,0.07);
+  color: white;
+}
+
+.magnific-rail__icon--active {
+  background: rgba(255,255,255,0.1);
   color: white;
 }
 
@@ -5796,6 +5799,16 @@ button:disabled {
   background: rgba(255,255,255,0.11);
 }
 
+.magnific-coming-soon {
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  color: rgba(255,255,255,0.34);
+  border: 1px dashed rgba(255,255,255,0.08);
+}
+
 .magnific-primary-button,
 .magnific-share-button {
   display: inline-flex;
@@ -5859,6 +5872,7 @@ button:disabled {
 }
 
 .magnific-space-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -5868,6 +5882,7 @@ button:disabled {
   background: rgba(255,255,255,0.03);
   border: 1px solid rgba(255,255,255,0.05);
   transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+  cursor: pointer;
 }
 
 .magnific-space-card:hover {
@@ -5881,6 +5896,69 @@ button:disabled {
   overflow: hidden;
   min-height: 210px;
   border-radius: 18px;
+}
+
+.magnific-space-card__menu-trigger {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 3;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(14,14,18,0.72);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.78);
+  opacity: 0;
+  transition: opacity 160ms ease, background 160ms ease;
+}
+
+.magnific-space-card:hover .magnific-space-card__menu-trigger,
+.magnific-space-card__menu-trigger:focus-visible {
+  opacity: 1;
+}
+
+.magnific-space-card__menu-trigger:hover {
+  background: rgba(22,22,26,0.9);
+}
+
+.magnific-space-card__menu {
+  position: absolute;
+  top: 56px;
+  right: 16px;
+  z-index: 4;
+  min-width: 190px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: 16px;
+  background: rgba(24,24,28,0.96);
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 20px 34px rgba(0,0,0,0.35);
+}
+
+.magnific-space-card__menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 12px;
+  color: rgba(255,255,255,0.82);
+  text-align: left;
+}
+
+.magnific-space-card__menu button:hover {
+  background: rgba(255,255,255,0.06);
+}
+
+.magnific-space-card__menu button.is-danger {
+  color: #ff8f8f;
 }
 
 .magnific-space-card__thumb--image {
@@ -5934,9 +6012,150 @@ button:disabled {
   font-size: 13px;
 }
 
+.magnific-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8,8,10,0.64);
+  backdrop-filter: blur(14px);
+}
+
+.magnific-modal-card {
+  width: min(440px, 100%);
+  padding: 22px;
+  border-radius: 24px;
+  background: rgba(22,22,26,0.98);
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 24px 50px rgba(0,0,0,0.45);
+}
+
+.magnific-modal-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.magnific-modal-card__header h3 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.magnific-modal-card__header p {
+  margin: 8px 0 0;
+  color: rgba(255,255,255,0.52);
+  font-size: 14px;
+}
+
+.magnific-modal-close {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255,255,255,0.68);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.07);
+}
+
+.magnific-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.magnific-modal-field span {
+  color: rgba(255,255,255,0.62);
+  font-size: 13px;
+}
+
+.magnific-modal-field input {
+  width: 100%;
+  height: 42px;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04);
+  color: white;
+  font: inherit;
+  outline: none;
+}
+
+.magnific-modal-field input:focus {
+  border-color: rgba(255,255,255,0.18);
+}
+
+.magnific-modal-actions,
+.magnific-cover-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+.magnific-secondary-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04);
+  color: rgba(255,255,255,0.88);
+}
+
 .magnific-canvas__stage {
   position: absolute;
   inset: 64px 0 0;
+}
+
+.magnific-tier-warning {
+  position: absolute;
+  left: 24px;
+  top: 20px;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: 560px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(35, 25, 12, 0.94);
+  border: 1px solid rgba(255, 180, 70, 0.24);
+  box-shadow: 0 18px 30px rgba(0,0,0,0.28);
+}
+
+.magnific-tier-warning strong,
+.magnific-tier-warning span,
+.magnific-tier-warning a {
+  display: block;
+}
+
+.magnific-tier-warning strong {
+  color: #ffdba4;
+  font-size: 14px;
+}
+
+.magnific-tier-warning span {
+  margin-top: 4px;
+  color: rgba(255,244,224,0.76);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.magnific-tier-warning a {
+  color: #ffb347;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .magnific-canvas__workspace {

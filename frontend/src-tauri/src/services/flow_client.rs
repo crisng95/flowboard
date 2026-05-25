@@ -327,7 +327,7 @@ impl FlowClient {
         }
     }
 
-    async fn fetch_paygate_tier(&self, token: &str) -> bool {
+    pub async fn fetch_paygate_tier(&self, token: &str) -> bool {
         let api_key = "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY";
         let credits_url = "https://aisandbox-pa.googleapis.com/v1/credits";
 
@@ -362,15 +362,23 @@ impl FlowClient {
             Err(_) => return false,
         };
 
-        let tier = data.get("userPaygateTier").and_then(|t| t.as_str());
+        let sku = data.get("sku").and_then(|s| s.as_str());
+        let tier = data
+            .get("userPaygateTier")
+            .and_then(|t| t.as_str())
+            .or_else(|| infer_paygate_tier_from_sku(sku));
         if tier != Some("PAYGATE_TIER_ONE") && tier != Some("PAYGATE_TIER_TWO") {
-            println!("[Flowboard] fetch_paygate_tier response missing userPaygateTier (got {:?})", tier);
+            println!(
+                "[Flowboard] fetch_paygate_tier response missing usable tier (userPaygateTier={:?}, sku={:?})",
+                data.get("userPaygateTier").and_then(|t| t.as_str()),
+                sku,
+            );
             return false;
         }
 
         let mut inner = self.inner.lock().unwrap();
         inner.paygate_tier = tier.map(|t| t.to_string());
-        inner.sku = data.get("sku").and_then(|s| s.as_str()).map(|s| s.to_string());
+        inner.sku = sku.map(|s| s.to_string());
         inner.credits = Some(data.get("credits").and_then(|c| c.as_i64()));
 
         println!(
@@ -380,4 +388,15 @@ impl FlowClient {
 
         true
     }
+}
+
+fn infer_paygate_tier_from_sku(sku: Option<&str>) -> Option<&'static str> {
+    let normalized = sku?.trim().to_ascii_uppercase();
+    if normalized.contains("ULTRA") || normalized.contains("TIER_TWO") {
+        return Some("PAYGATE_TIER_TWO");
+    }
+    if normalized.contains("PRO") || normalized.contains("TIER_ONE") {
+        return Some("PAYGATE_TIER_ONE");
+    }
+    None
 }

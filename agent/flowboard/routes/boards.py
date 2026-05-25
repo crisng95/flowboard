@@ -13,6 +13,7 @@ from flowboard.db.models import (
     PipelineRun,
     Plan,
     PlanRevision,
+    Reference,
     Request,
 )
 
@@ -71,37 +72,29 @@ def update_board(board_id: int, body: BoardUpdate):
 def delete_board(board_id: int):
     """Cascade-delete a board and everything that hangs off it.
 
-    SQLite enforces FK constraints, so we have to clear children before
-    the parent. Order:
-      Asset(node_id) → Request(node_id) → Node
-      PipelineRun(plan_id) → PlanRevision(plan_id) → Plan
-      Edge → ChatMessage → BoardFlowProject → Board.
-
-    Note: this only removes the *local* mapping to a Google Flow project.
-    The project on labs.google itself is NOT deleted (Flow doesn't expose a
-    delete-project API through the flow_client we use).
+    We delete children explicitly instead of trusting historical FK clauses
+    because older local SQLite files may predate newer `ON DELETE` behavior.
     """
     with get_session() as s:
         board = s.get(Board, board_id)
         if not board:
             raise HTTPException(404, "board not found")
 
-        # Children-of-children first.
-        node_ids = [
-            n.id for n in s.exec(select(Node).where(Node.board_id == board_id)).all()
-        ]
+        node_ids = [n.id for n in s.exec(select(Node).where(Node.board_id == board_id)).all()]
         if node_ids:
             s.exec(sql_delete(Asset).where(Asset.node_id.in_(node_ids)))
             s.exec(sql_delete(Request).where(Request.node_id.in_(node_ids)))
 
-        plan_ids = [
-            p.id for p in s.exec(select(Plan).where(Plan.board_id == board_id)).all()
-        ]
+        plan_ids = [p.id for p in s.exec(select(Plan).where(Plan.board_id == board_id)).all()]
         if plan_ids:
             s.exec(sql_delete(PipelineRun).where(PipelineRun.plan_id.in_(plan_ids)))
             s.exec(sql_delete(PlanRevision).where(PlanRevision.plan_id.in_(plan_ids)))
 
-        # Edge has FK on Node (source_id, target_id) — must clear before Node.
+        refs = s.exec(select(Reference).where(Reference.source_board_id == board_id)).all()
+        for ref in refs:
+            ref.source_board_id = None
+            s.add(ref)
+
         s.exec(sql_delete(Edge).where(Edge.board_id == board_id))
         s.exec(sql_delete(Node).where(Node.board_id == board_id))
         s.exec(sql_delete(Plan).where(Plan.board_id == board_id))

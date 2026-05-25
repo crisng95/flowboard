@@ -86,7 +86,8 @@ export function ResultViewerV2() {
 
   if (!rfId || !data || !currentMediaId) return null;
 
-  const isVideo = data.type === "video" || data.type === "turntable";
+  const nodeType = data.type as string;
+  const isVideo = nodeType === "video" || nodeType === "turntable";
   const prompt = (data.prompt as string | undefined) ?? "(no prompt)";
   const model = (data.imageModel as string | undefined) ?? (data.videoQuality as string | undefined) ?? "—";
   const aspect = (data.aspectRatio as string | undefined)?.replace("IMAGE_ASPECT_RATIO_", "").toLowerCase() ?? "—";

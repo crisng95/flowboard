@@ -104,7 +104,8 @@ export function ResultViewer() {
   //     or upload (no model). Render as plain text so the visual
   //     difference signals "estimate vs ground truth".
   const metadataModel: { label: string; isBadge: boolean } = (() => {
-    if (data?.type === "video") {
+    const nodeType = data?.type as string | undefined;
+    if (nodeType === "video" && data) {
       if (data.videoQuality) {
         return {
           label: VIDEO_QUALITY_LABELS[data.videoQuality] ?? data.videoQuality,
@@ -117,7 +118,7 @@ export function ResultViewer() {
         isBadge: false,
       };
     }
-    if (data && ["image", "character", "visual_asset"].includes(data.type)) {
+    if (data && ["image", "character", "visual_asset"].includes(nodeType ?? "")) {
       if (data.imageModel) {
         return {
           label: IMAGE_MODEL_LABELS[data.imageModel] ?? data.imageModel,
@@ -278,7 +279,7 @@ export function ResultViewer() {
 
   if (rfId === null || !data) return null;
 
-  const isVideo = data.type === "video";
+  const isVideo = (data.type as string) === "video";
   const shortMediaId = currentMediaId ? `${currentMediaId.slice(0, 12)}…` : "pending";
 
   const cacheBust = cacheKey > 0 ? `?t=${cacheKey}` : "";
@@ -352,7 +353,7 @@ export function ResultViewer() {
     // upstream source(s). Without `kind`, the store falls back to
     // gen_image — silently produces a still image, overwriting the
     // actual video result on the node.
-    if (data.type === "video") {
+    if ((data.type as string) === "video") {
       const upstreamEdge = edges.find((e) => e.target === rfId);
       const upstreamNode = upstreamEdge
         ? nodes.find((n) => n.id === upstreamEdge.source)
@@ -597,7 +598,7 @@ export function ResultViewer() {
                 metadataModel.label
               )}
             </dd>
-            {data?.type === "character" && countryLabel(data.charCountry) && (
+            {(data?.type as string | undefined) === "character" && countryLabel(data.charCountry) && (
               <>
                 <dt>country</dt>
                 <dd>
@@ -605,7 +606,7 @@ export function ResultViewer() {
                 </dd>
               </>
             )}
-            {data?.type === "character" && vibeLabel(data.charVibe) && (
+            {(data?.type as string | undefined) === "character" && vibeLabel(data.charVibe) && (
               <>
                 <dt>vibe</dt>
                 <dd>
