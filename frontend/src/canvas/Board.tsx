@@ -107,7 +107,13 @@ const defaultEdgeOptions = {
   // the CSS rule in globals.css.
   style: { stroke: "rgba(124, 92, 255, 0.45)", strokeWidth: 2, cursor: "pointer" },
   interactionWidth: 24,
-  zIndex: 5,
+  // Layer contract:
+  //   group frames  = -1
+  //   edges         = 0
+  //   regular nodes = 1
+  // This keeps wires beneath normal cards while still visible above
+  // large tinted group backgrounds.
+  zIndex: 0,
 };
 
 // Quick-add popover that appears when the user drops a connection drag on
@@ -178,7 +184,6 @@ export function Board() {
   const edges = useBoardStore((s) => s.edges);
   const setNodes = useBoardStore((s) => s.setNodes);
   const setEdges = useBoardStore((s) => s.setEdges);
-  const persistNodePosition = useBoardStore((s) => s.persistNodePosition);
   const addEdgeFromConnection = useBoardStore((s) => s.addEdgeFromConnection);
   const addNodeOfType = useBoardStore((s) => s.addNodeOfType);
   const deleteEdgeByRfId = useBoardStore((s) => s.deleteEdgeByRfId);
@@ -261,9 +266,103 @@ export function Board() {
 
   const onNodeDragStop: OnNodeDrag<FlowNode> = useCallback(
     (_event, node) => {
-      persistNodePosition(node.id, node.position);
+      const { nodes, reparentNode, persistNodePosition } = useBoardStore.getState();
+
+      // Calculate absolute position of the dragged node
+      let absX = node.position.x;
+      let absY = node.position.y;
+      if (node.parentId) {
+        const parent = nodes.find((n) => n.id === node.parentId);
+        if (parent) {
+          absX += parent.position.x;
+          absY += parent.position.y;
+        }
+      }
+
+      const nodeStyle = (node.style ?? {}) as { width?: number; height?: number };
+      const nodeW = node.measured?.width ?? nodeStyle.width ?? node.data.nodeWidth ?? 260;
+      const nodeH = node.measured?.height ?? nodeStyle.height ?? 200;
+      const nodeCenterX = absX + nodeW / 2;
+      const nodeCenterY = absY + nodeH / 2;
+
+      // Rule: Exclude the node's current parent group when looking for new groups
+      const potentialGroups = nodes.filter((g) => {
+        if (g.data.type !== "group" || g.id === node.id) return false;
+        if (node.parentId && g.id === node.parentId) return false;
+        return true;
+      });
+
+      // Find all groups containing the node's center
+      const matchingGroups = potentialGroups.filter((g) => {
+        const groupStyle = (g.style ?? {}) as { width?: number; height?: number };
+        const gW = g.measured?.width ?? groupStyle.width ?? 320;
+        const gH = g.measured?.height ?? groupStyle.height ?? 200;
+        const gX = g.position.x;
+        const gY = g.position.y;
+
+        return (
+          nodeCenterX >= gX &&
+          nodeCenterX <= gX + gW &&
+          nodeCenterY >= gY &&
+          nodeCenterY <= gY + gH
+        );
+      });
+
+      let targetGroup: FlowNode | undefined = undefined;
+      if (matchingGroups.length > 0) {
+        // Grouping Priority: Sort by area in ascending order (smallest first)
+        matchingGroups.sort((a, b) => {
+          const aStyle = (a.style ?? {}) as { width?: number; height?: number };
+          const aW = a.measured?.width ?? aStyle.width ?? 320;
+          const aH = a.measured?.height ?? aStyle.height ?? 200;
+
+          const bStyle = (b.style ?? {}) as { width?: number; height?: number };
+          const bW = b.measured?.width ?? bStyle.width ?? 320;
+          const bH = b.measured?.height ?? bStyle.height ?? 200;
+
+          return (aW * aH) - (bW * bH);
+        });
+        targetGroup = matchingGroups[0];
+      }
+
+      if (targetGroup) {
+        // Dragged into a new group
+        void reparentNode(node.id, targetGroup.id, absX, absY);
+      } else {
+        if (node.parentId) {
+          // Dragged out of its parent group - check if center is completely outside
+          const parent = nodes.find((n) => n.id === node.parentId);
+          if (parent) {
+            const parentStyle = (parent.style ?? {}) as { width?: number; height?: number };
+            const pW = parent.measured?.width ?? parentStyle.width ?? 320;
+            const pH = parent.measured?.height ?? parentStyle.height ?? 200;
+            const pX = parent.position.x;
+            const pY = parent.position.y;
+
+            const isStillInside =
+              nodeCenterX >= pX &&
+              nodeCenterX <= pX + pW &&
+              nodeCenterY >= pY &&
+              nodeCenterY <= pY + pH;
+
+            if (!isStillInside) {
+              // Center is completely outside -> Auto-ungroup!
+              void reparentNode(node.id, undefined, absX, absY);
+            } else {
+              // Center is still inside -> keep grouped and persist relative position
+              void persistNodePosition(node.id, node.position);
+            }
+          } else {
+            // Parent not found -> fallback to ungroup
+            void reparentNode(node.id, undefined, absX, absY);
+          }
+        } else {
+          // Regular absolute drag on root canvas
+          void persistNodePosition(node.id, node.position);
+        }
+      }
     },
-    [persistNodePosition],
+    [],
   );
 
 

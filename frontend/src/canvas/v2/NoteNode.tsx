@@ -55,6 +55,27 @@ const COLOR_OPTIONS: Record<string, NoteColorStyle> = {
     swatchBorder: "rgba(255,255,255,0.4)",
     isTransparent: true,
   },
+  grey: {
+    bg: "#334155",
+    border: "#475569",
+    dotBg: "bg-slate-500",
+    text: "rgba(255,255,255,0.92)",
+    label: "Grey",
+  },
+  red: {
+    bg: "#fee2e2",
+    border: "#f87171",
+    dotBg: "bg-red-400",
+    text: "#1f2937",
+    label: "Red",
+  },
+  orange: {
+    bg: "#ffedd5",
+    border: "#fb923c",
+    dotBg: "bg-orange-400",
+    text: "#1f2937",
+    label: "Orange",
+  },
   yellow: {
     bg: "#fef3c7",
     border: "#f59e0b",
@@ -69,19 +90,19 @@ const COLOR_OPTIONS: Record<string, NoteColorStyle> = {
     text: "#1f2937",
     label: "Green",
   },
+  teal: {
+    bg: "#ccfbf1",
+    border: "#14b8a6",
+    dotBg: "bg-teal-400",
+    text: "#1f2937",
+    label: "Teal",
+  },
   blue: {
     bg: "#dbeafe",
     border: "#3b82f6",
     dotBg: "bg-blue-400",
     text: "#1f2937",
     label: "Blue",
-  },
-  pink: {
-    bg: "#fce7f3",
-    border: "#ec4899",
-    dotBg: "bg-pink-400",
-    text: "#1f2937",
-    label: "Pink",
   },
   purple: {
     bg: "#f3e8ff",
@@ -292,46 +313,51 @@ interface DropdownProps {
   menuId: string;
 }
 
-interface ColorDropdownProps extends DropdownProps {
-  value: string;
-  onChange: (val: string) => void;
-}
 
 function ColorDropdownPortal({
   buttonRef,
   open,
   setOpen,
-  menuPos,
   menuId,
   value,
   onChange,
-}: ColorDropdownProps) {
+}: {
+  buttonRef: React.RefObject<HTMLButtonElement>;
+  open: boolean;
+  setOpen: (val: boolean) => void;
+  menuId: string;
+  value: string;
+  onChange: (val: string) => void;
+}) {
   return (
     <>
       <button
         ref={buttonRef}
         type="button"
         onClick={() => setOpen(!open)}
-        className="h-7 px-1.5 rounded-full flex items-center justify-center gap-1 bg-transparent hover:bg-white/[0.08] transition-all cursor-pointer select-none text-white/70 hover:text-white nodrag"
+        className="h-7 px-2 rounded-full flex items-center justify-center gap-1.5 bg-transparent hover:bg-white/[0.08] transition-all cursor-pointer select-none text-white/70 hover:text-white nodrag"
       >
-        <ColorSwatch colorKey={value} className="h-3 w-3 shrink-0" />
-        <span className="text-[6px] text-white/50">▼</span>
+        <ColorSwatch colorKey={value} className="h-3.5 w-3.5 shrink-0" />
+        <span className="text-[7px] text-white/50 select-none">
+          {open ? "▲" : "▼"}
+        </span>
       </button>
 
-      {open && menuPos && createPortal(
+      {open && (
         <div
           id={menuId}
-          className="fixed rounded-lg p-1 border border-white/[0.08] shadow-xl z-[9999] nowheel flex flex-col gap-1"
+          className="absolute -top-11 left-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full z-[9999] shadow-lg animate-fade-in"
           style={{
-            left: menuPos.left,
-            top: menuPos.top,
-            backgroundColor: "#1a1a1a",
-            width: "120px",
+            backgroundColor: "rgba(20, 20, 20, 0.95)",
+            backdropFilter: "blur(12px)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            boxShadow: "0 8px 28px -10px rgba(0,0,0,0.6)",
           }}
           onPointerDown={(e) => e.stopPropagation()}
         >
-          {Object.entries(COLOR_OPTIONS).map(([key, item]) => {
-            const isActive = key === value;
+          {Object.keys(COLOR_OPTIONS).map((key) => {
+            const isSelected = key === value;
+            const option = COLOR_OPTIONS[key];
             return (
               <button
                 key={key}
@@ -341,21 +367,31 @@ function ColorDropdownPortal({
                   onChange(key);
                   setOpen(false);
                 }}
-                className={cn(
-                  "w-full px-2 py-1.5 rounded-md text-2xs transition-colors flex items-center gap-2",
-                  isActive
-                    ? "text-white bg-white/[0.06]"
-                    : "text-white/70 hover:text-white hover:bg-white/[0.06] cursor-pointer",
-                )}
+                className="w-5.5 h-5.5 rounded-full border transition-transform hover:scale-110 relative flex items-center justify-center shrink-0 cursor-pointer"
+                style={{
+                  backgroundColor: option.isTransparent ? "#ffffff" : option.bg,
+                  width: "20px",
+                  height: "20px",
+                  borderColor: isSelected ? "#f5f5f5" : "rgba(255,255,255,0.2)",
+                  boxShadow: isSelected ? "0 0 0 2px rgba(124,92,255,0.5)" : "none",
+                }}
               >
-                <ColorSwatch colorKey={key} className="h-3 w-3 shrink-0" />
-                <span className="truncate flex-1 text-left">{item.label}</span>
-                {isActive && <Check size={10} className="text-accent shrink-0" />}
+                {option.isTransparent && (
+                  <div className="absolute inset-0 rounded-full overflow-hidden flex items-center justify-center">
+                    {/* Red diagonal line for None */}
+                    <div className="w-[22px] h-[2px] bg-red-500 rotate-[45deg]" />
+                  </div>
+                )}
+                {isSelected && !option.isTransparent && (
+                  <div
+                    className="w-1.5 h-1.5 rounded-full"
+                    style={{ backgroundColor: option.text }}
+                  />
+                )}
               </button>
             );
           })}
-        </div>,
-        document.body,
+        </div>
       )}
     </>
   );
@@ -472,7 +508,6 @@ export function NoteNode(props: NodeProps<FlowNode>) {
   // Dropdown States
   const [showColorMenu, setShowColorMenu] = useState(false);
   const [showSizeMenu, setShowSizeMenu] = useState(false);
-  const [colorMenuPos, setColorMenuPos] = useState<{ left: number; top: number } | null>(null);
   const [sizeMenuPos, setSizeMenuPos] = useState<{ left: number; top: number } | null>(null);
 
   const colorBtnRef = useRef<HTMLButtonElement>(null);
@@ -481,13 +516,12 @@ export function NoteNode(props: NodeProps<FlowNode>) {
   // Coordinate tracking for Portals
   useEffect(() => {
     const activePickers = {
-      color: { open: showColorMenu, btn: colorBtnRef, setPos: setColorMenuPos, menuId: `note-color-menu-${rfId}`, close: () => setShowColorMenu(false) },
+      color: { open: showColorMenu, btn: colorBtnRef, setPos: () => {}, menuId: `note-color-menu-${rfId}`, close: () => setShowColorMenu(false) },
       size: { open: showSizeMenu, btn: sizeBtnRef, setPos: setSizeMenuPos, menuId: `note-size-menu-${rfId}`, close: () => setShowSizeMenu(false) },
     };
 
     const hasAnyOpen = showColorMenu || showSizeMenu;
     if (!hasAnyOpen) {
-      setColorMenuPos(null);
       setSizeMenuPos(null);
       return;
     }
@@ -695,15 +729,16 @@ export function NoteNode(props: NodeProps<FlowNode>) {
           }}
         >
           {/* Color dropdown */}
-          <ColorDropdownPortal
-            buttonRef={colorBtnRef}
-            open={showColorMenu}
-            setOpen={setShowColorMenu}
-            menuPos={colorMenuPos}
-            menuId={`note-color-menu-${rfId}`}
-            value={noteColor}
-            onChange={handleColorChange}
-          />
+          <div className="relative flex items-center shrink-0">
+            <ColorDropdownPortal
+              buttonRef={colorBtnRef}
+              open={showColorMenu}
+              setOpen={setShowColorMenu}
+              menuId={`note-color-menu-${rfId}`}
+              value={noteColor}
+              onChange={handleColorChange}
+            />
+          </div>
 
           {/* Size dropdown */}
           <SizeDropdownPortal

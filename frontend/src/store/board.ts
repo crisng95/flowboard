@@ -300,6 +300,10 @@ function nodeFromDto(
     // Group frame sits beneath children + edges so it never
     // obscures handles or wires running between siblings.
     baseFlowNode.zIndex = -1;
+  } else {
+    // Regular nodes live above edges. Group frames are the only node
+    // type intentionally allowed below the edge layer.
+    baseFlowNode.zIndex = 1;
   }
   if (parentId !== undefined) {
     // Children stack above the frame so their handles + edges
@@ -540,6 +544,8 @@ interface BoardState {
   // finishes a NodeResizer drag. Updates local React Flow state
   // immediately and PATCHes the row so the size survives reloads.
   persistGroupSize(groupRfId: string, width: number, height: number): Promise<void>;
+  // Re-parent a node to a group (or remove it from its parent group if parentRfId is undefined)
+  reparentNode(nodeRfId: string, parentRfId: string | undefined, absX: number, absY: number): Promise<void>;
 
   updateNodeData(rfId: string, partial: Partial<FlowboardNodeData>): void;
   /** Merge `partial` into edge.data — used to refresh the local cache
@@ -1270,6 +1276,174 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     } catch {
       // ignore - local state still reflects the resize
     }
+  },
+
+  async reparentNode(nodeRfId, parentRfId, absX, absY) {
+    const { nodes } = get();
+    const node = nodes.find((n) => n.id === nodeRfId);
+    if (!node) return;
+
+    const dbId = parseInt(nodeRfId, 10);
+    if (isNaN(dbId)) return;
+
+    let targetX = absX;
+    let targetY = absY;
+    let parentIdVal: number | null = null;
+    let groupExpanded = false;
+    let groupPatchPromise: Promise<any> | null = null;
+    const otherChildrenPatches: Promise<any>[] = [];
+
+    if (parentRfId !== undefined) {
+      const parent = nodes.find((n) => n.id === parentRfId);
+      if (parent) {
+        parentIdVal = parseInt(parentRfId, 10);
+        if (isNaN(parentIdVal)) return;
+
+        // Current group info
+        const gX = parent.position.x;
+        const gY = parent.position.y;
+        const groupStyle = (parent.style ?? {}) as { width?: number; height?: number };
+        const gW = parent.measured?.width ?? groupStyle.width ?? 320;
+        const gH = parent.measured?.height ?? groupStyle.height ?? 200;
+
+        // Child node size
+        const nodeStyle = (node.style ?? {}) as { width?: number; height?: number };
+        const nodeW = node.measured?.width ?? nodeStyle.width ?? node.data.nodeWidth ?? 260;
+        const nodeH = node.measured?.height ?? nodeStyle.height ?? 200;
+
+        // Desired new boundaries (with 40px padding)
+        const PADDING = 40;
+        const newGX = Math.min(gX, absX - PADDING);
+        const newGY = Math.min(gY, absY - PADDING);
+        const newGRight = Math.max(gX + gW, absX + nodeW + PADDING);
+        const newGBottom = Math.max(gY + gH, absY + nodeH + PADDING);
+        const newGW = newGRight - newGX;
+        const newGH = newGBottom - newGY;
+
+        const dx = gX - newGX;
+        const dy = gY - newGY;
+
+        targetX = absX - newGX;
+        targetY = absY - newGY;
+
+        const sizeChanged = newGW !== gW || newGH !== gH || dx !== 0 || dy !== 0;
+
+        if (sizeChanged) {
+          groupExpanded = true;
+          // Optimistically update other children relative coordinates and group position/size
+          set((s) => {
+            const updated = s.nodes.map((n) => {
+              if (n.id === parentRfId) {
+                // Update parent group position and style size
+                return {
+                  ...n,
+                  position: { x: newGX, y: newGY },
+                  style: { ...(n.style ?? {}), width: newGW, height: newGH },
+                };
+              }
+              if (n.parentId === parentRfId && n.id !== nodeRfId) {
+                // Shift existing children
+                return {
+                  ...n,
+                  position: { x: n.position.x + dx, y: n.position.y + dy },
+                };
+              }
+              if (n.id === nodeRfId) {
+                // Update newly parented child
+                return {
+                  ...n,
+                  parentId: parentRfId,
+                  extent: "parent" as const,
+                  position: { x: targetX, y: targetY },
+                  zIndex: 1,
+                };
+              }
+              return n;
+            });
+            return { nodes: sortNodesParentFirst(updated) };
+          });
+
+          // Create background patch promises for group size/position
+          groupPatchPromise = (async () => {
+            try {
+              await patchNode(parentIdVal!, {
+                x: Math.round(newGX),
+                y: Math.round(newGY),
+                w: Math.round(newGW),
+                h: Math.round(newGH),
+              });
+            } catch (err) {
+              console.error("Failed to patch group dimensions:", err);
+            }
+          })();
+
+          // Create background patch promises for other shifted children
+          const otherChildren = nodes.filter((n) => n.parentId === parentRfId && n.id !== nodeRfId);
+          for (const c of otherChildren) {
+            const cId = parseInt(c.id, 10);
+            if (!isNaN(cId)) {
+              otherChildrenPatches.push(
+                patchNode(cId, {
+                  x: Math.round(c.position.x + dx),
+                  y: Math.round(c.position.y + dy),
+                }).catch((err) => {
+                  console.error("Failed to patch shifted child position:", err);
+                })
+              );
+            }
+          }
+        } else {
+          // No group expansion needed
+          targetX = absX - gX;
+          targetY = absY - gY;
+        }
+      }
+    }
+
+    if (!groupExpanded) {
+      set((s) => {
+        const updated = s.nodes.map((n) => {
+          if (n.id === nodeRfId) {
+            return {
+              ...n,
+              parentId: parentRfId,
+              extent: parentRfId !== undefined ? ("parent" as const) : undefined,
+              position: { x: targetX, y: targetY },
+              // Detached nodes must return to the normal node layer
+              // above edges; grouped children stay there as well.
+              zIndex: 1,
+            };
+          }
+          return n;
+        });
+        return { nodes: sortNodesParentFirst(updated) };
+      });
+    }
+
+    // React Flow coordinate change invalidates handle caches, so we flush internals
+    flushNodeInternals([nodeRfId]);
+
+    // Send PATCH for the target node to backend in the background
+    const nodePatchPromise = (async () => {
+      try {
+        await patchNode(dbId, {
+          parent_id: parentIdVal,
+          x: Math.round(targetX),
+          y: Math.round(targetY),
+        });
+      } catch (err) {
+        console.error("Failed to reparent node:", err);
+        // Revert in case of error
+        await get().refreshBoardState();
+      }
+    })();
+
+    // Run all background promises asynchronously
+    void Promise.all([
+      ...(groupPatchPromise ? [groupPatchPromise] : []),
+      ...otherChildrenPatches,
+      nodePatchPromise,
+    ]);
   },
 
   async deleteGroupCascade(groupRfId) {

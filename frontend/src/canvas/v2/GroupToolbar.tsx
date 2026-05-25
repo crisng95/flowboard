@@ -14,19 +14,21 @@
  */
 import { useState, type ReactNode } from "react";
 import { NodeToolbar, Position } from "@xyflow/react";
-import { Copy, Lock, Palette, Trash2, Ungroup, Unlock } from "lucide-react";
+import { Copy, Lock, Trash2, Ungroup, Unlock } from "lucide-react";
 
 import { useBoardStore } from "../../store/board";
 
-// 6-swatch Figma-style palette. Picked to read well against the dark
-// canvas; the first entry doubles as the system default.
+// 9-swatch premium synchronized palette matching NoteNode & the reference image
 const PALETTE: string[] = [
-  "#7c5cff", // purple (default)
-  "#22c55e", // green
-  "#f59e0b", // amber
-  "#ef4444", // red
-  "#0ea5e9", // blue
-  "#ec4899", // pink
+  "transparent", // none (transparent/slate with red slash)
+  "#2b2b2b",     // dark grey
+  "#ef4444",     // red
+  "#fb923c",     // orange
+  "#f59e0b",     // yellow
+  "#22c55e",     // green
+  "#14b8a6",     // teal
+  "#3b82f6",     // blue
+  "#7c5cff",     // purple
 ];
 
 export function GroupToolbar({
@@ -68,33 +70,78 @@ export function GroupToolbar({
         }}
         onPointerDown={(e) => e.stopPropagation()}
       >
-        <ToolbarButton
-          label="Color"
-          active={paletteOpen}
-          onClick={() => setPaletteOpen((v) => !v)}
-        >
-          <Palette size={14} strokeWidth={1.75} />
-        </ToolbarButton>
-        {paletteOpen && (
-          <div className="flex items-center gap-1 pl-1 pr-2 border-l border-white/10">
-            {PALETTE.map((swatch) => (
-              <button
-                key={swatch}
-                type="button"
-                aria-label={`Set color ${swatch}`}
-                onClick={() => {
-                  void updateGroupColor(groupRfId, swatch);
-                  setPaletteOpen(false);
-                }}
-                className="w-4 h-4 rounded-full border"
-                style={{
-                  backgroundColor: swatch,
-                  borderColor: swatch === color ? "#f5f5f5" : "rgba(255,255,255,0.2)",
-                }}
+        <div className="relative flex items-center shrink-0">
+          <button
+            type="button"
+            onClick={() => setPaletteOpen((v) => !v)}
+            className="h-7 px-2 flex items-center justify-center gap-1.5 rounded-full transition-colors hover:bg-white/[0.08]"
+            style={{
+              backgroundColor: paletteOpen ? "rgba(255,255,255,0.08)" : "transparent",
+              cursor: "pointer",
+            }}
+            title="Color"
+          >
+            {color === "transparent" ? (
+              <div className="relative w-3.5 h-3.5 rounded-full border border-white/40 flex items-center justify-center bg-white overflow-hidden shrink-0">
+                <div className="w-[18px] h-[1.5px] bg-red-500 rotate-[45deg]" />
+              </div>
+            ) : (
+              <div
+                className="w-3.5 h-3.5 rounded-full border border-white/20 shrink-0"
+                style={{ backgroundColor: color }}
               />
-            ))}
-          </div>
-        )}
+            )}
+            <span className="text-[7px] text-white/50 select-none">
+              {paletteOpen ? "▲" : "▼"}
+            </span>
+          </button>
+
+          {paletteOpen && (
+            <div
+              className="absolute -top-11 left-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full z-50 animate-fade-in"
+              style={{
+                backgroundColor: "rgba(20, 20, 20, 0.95)",
+                backdropFilter: "blur(12px)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                boxShadow: "0 8px 28px -10px rgba(0,0,0,0.6)",
+              }}
+            >
+              {PALETTE.map((swatch) => {
+                const isSelected = swatch === color;
+                const isTransparent = swatch === "transparent";
+                return (
+                  <button
+                    key={swatch}
+                    type="button"
+                    aria-label={`Set color ${swatch}`}
+                    onClick={() => {
+                      void updateGroupColor(groupRfId, swatch);
+                      setPaletteOpen(false);
+                    }}
+                    className="w-5.5 h-5.5 rounded-full border transition-transform hover:scale-110 relative flex items-center justify-center shrink-0 cursor-pointer"
+                    style={{
+                      backgroundColor: isTransparent ? "#ffffff" : swatch,
+                      width: "20px",
+                      height: "20px",
+                      borderColor: isSelected ? "#f5f5f5" : "rgba(255,255,255,0.2)",
+                      boxShadow: isSelected ? "0 0 0 2px rgba(124,92,255,0.5)" : "none",
+                    }}
+                  >
+                    {isTransparent && (
+                      <div className="absolute inset-0 rounded-full overflow-hidden flex items-center justify-center">
+                        {/* Red diagonal line for None */}
+                        <div className="w-[22px] h-[2px] bg-red-500 rotate-[45deg]" />
+                      </div>
+                    )}
+                    {isSelected && !isTransparent && (
+                      <div className="w-1.5 h-1.5 bg-white rounded-full" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
         <ToolbarDivider />
         <ToolbarButton
           label={locked ? "Unlock group" : "Lock group"}

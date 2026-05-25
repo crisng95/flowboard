@@ -294,7 +294,8 @@ export function GroupNodeShell({ id, data, selected, width, height }: NodeProps<
   const [hovered, setHovered] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const color = data.groupColor || DEFAULT_COLOR;
+  const rawColor = data.groupColor || DEFAULT_COLOR;
+  const color = rawColor === "transparent" ? "#f5f5f5" : rawColor;
   const locked = data.locked === true;
   const title = data.title || "Group";
   const shortId = data.shortId;
@@ -394,7 +395,7 @@ export function GroupNodeShell({ id, data, selected, width, height }: NodeProps<
         data-selected={selected || undefined}
         className={cn("node-surface node-surface-no-border absolute inset-0")}
         style={{
-          background: `linear-gradient(0deg, ${hexWithAlpha(color, 0.10)}, ${hexWithAlpha(color, 0.10)}), #151515`,
+          background: `linear-gradient(0deg, ${hexWithAlpha(rawColor, 0.10)}, ${hexWithAlpha(rawColor, 0.10)}), #151515`,
           pointerEvents: "none",
         }}
       >
@@ -422,7 +423,7 @@ export function GroupNodeShell({ id, data, selected, width, height }: NodeProps<
         </>
       )}
 
-      <GroupToolbar groupRfId={id} color={color} locked={locked} selected={!!selected} />
+      <GroupToolbar groupRfId={id} color={rawColor} locked={locked} selected={!!selected} />
     </div>
   );
 }
@@ -448,6 +449,7 @@ function EdgeStrip({ style }: { style: React.CSSProperties }) {
  * Convert a 6-digit hex color to an `rgba(r, g, b, alpha)` string.
  */
 function hexWithAlpha(hex: string, alpha: number): string {
+  if (hex === "transparent") return "rgba(0,0,0,0)";
   const fallback = `rgba(124, 92, 255, ${alpha})`;
   if (!/^#?[0-9a-fA-F]{6}$/.test(hex)) return fallback;
   const cleaned = hex.startsWith("#") ? hex.slice(1) : hex;
