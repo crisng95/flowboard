@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useRef, useState } from "react";
 import { Handle, Position, useConnection, useEdges, type NodeProps } from "@xyflow/react";
-import { ImageUp, Replace, Upload, Tag } from "lucide-react";
+import { ImageUp, Upload } from "lucide-react";
 
-import { type FlowNode } from "../../store/board";
+import { useBoardStore, type FlowNode } from "../../store/board";
 import { useGenerationStore } from "../../store/generation";
 import { cn } from "../../lib/utils";
 import { useUploadFlow, mediaUrl } from "./shared/useUploadFlow";
@@ -11,12 +10,12 @@ import { UploadingOverlay } from "./shared/UploadingOverlay";
 import { ResizeHandle } from "./shared/ResizeHandle";
 import { useNodeWidth } from "./shared/useNodeWidth";
 import { persistNodeData } from "./shared/persistNodeData";
-import { requestAutoBrief } from "../../api/autoBrief";
-import { REFERENCE_TYPES, type ReferenceTypeKey } from "../../constants/concept";
+import { createNode } from "../../api/client";
+import { ReferenceLibraryModal, referenceCategoryLabel, type ReferenceCategoryKey, type ReferencePreset } from "./shared/ReferenceLibraryModal";
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 500;
-const DEFAULT_WIDTH = 280;
+const DEFAULT_WIDTH = 240;
 const BORDER_RADIUS = 16;
 const HOVER_LEAVE_DELAY = 200;
 
@@ -57,7 +56,7 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
   });
 
   const mediaId = data.mediaId as string | undefined;
-  const refType = (data.refType as ReferenceTypeKey | undefined) ?? "texture";
+  const referenceCategory = (data.referenceCategory as ReferenceCategoryKey | undefined) ?? "style";
   const shortId = data.shortId as string | undefined;
   const aspectRatio = data.aspectRatio as string | undefined;
   const userNote = (data.prompt as string | undefined) ?? "";
@@ -85,15 +84,86 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
   const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(
     persistedW && persistedH ? { w: persistedW, h: persistedH } : null,
   );
-  const [showTypePicker, setShowTypePicker] = useState(false);
   const [promptFocused, setPromptFocused] = useState(false);
-  // Anchor + viewport coords for the type-picker dropdown. We render
-  // the menu through a portal so `overflow-hidden` on the image slot
-  // doesn't clip the 10-tag list (the previous in-tree absolute
-  // positioning got cut off when the node was small).
-  const tagButtonRef = useRef<HTMLButtonElement | null>(null);
-  const [tagMenuPos, setTagMenuPos] = useState<{ left: number; top: number } | null>(null);
+  const [showLibrary, setShowLibrary] = useState(false);
+  const [libraryCategory, setLibraryCategory] = useState<ReferenceCategoryKey>(referenceCategory);
+  const showOverlay = mediaId !== undefined && mediaId !== "" && (showControls || promptFocused);
 
+  const applyPresetToCurrentNode = useCallback(async (preset: ReferencePreset) => {
+    persistNodeData(rfId, {
+      prompt: preset.prompt,
+      refType: preset.refType as any,
+      referenceCategory: preset.category,
+      presetKey: preset.key,
+      mediaId: preset.thumbnail,
+      aiBrief: null,
+      aiBriefStatus: undefined,
+      renderedAt: new Date().toISOString(),
+    });
+  }, [rfId]);
+
+  const spawnPresetNode = useCallback(async (preset: ReferencePreset, index: number) => {
+    const { boardId, nodes, setNodes } = useBoardStore.getState();
+    if (boardId === null) return;
+    const current = nodes.find((node) => node.id === rfId);
+    const x = current?.position.x ?? 0;
+    const y = (current?.position.y ?? 0) + index * 300;
+    try {
+      const dto = await createNode({
+        board_id: boardId,
+        type: "add_reference",
+        x: Math.round(x),
+        y: Math.round(y),
+        data: {
+          title: "Reference",
+          prompt: preset.prompt,
+          refType: preset.refType,
+          referenceCategory: preset.category,
+          presetKey: preset.key,
+          mediaId: preset.thumbnail,
+          aiBrief: null,
+          aiBriefStatus: undefined,
+          renderedAt: new Date().toISOString(),
+        },
+      });
+      setNodes([
+        ...useBoardStore.getState().nodes,
+        {
+          id: String(dto.id),
+          type: dto.type,
+          position: { x: dto.x, y: dto.y },
+          zIndex: 1,
+          data: {
+            ...dto.data,
+            type: dto.type,
+            shortId: dto.short_id,
+            title: (dto.data["title"] as string | undefined) ?? "Reference",
+            status: dto.status,
+            prompt: preset.prompt,
+            refType: preset.refType,
+            referenceCategory: preset.category,
+            presetKey: preset.key,
+            mediaId: preset.thumbnail,
+            aiBrief: null,
+          },
+        },
+      ]);
+    } catch (err) {
+      console.error("Failed to spawn reference preset node:", err);
+    }
+  }, [rfId]);
+
+  const handleSelectPresets = useCallback(async (presets: ReferencePreset[]) => {
+    if (presets.length === 0) return;
+    await applyPresetToCurrentNode(presets[0]);
+    await Promise.all(presets.slice(1).map((preset, index) => spawnPresetNode(preset, index + 1)));
+  }, [applyPresetToCurrentNode, spawnPresetNode]);
+
+  const displayUrl = mediaId && (mediaId.startsWith("http://") || mediaId.startsWith("https://"))
+    ? mediaId
+    : mediaId
+      ? mediaUrl(mediaId)
+      : "";
   // Handle visibility
   const edges = useEdges();
   const hasConnectedEdge = edges.some((e) => e.source === rfId);
@@ -110,79 +180,14 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
     persistNodeData(rfId, { prompt: value });
   }
 
-  // Track the trigger button's viewport rect every animation frame
-  // while the menu is open. Using a portal escapes the image slot's
-  // `overflow-hidden`, but a portal also detaches the menu from the
-  // canvas's pan/zoom transform - so without this loop the menu
-  // would stay frozen in place when the user drags the board.
-  // rAF is cheap (~60fps reads of one bounding rect) and only runs
-  // while the menu is visible.
-  useEffect(() => {
-    if (!showTypePicker) {
-      setTagMenuPos(null);
-      return;
-    }
-    let raf = 0;
-    function tick() {
-      const btn = tagButtonRef.current;
-      if (btn) {
-        const r = btn.getBoundingClientRect();
-        setTagMenuPos({
-          left: r.left,
-          top: r.bottom + 4, // 4px gap below the trigger
-        });
-      }
-      raf = requestAnimationFrame(tick);
-    }
-    raf = requestAnimationFrame(tick);
-
-    function onDocumentMouseDown(e: MouseEvent) {
-      const target = e.target as Node | null;
-      if (!target) return;
-      const btn = tagButtonRef.current;
-      if (btn && btn.contains(target)) return;
-      const menu = document.getElementById(`add-ref-tag-menu-${rfId}`);
-      if (menu && menu.contains(target)) return;
-      setShowTypePicker(false);
-    }
-    document.addEventListener("mousedown", onDocumentMouseDown);
-    return () => {
-      cancelAnimationFrame(raf);
-      document.removeEventListener("mousedown", onDocumentMouseDown);
-    };
-  }, [showTypePicker, rfId]);
-
-  function setRefType(key: ReferenceTypeKey) {
-    // Switching tags changes the role of the image (structural vs.
-    // material vs. lighting...). The cached `aiBrief` was generated
-    // under the OLD tag's vision profile, so it now describes the
-    // image at the wrong abstraction layer (e.g. a `texture` brief
-    // baked under the legacy annotator naming the pictured object).
-    // Clearing it forces a re-describe under the correct profile.
-    //
-    // `null` is the explicit "clear" sentinel both the board store
-    // and the backend patch route understand; `undefined` would be
-    // dropped from the patchNode payload.
-    persistNodeData(rfId, { refType: key, aiBrief: null, aiBriefStatus: undefined });
-    setShowTypePicker(false);
-
-    // Trigger a fresh vision call when there is media to describe.
-    // `requestAutoBrief` reads the (already-updated) node and picks
-    // the new tag's profile - we don't pass `key` separately, the
-    // helper goes back to the store as its source of truth.
-    if (typeof mediaId === "string" && mediaId.length > 0) {
-      requestAutoBrief(rfId, mediaId);
-    }
-  }
-
-  const currentTypeLabel = REFERENCE_TYPES.find((t) => t.key === refType)?.label ?? "Texture";
+  const currentCategoryLabel = referenceCategoryLabel(referenceCategory);
 
   return (
     <div
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       className="relative font-sans"
-      style={{ width: nodeWidth, padding: "0 16px 0 0" }}
+      style={{ width: nodeWidth, padding: "0 20px 0 20px" }}
     >
       {/* External header */}
       <div className="flex items-center gap-1.5 mb-2 pl-1">
@@ -220,13 +225,13 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
             // the enum for downstream gen because Flow's API only
             // accepts those three values.
             // Fall back to the enum-derived CSS ratio while the image
-            // is still loading, then to 1:1, then to 4:3 for the
+            // is still loading, then to 1:1, then to 1:1 for the
             // empty drop-zone state.
             aspectRatio: mediaId
               ? imgSize
                 ? `${imgSize.w} / ${imgSize.h}`
                 : flowAspectToCss(aspectRatio) ?? "1 / 1"
-              : "4 / 3",
+              : "1 / 1",
             borderRadius: BORDER_RADIUS - 3,
           }}
         >
@@ -234,7 +239,7 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
           {flow.bodyState === "filled" && mediaId && (
             <>
               <img
-                src={mediaUrl(mediaId)}
+                src={displayUrl}
                 alt="reference"
                 className={cn(
                   "absolute inset-0 size-full object-cover transition-all duration-300",
@@ -246,12 +251,35 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
               {promptFocused && (
                 <div className="absolute inset-0 bg-black/50 transition-opacity duration-300 z-[5]" />
               )}
+
+              {/* Floating Fullscreen button bay cực chất chuẩn Magnific AI */}
+              {showControls && !promptFocused && (
+                <button
+                  type="button"
+                  onClick={() => useGenerationStore.getState().openResultViewer(rfId)}
+                  className="absolute top-2.5 left-2.5 z-20 flex items-center justify-center rounded-full transition-all duration-150 hover:scale-110"
+                  style={{
+                    width: 28, height: 28,
+                    backgroundColor: "rgba(0,0,0,0.55)",
+                    backdropFilter: "blur(6px)",
+                    border: "1px solid rgba(255,255,255,0.15)",
+                    color: "rgba(255,255,255,0.85)",
+                  }}
+                  title="View fullscreen"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" />
+                    <line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+                  </svg>
+                </button>
+              )}
+
               {imgSize && showControls && (
                 <div
                   className="absolute top-3 right-3 px-2.5 py-1 rounded-full text-2xs font-medium text-ink-primary z-10"
                   style={{ backgroundColor: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }}
                 >
-                  {imgSize.w} {"\u00d7"} {imgSize.h}
+                  {imgSize.w} × {imgSize.h}
                 </div>
               )}
             </>
@@ -260,22 +288,40 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
           {/* Uploading */}
           {flow.bodyState === "uploading" && <UploadingOverlay />}
 
-          {/* Empty state */}
+          {/* Empty state chuẩn đẹp 1:1 Magnific AI */}
           {flow.bodyState === "empty" && !flow.dragOver && (
             <div
-              className="flex flex-col items-center gap-2 text-ink-muted"
-              onClick={flow.pickFile}
+              className="flex size-full flex-col items-center justify-center gap-5 p-4 bg-white/[0.01] cursor-pointer hover:bg-white/[0.03] transition-colors duration-300"
+              onClick={() => setShowLibrary(true)}
             >
-              <ImageUp size={24} strokeWidth={1.5} className="opacity-50" />
-              <span className="text-xs">Drop a reference image</span>
+              <div className="flex flex-col items-center gap-4">
+                <span className="max-w-[140px] text-center text-xs leading-snug text-white/40 select-none tracking-wide">
+                  Add a reference to guide your generation
+                </span>
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-lg border border-white/[0.08] px-3 py-1.5 text-2xs font-medium text-white/70 hover:border-white/[0.15] hover:bg-white/[0.06] hover:text-white transition-all active:scale-95 duration-150"
+                >
+                  Select Reference
+                </button>
+              </div>
             </div>
           )}
 
-          {/* Drag over */}
+          {/* Drag over state */}
           {flow.bodyState === "empty" && flow.dragOver && (
-            <div className="flex flex-col items-center gap-1.5 text-accent">
-              <Upload size={20} strokeWidth={1.75} />
-              <span className="text-2xs font-medium">Drop to upload</span>
+            <div className="flex flex-col items-center gap-3 text-accent animate-pulse-soft">
+              <div
+                className="flex items-center justify-center rounded-full"
+                style={{
+                  width: 44, height: 44,
+                  backgroundColor: "rgba(124,92,255,0.15)",
+                  border: "1px dashed rgba(124,92,255,0.3)",
+                }}
+              >
+                <Upload size={18} strokeWidth={2} />
+              </div>
+              <span className="text-2xs font-medium text-accent">Drop to upload</span>
             </div>
           )}
 
@@ -296,23 +342,24 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
             </div>
           )}
 
-          {/* Bottom overlay: prompt textarea + toolbar (type picker +
-              Replace) layered ON the image. Mirrors the ImageGenerator
-              pattern so both nodes feel consistent. The textarea uses
-              `aiBrief` as its placeholder so the user sees the auto
-              description while still being able to type a manual note.
-              When there's no media yet, the toolbar still shows so
-              users can pick the right tag BEFORE uploading - that
-              tag drives which vision profile runs after upload, so
-              picking it first is the correct mental model. The
-              textarea is hidden in the empty state because there's
-              no image to caption yet. */}
-          <div className="absolute bottom-0 left-0 right-0 z-10 transition-all duration-300 ease-out">
-            {mediaId && (
-              <div className={cn(
-                "px-4 pb-1 transition-all duration-300 ease-out",
-                promptFocused ? "pt-4" : "pt-2",
-              )}>
+          {/* Bottom overlay: hidden while idle, slides in on hover/select/focus */}
+          {mediaId && (
+            <div
+              className={cn(
+                "absolute bottom-0 left-0 right-0 z-10",
+                "transition-all duration-300 ease-in-out",
+                showOverlay
+                  ? "opacity-100 translate-y-0 pointer-events-auto"
+                  : "opacity-0 translate-y-4 pointer-events-none",
+              )}
+            >
+              <div
+                className="absolute inset-x-0 bottom-0 h-24"
+                style={{
+                  background: "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.32) 30%, rgba(0,0,0,0.72) 100%)",
+                }}
+              />
+              <div className="relative px-3 pb-3 pt-8">
                 <textarea
                   value={userNote}
                   onChange={(e) => setUserNote(e.target.value)}
@@ -325,45 +372,27 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
                   rows={promptFocused ? 6 : 1}
                   onFocus={() => setPromptFocused(true)}
                   onBlur={() => setPromptFocused(false)}
-                  className="img-gen-prompt w-full bg-transparent text-sm text-white placeholder:text-white/70 resize-none outline-none border-0 leading-relaxed"
+                  className="img-gen-prompt nodrag nowheel w-full bg-transparent text-sm text-white placeholder:text-white/70 resize-none outline-none border-0 leading-relaxed"
                 />
-              </div>
-            )}
-
-              <div className={cn(
-                "flex items-center gap-1.5 px-3 pb-3 pt-0",
-                "transition-all duration-300 ease-out",
-                showControls
-                  ? "max-h-[48px] opacity-100 translate-y-0"
-                  : "max-h-0 opacity-0 translate-y-1 overflow-hidden",
-              )}>
-                <div className="relative">
+                <div className="mt-2 flex items-center">
                   <button
-                    ref={tagButtonRef}
-                    onClick={() => setShowTypePicker(!showTypePicker)}
-                    className="flex items-center gap-1 rounded-full px-2 py-1 text-2xs font-medium text-white/80 hover:text-white transition-colors whitespace-nowrap"
-                    style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+                    type="button"
+                    onClick={() => {
+                      setLibraryCategory(referenceCategory);
+                      setShowLibrary(true);
+                    }}
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-[10px] font-medium",
+                      "border-white/[0.08] bg-black/45 text-white/70 backdrop-blur-md transition-colors",
+                      "hover:bg-black/60 hover:text-white",
+                    )}
                   >
-                    <Tag size={11} strokeWidth={2} />
-                    {currentTypeLabel}
-                    <span className="text-[8px] opacity-50">{"\u25be"}</span>
+                    {currentCategoryLabel}
                   </button>
                 </div>
-
-                <div className="flex-1" />
-
-                {mediaId && (
-                  <button
-                    onClick={flow.pickFile}
-                    className="flex items-center gap-1 rounded-full px-2 py-1 text-2xs font-medium text-white/80 hover:text-white transition-colors whitespace-nowrap"
-                    style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
-                  >
-                    <Replace size={11} strokeWidth={2} />
-                    Replace
-                  </button>
-                )}
               </div>
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Resize handle */}
@@ -383,7 +412,7 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
         position={Position.Right}
         id="source"
         className={cn(
-          "!absolute !-right-0 !top-[48px] !h-7 !w-7 !border-0 !bg-transparent",
+          "!absolute !-right-0 !top-[48px] !h-7 !w-7 !border-0 !bg-transparent group/handle",
           "transition-opacity duration-300 ease-out",
           showHandle ? "!opacity-100" : "!opacity-0 !pointer-events-none",
         )}
@@ -398,6 +427,11 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
         >
           <ImageUp size={11} strokeWidth={2} />
         </div>
+
+        {/* Hover Tooltip trượt ngang bay ra cực mượt từ cạnh handle chuẩn Magnific AI */}
+        <div className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-x-3 -translate-y-1/2 scale-90 whitespace-nowrap rounded-lg border border-white/[0.08] bg-[#2a2a2a] px-2.5 py-1.5 text-[10px] font-medium text-white/80 opacity-0 shadow-xl transition-all duration-200 ease-in-out group-hover/handle:translate-x-0 group-hover/handle:scale-100 group-hover/handle:opacity-100">
+          Reference
+        </div>
       </Handle>
 
       {/* Hidden file input */}
@@ -409,37 +443,14 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
         onChange={flow.fileInputProps.onChange}
       />
 
-      {/* Portal-rendered tag picker - escapes the image slot's
-          `overflow-hidden` so the full 10-tag list is always visible
-          regardless of node size. Positioned via the trigger rect. */}
-      {showTypePicker && tagMenuPos && createPortal(
-        <div
-          id={`add-ref-tag-menu-${rfId}`}
-          className="fixed rounded-lg p-1 shadow-xl border border-white/[0.08] z-[1000]"
-          style={{
-            left: tagMenuPos.left,
-            top: tagMenuPos.top,
-            backgroundColor: "#2a2a2a",
-          }}
-        >
-          {REFERENCE_TYPES.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setRefType(t.key as ReferenceTypeKey)}
-              className={cn(
-                "block w-full text-left px-3 py-1.5 rounded-md text-2xs whitespace-nowrap transition-colors",
-                t.key === refType
-                  ? "text-accent bg-accent/10"
-                  : "text-white/80 hover:text-white hover:bg-white/[0.06]",
-              )}
-            >
-              {t.label}
-              <span className="ml-2 text-ink-placeholder">{t.hint}</span>
-            </button>
-          ))}
-        </div>,
-        document.body,
-      )}
+      {/* Reference Preset Library Modal */}
+      <ReferenceLibraryModal
+        isOpen={showLibrary}
+        onClose={() => setShowLibrary(false)}
+        onSelect={handleSelectPresets}
+        onUploadCustom={flow.pickFile}
+        initialCategory={libraryCategory}
+      />
     </div>
   );
 }
