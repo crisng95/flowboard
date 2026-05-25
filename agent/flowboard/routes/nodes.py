@@ -10,33 +10,14 @@ from flowboard.short_id import generate_unique_short_id
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
-# NodeType enum keeps every legacy id (character / image / ...) so old
-# boards keep loading, plus the Concepta fork''s new types and the
-# Group container shipped with Node Group support. Palette UI only
-# surfaces the modern set, but the data model accepts both for the
-# migration window.
+# NodeType enum matches the supported V2 canvas node set only.
 NodeType = Literal[
-    # Legacy (Flowboard upstream - still creatable for backward compat)
-    "character",
-    "image",
-    "video",
-    "prompt",
     "note",
-    "visual_asset",
-    "Storyboard",
-    # Concepta fork - game / arch / illustration asset pipeline
     "reference",
-    "style_pack",
-    "concept",
-    "multiview",
-    "part",
     "variant",
-    "pose",
-    "turntable",
     "upload",
     "text",
     "add_reference",
-    # Frame container - owns child nodes via Node.parent_id
     "group",
 ]
 NodeStatus = Literal["idle", "queued", "running", "done", "error"]
@@ -350,3 +331,4 @@ def ungroup_node(node_id: int):
         for child in children:
             s.refresh(child)
         return {"deleted_group_id": node_id, "children": children}
+

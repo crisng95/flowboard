@@ -50,27 +50,18 @@ export function cssAspect(
 
 /**
  * Pick a sensible default slot aspect when no media is loaded yet.
- * Concept nodes default portrait (humanoid / creature / robot are
- * vertically biased); Reference nodes default square; downstream
- * detail nodes (Part / Variant) default square.
+ * Reference nodes default square; Variant nodes default square.
  *
  * Once media is set on the node, the per-image aspect (via
  * `cssAspect(data.aspectRatio)`) overrides the default so the slot
  * tracks the real image.
  */
 export function defaultEmptyAspect(
-  nodeKind: "concept" | "reference" | "multiview" | "part" | "variant",
+  nodeKind: "reference" | "variant",
 ): CssAspect {
   switch (nodeKind) {
-    case "concept":
-      return "3 / 4";
     case "reference":
-    case "part":
     case "variant":
-      return "1 / 1";
-    case "multiview":
-      // Strip layout — wider than it is tall.
-      return "16 / 9";
     default:
       return "1 / 1";
   }

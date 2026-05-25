@@ -22,9 +22,9 @@ export type { NodeType };
 
 export type NodeStatus = "idle" | "queued" | "running" | "done" | "error" | "partial";
 
-// Storyboard — see .omc/plans/storyboard-image-node.md §4.1.
-// Each shot is either a root (parentShotIdx=null → gen_image) or a
-// continuation (parentShotIdx=j<idx → edit_image(base=shots[j].mediaId)).
+// Storyboard ï¿½ see .omc/plans/storyboard-image-node.md ï¿½4.1.
+// Each shot is either a root (parentShotIdx=null ? gen_image) or a
+// continuation (parentShotIdx=j<idx ? edit_image(base=shots[j].mediaId)).
 // Sibling continuations dispatch in parallel after their parent finishes.
 export type ShotStatus =
   | "idle"
@@ -32,7 +32,7 @@ export type ShotStatus =
   | "running"
   | "done"
   | "error"
-  | "blocked"; // parent failed → cannot dispatch until parent retried
+  | "blocked"; // parent failed ? cannot dispatch until parent retried
 
 export interface StoryboardShot {
   idx: number;
@@ -64,7 +64,7 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   // the previous variant.
   slotErrors?: (string | null)[];
   variantCount?: number;
-  // The aspect-ratio enum the asset was generated / uploaded at — used to
+  // The aspect-ratio enum the asset was generated / uploaded at ï¿½ used to
   // default-match downstream gen dialogs (e.g. a 9:16 visual_asset feeds
   // into a downstream image / video that defaults to 9:16). Values are
   // Flow's IMAGE_ASPECT_RATIO_* enum strings since that's what the upload
@@ -87,13 +87,13 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   aiBrief?: string | null;
   aiBriefStatus?: "pending" | "done" | "failed";
   // Transient status while the GenerationDialog runs `autoPrompt` /
-  // `autoPromptBatch` against this node — set to "pending" while the
+  // `autoPromptBatch` against this node ï¿½ set to "pending" while the
   // backend is composing the prompt, cleared on success/failure. Not
   // persisted to the DB; it's a few-second UX flag so the node can
   // render a visible "busy" treatment that blocks duplicate dispatches.
   autoPromptStatus?: "pending" | "done" | "failed";
   // ISO timestamp persisted when a generation completes successfully.
-  // Powers the "5 phút trước" relative-time display in ResultViewer.
+  // Powers the "5 phï¿½t tru?c" relative-time display in ResultViewer.
   // Uploads also stamp this so the timestamp reflects "when the asset
   // landed on the node" regardless of source.
   renderedAt?: string;
@@ -101,27 +101,27 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   // of gen_image / edit_image (`imageModel`, e.g. "NANO_BANANA_PRO") or
   // gen_video (`videoQuality`, e.g. "fast" / "lite" / "quality"). Absent
   // on uploads (no model involved) and on nodes generated before this
-  // feature shipped — ResultViewer falls back to current settings as
+  // feature shipped ï¿½ ResultViewer falls back to current settings as
   // plain text in that case so the user knows it's an estimate.
   imageModel?: string;
   videoQuality?: string;
-  // Character-builder selections — persisted on dispatch so the detail
+  // Character-builder selections ï¿½ persisted on dispatch so the detail
   // panel can show "Country / Vibe / Gender" pills under METADATA. Keys
   // (`vn`, `clean`, `female`) match the constants in
-  // `src/constants/character.ts`; viewer maps key → display label.
+  // `src/constants/character.ts`; viewer maps key ? display label.
   charCountry?: string;
   charVibe?: string;
   charGender?: string;
-  // ── Concepta fork (concept node) ─────────────────────────────────────
-  // Style preset (Stylized 3D / Anime / Realistic / …) and type
-  // preset (Humanoid / Vehicle / Building / Weapon / …) chosen by
+  // -- Concepta fork (concept node) -------------------------------------
+  // Style preset (Stylized 3D / Anime / Realistic / ï¿½) and type
+  // preset (Humanoid / Vehicle / Building / Weapon / ï¿½) chosen by
   // the user on a Concept node. Backend's auto-prompt synth reads
   // these to pick the right system prompt clauses (see
   // `services/concept/subject.py`). Keys match
   // `frontend/src/constants/concept.ts`.
   styleKey?: string;
   typeKey?: string;
-  // Multi-view node — preset key + per-angle metadata. Mirrors
+  // Multi-view node ï¿½ preset key + per-angle metadata. Mirrors
   // `frontend/src/constants/concept.ts > MULTIVIEW_PRESETS`. The
   // dispatcher fans out as one root + N-1 edits in
   // `worker/processor.py:_handle_gen_multiview`.
@@ -129,11 +129,11 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   angles?: string[];
   /** Per-angle error codes parallel to mediaIds. Null = ok. */
   angleErrors?: (string | null)[];
-  // Part node — region key (head / weapon / outfit_top / …). Mirrors
+  // Part node ï¿½ region key (head / weapon / outfit_top / ï¿½). Mirrors
   // `agent/flowboard/services/concept/part.py:_PART_REGIONS`.
   // Frontend resolves the label via `GET /api/concepta/part-regions`.
   regionKey?: string;
-  // Variant node — picked axis + the user's free-text instruction
+  // Variant node ï¿½ picked axis + the user's free-text instruction
   // (e.g. axis=color + instruction="deep crimson and gold trim").
   // Backend composes the dispatched prompt from these via
   // `services/concept/variant.py:build_variant_prompt`.
@@ -145,7 +145,7 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   // per-component default (Concept 300, Reference 260) when absent.
   nodeWidth?: number;
   error?: string;
-  // Storyboard-only fields (type === "Storyboard"). See plan §4.1.
+  // Storyboard-only fields (type === "Storyboard"). See plan ï¿½4.1.
   shots?: StoryboardShot[];
   shotCount?: number; // 1..8; mirrors shots.length
   narrativeSeed?: string; // user free-text feeding the planner
@@ -196,7 +196,7 @@ function defaultTargetHandleForConnection(sourceNode?: FlowNode, targetNode?: Fl
   return sourceType === "text" ? "target-text" : "target-image";
 }
 
-// ── React Flow internal-update bridge ────────────────────────────────
+// -- React Flow internal-update bridge --------------------------------
 // React Flow caches each node's handle positions in absolute screen
 // coords; flipping a node's `parentId` (= switching coordinate
 // space) invalidates that cache but RF only refreshes it when
@@ -218,7 +218,7 @@ function flushNodeInternals(ids: string[]) {
   }, 100);
 }
 
-// ── Tiny per-node debounce (no external deps) ─────────────────────────────
+// -- Tiny per-node debounce (no external deps) -----------------------------
 const positionTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function debouncePosition(rfId: string, fn: () => void, delay = 150) {
@@ -230,25 +230,11 @@ function debouncePosition(rfId: string, fn: () => void, delay = 150) {
   }, delay));
 }
 
-// ── Type-to-title lookup ───────────────────────────────────────────────────
-const TYPE_TITLE: Record<NodeType, string> = {
-  // legacy
-  character: "Character",
-  image: "Image",
-  video: "Video",
-  prompt: "Prompt",
+// -- Type-to-title lookup ---------------------------------------------------
+const TYPE_TITLE: Partial<Record<NodeType, string>> = {
   note: "Note",
-  visual_asset: "Visual asset",
-  Storyboard: "Storyboard",
-  // Concepta fork
   reference: "Image Generator",
-  style_pack: "Style pack",
-  concept: "Concept",
-  multiview: "Multi-view",
-  part: "Part",
   variant: "Variant",
-  pose: "Pose",
-  turntable: "Turntable",
   upload: "Upload",
   text: "Text",
   add_reference: "Add Reference",
@@ -259,7 +245,7 @@ const TYPE_TITLE: Record<NodeType, string> = {
  * Map a node DTO from the backend (`getBoard().nodes[i]`) into the
  * client-side FlowNode shape. Centralised so the three load paths
  * (`loadInitialBoard`, `switchBoard`, `refreshBoardState`) stay in
- * lock-step — adding a new persisted field used to mean editing 3
+ * lock-step ï¿½ adding a new persisted field used to mean editing 3
  * places, which had bitrot risk every time we extended the schema.
  */
 type NodeDTO = {
@@ -336,7 +322,7 @@ function nodeFromDto(
       ...d,
       type: n.type,
       shortId: n.short_id,
-      title: (d["title"] as string | undefined) ?? TYPE_TITLE[n.type],
+      title: (d["title"] as string | undefined) ?? TYPE_TITLE[n.type] ?? "Node",
       status: n.status,
       prompt: d["prompt"] as string | undefined,
       thumbnailUrl: d["thumbnailUrl"] as string | undefined,
@@ -364,9 +350,9 @@ function nodeFromDto(
       // Concepta fork
       styleKey: d["styleKey"] as string | undefined,
       typeKey: d["typeKey"] as string | undefined,
-      // Multi-view metadata — angles + per-angle errors carry through
-      // the dispatch loop. The root angle gets the ⭐ marker in the
-      // tile UI; angle errors render as ⚠ slot fail badges.
+      // Multi-view metadata ï¿½ angles + per-angle errors carry through
+      // the dispatch loop. The root angle gets the ? marker in the
+      // tile UI; angle errors render as ? slot fail badges.
       multiviewPreset: d["multiviewPreset"] as string | undefined,
       angles: d["angles"] as string[] | undefined,
       angleErrors: d["angleErrors"] as (string | null)[] | undefined,
@@ -378,7 +364,7 @@ function nodeFromDto(
       // Group node fields
       groupColor: d["groupColor"] as string | undefined,
       locked: d["locked"] as boolean | undefined,
-      // User-resized width persisted per node — read here so a refresh
+      // User-resized width persisted per node ï¿½ read here so a refresh
       // doesn't snap the node back to its default size.
       nodeWidth: d["nodeWidth"] as number | undefined,
       error: d["error"] as string | undefined,
@@ -435,9 +421,9 @@ function sortNodesParentFirst(nodes: FlowNode[]): FlowNode[] {
   return [...roots, ...children];
 }
 
-// ── Persisted active-board id ─────────────────────────────────────────────
+// -- Persisted active-board id ---------------------------------------------
 // Survives page reloads so refreshing on project #4 doesn't kick the user
-// back to project #1. localStorage is fine here — single-user, single-host.
+// back to project #1. localStorage is fine here ï¿½ single-user, single-host.
 const ACTIVE_BOARD_KEY = "flowboard.activeBoardId";
 
 function loadPersistedBoardId(): number | null {
@@ -456,15 +442,15 @@ function persistBoardId(id: number | null): void {
     if (id === null) localStorage.removeItem(ACTIVE_BOARD_KEY);
     else localStorage.setItem(ACTIVE_BOARD_KEY, String(id));
   } catch {
-    // Storage disabled / quota exceeded — non-fatal, just lose persistence.
+    // Storage disabled / quota exceeded ï¿½ non-fatal, just lose persistence.
   }
 }
 
-// ── Store ──────────────────────────────────────────────────────────────────
+// -- Store ------------------------------------------------------------------
 interface BoardState {
   boardId: number | null;
   boardName: string;
-  // Lightweight summary list rendered by the ProjectSidebar — full node /
+  // Lightweight summary list rendered by the ProjectSidebar ï¿½ full node /
   // edge content lives only on the active board to keep memory bounded.
   boards: Board[];
   nodes: FlowNode[];
@@ -489,7 +475,7 @@ interface BoardState {
   // Callers that need to wire up an edge immediately (e.g. drop-popover
   // shortcut) need the id back synchronously.
   addNodeOfType(type: NodeType, position: { x: number; y: number }): Promise<string | null>;
-  // Spawn a brand-new visual_asset node from a saved Reference. Used by
+  // Spawn a brand-new add_reference node from a saved Reference. Used by
   // both the panel click-to-spawn path and the canvas drop-to-spawn path.
   // The new node lands with status="done" + mediaId + aiBrief already
   // populated so its thumbnail loads immediately and it can be used as a
@@ -511,7 +497,7 @@ interface BoardState {
   // Spawn an empty sibling node next to `rfId` with the same type and the
   // same upstream edges. Returns the new node's rfId so callers can focus
   // / open the generation dialog on it. Used by ResultViewer's
-  // "New variant +" — gives the user a fresh canvas to gen another shot
+  // "New variant +" ï¿½ gives the user a fresh canvas to gen another shot
   // sharing the original's source refs.
   cloneNodeWithUpstream(rfId: string): Promise<string | null>;
 
@@ -548,7 +534,7 @@ interface BoardState {
   reparentNode(nodeRfId: string, parentRfId: string | undefined, absX: number, absY: number): Promise<void>;
 
   updateNodeData(rfId: string, partial: Partial<FlowboardNodeData>): void;
-  /** Merge `partial` into edge.data — used to refresh the local cache
+  /** Merge `partial` into edge.data ï¿½ used to refresh the local cache
    * after a PATCH /api/edges/{id} so the badge updates without waiting
    * for a full board refresh. */
   updateEdgeData(edgeId: string, partial: Partial<FlowboardEdgeData>): void;
@@ -658,7 +644,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     const remaining = get().boards.filter((b) => b.id !== id);
     set({ boards: remaining });
     // If we just deleted the active board, switch to the first remaining
-    // board — or create a fresh "Untitled" if none left.
+    // board ï¿½ or create a fresh "Untitled" if none left.
     if (get().boardId === id) {
       if (remaining.length > 0) {
         await get().switchBoard(remaining[0].id);
@@ -685,7 +671,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       const edges: Edge[] = detail.edges.map(edgeFromDto);
       set({ nodes, edges });
     } catch {
-      // ignore — leave state alone, next poll will retry
+      // ignore ï¿½ leave state alone, next poll will retry
     }
   },
 
@@ -731,12 +717,12 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       const node = nodeFromDto(dto);
       set((s) => ({ nodes: [...s.nodes, node] }));
 
-      // ── Auto-connect (Concepta workflow UX) ──────────────────────
+      // -- Auto-connect (Concepta workflow UX) ----------------------
       // When the user drops a downstream node type (multiview / part /
       // variant) and there's exactly ONE selected concept-bearing node
       // on the canvas, auto-wire an edge from that concept to the new
       // node. Saves the user from having to manually drag an edge
-      // every time — the most common workflow is "select concept →
+      // every time ï¿½ the most common workflow is "select concept ?
       // add Part" and the edge is implied.
       //
       // Rules:
@@ -744,19 +730,20 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       //     (multiview, part, variant). Reference + Concept are roots.
       //   - Only fires when exactly 1 node is selected AND that node
       //     is a valid upstream type (concept / multiview / part /
-      //     variant / reference — anything with media output).
+      //     variant / reference ï¿½ anything with media output).
       //   - Does NOT fire if the user already has an edge to this new
       //     node (e.g. from the drop-popover path which wires its own).
-      const DOWNSTREAM_TYPES: Set<NodeType> = new Set([
-        "multiview", "part", "variant", "pose", "turntable",
-      ]);
+      const DOWNSTREAM_TYPES: Set<NodeType> = new Set(["variant"]);
       const VALID_UPSTREAM_TYPES: Set<NodeType> = new Set([
-        "concept", "multiview", "part", "variant", "reference",
+        "reference",
+        "upload",
+        "add_reference",
+        "variant",
       ]);
       if (DOWNSTREAM_TYPES.has(type)) {
         const selected = nodes.filter((n) => n.selected);
         if (selected.length === 1 && VALID_UPSTREAM_TYPES.has(selected[0].data.type)) {
-          // Check no edge already exists (defensive — drop-popover
+          // Check no edge already exists (defensive ï¿½ drop-popover
           // path creates its own edge before calling addNodeOfType).
           const existingEdge = get().edges.find(
             (e) => e.source === selected[0].id && e.target === node.id,
@@ -781,7 +768,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     try {
       const dto = await createNode({
         board_id: boardId,
-        type: "visual_asset",
+        type: "add_reference",
         x: Math.round(position.x),
         y: Math.round(position.y),
         data: {
@@ -794,7 +781,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         },
       });
       // Mirror addNodeOfType's local-state insertion, but propagate the
-      // rich data fields so the visual_asset body renders the thumbnail
+      // rich data fields so the add_reference body renders the thumbnail
       // straight away (instead of falling into the empty-state CTA).
       const node: FlowNode = {
         id: String(dto.id),
@@ -840,7 +827,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       clearTimeout(pending);
       positionTimers.delete(rfId);
     }
-    // Also cancel any in-flight generation poll — otherwise the poll loop
+    // Also cancel any in-flight generation poll ï¿½ otherwise the poll loop
     // keeps pinging the server about a node that no longer exists.
     // Dynamic import to avoid a circular store dependency at module init.
     try {
@@ -936,7 +923,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     };
     set((s) => ({ nodes: [...s.nodes, newNode] }));
 
-    // Replicate upstream edges: every (upstream → src) becomes (upstream → clone).
+    // Replicate upstream edges: every (upstream ? src) becomes (upstream ? clone).
     const upstreamEdges = edges.filter((e) => e.target === rfId);
     for (const upstreamEdge of upstreamEdges) {
       const sourceId = parseInt(upstreamEdge.source, 10);
@@ -955,13 +942,13 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         const newEdge = edgeFromDto(eDto);
         set((s) => ({ edges: [...s.edges, newEdge] }));
       } catch {
-        // best-effort — partial edge replication still useful
+        // best-effort ï¿½ partial edge replication still useful
       }
     }
     return newNode.id;
   },
 
-  // ── Group operations ──────────────────────────────────────────────
+  // -- Group operations ----------------------------------------------
   async groupNodes(rfIds) {
     const { boardId, nodes } = get();
     if (boardId === null || rfIds.length === 0) return null;
@@ -979,7 +966,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     // persisted `nodeWidth` (or the default per-type width) for x extent
     // because `n.measured` is async-populated and undefined right after
     // a fresh load. Height defaults to 200 as a reasonable lower bound
-    // — the resulting box gets a generous bottom padding so labels and
+    // ï¿½ the resulting box gets a generous bottom padding so labels and
     // toolbars stay inside the frame.
     // Uniform breathing room around every child. The 40px gap is
     // generous enough to leave a clearly clickable margin between
@@ -1106,7 +1093,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     try {
       await patchNode(dbId, { data: { groupColor: color } });
     } catch {
-      // surface silently — local state already reflects the choice
+      // surface silently ï¿½ local state already reflects the choice
     }
   },
 
@@ -1146,7 +1133,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       try {
         await patchNode(dbId, { data: { locked: nextLocked } });
       } catch {
-        // ignore — local state already reflects the toggle
+        // ignore ï¿½ local state already reflects the toggle
       }
     }
   },
@@ -1220,7 +1207,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         newChildNodes.push(newChild);
         childIdMap.set(child.id, newChild.id);
       } catch {
-        // best-effort — keep going so we at least get a partial copy
+        // best-effort ï¿½ keep going so we at least get a partial copy
       }
     }
 

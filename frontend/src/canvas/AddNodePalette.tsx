@@ -9,17 +9,7 @@ import {
   Type,
   ImageUp,
   Upload,
-  Video,
-  Sparkles,
-  Image,
   Layers,
-  Palette,
-  Box,
-  RotateCw,
-  PersonStanding,
-  Puzzle,
-  LayoutGrid,
-  Clapperboard,
 } from "lucide-react";
 
 import { useBoardStore } from "../store/board";
@@ -55,28 +45,7 @@ const CATEGORIES: Category[] = [
     name: "IMAGE",
     nodes: [
       { type: "reference", icon: ImageUp, label: "Image Generator" },
-      { type: "image", icon: Image, label: "Image" },
-      { type: "visual_asset", icon: Sparkles, label: "Visual Asset" },
-      { type: "concept", icon: Box, label: "Concept" },
-      { type: "multiview", icon: LayoutGrid, label: "Multi-view" },
       { type: "variant", icon: Layers, label: "Variant" },
-      { type: "style_pack", icon: Palette, label: "Style Pack" },
-    ],
-  },
-  {
-    name: "CHARACTER",
-    nodes: [
-      { type: "character", icon: PersonStanding, label: "Character" },
-      { type: "pose", icon: PersonStanding, label: "Pose" },
-      { type: "part", icon: Puzzle, label: "Part" },
-      { type: "turntable", icon: RotateCw, label: "Turntable" },
-    ],
-  },
-  {
-    name: "VIDEO",
-    nodes: [
-      { type: "video", icon: Video, label: "Video" },
-      { type: "Storyboard", icon: Clapperboard, label: "Storyboard" },
     ],
   },
   {

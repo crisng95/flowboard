@@ -19,8 +19,8 @@ from flowboard.db.models import Reference
 router = APIRouter(prefix="/api/references", tags=["references"])
 
 
-# Valid kinds — matches the source node types that can be saved.
-_ALLOWED_KINDS = {"image", "character", "visual_asset", "storyboard_shot"}
+# Valid kinds — matches the remaining media-bearing node types.
+_ALLOWED_KINDS = {"add_reference", "upload", "reference", "variant"}
 
 
 class ReferenceCreate(BaseModel):

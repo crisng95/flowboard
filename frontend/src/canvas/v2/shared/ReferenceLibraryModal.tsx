@@ -1,7 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Box, Camera, Check, Image, Layers, Palette, Search, Sparkles, Upload, User, WandSparkles, X } from "lucide-react";
+import { Box, Camera, Check, Image, Layers, Palette, Search, Sparkles, Upload, User, WandSparkles, X, PersonStanding } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
+import {
+  CHARACTER_GENDERS,
+  CHARACTER_COUNTRIES,
+  CHARACTER_VIBES,
+  type GenderKey,
+  type CountryKey,
+  type VibeKey,
+} from "../../../constants/character";
+import type { CharacterConfig } from "./buildCharacterPrompt";
+
+export type { CharacterConfig } from "./buildCharacterPrompt";
 
 export interface ReferencePreset {
   key: string;
@@ -17,6 +28,7 @@ export interface ReferencePreset {
 export type ReferenceCategoryKey =
   | "style"
   | "character"
+  | "pose"
   | "element"
   | "structure"
   | "effects"
@@ -26,6 +38,7 @@ export type ReferenceCategoryKey =
 const CATEGORIES: Array<{ key: ReferenceCategoryKey; label: string; icon: typeof Sparkles }> = [
   { key: "style", label: "Style", icon: Sparkles },
   { key: "character", label: "Character", icon: User },
+  { key: "pose", label: "Pose", icon: PersonStanding },
   { key: "element", label: "Element", icon: WandSparkles },
   { key: "structure", label: "Structure", icon: Layers },
   { key: "effects", label: "Effects", icon: Box },
@@ -126,7 +139,7 @@ const PRESETS: ReferencePreset[] = [
     thumbnail: "https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=520&auto=format&fit=crop&q=82",
     prompt: "Pose reference, clear skeletal body mechanics, readable silhouette, full-body framing, neutral background",
     refType: "pose",
-    category: "character",
+    category: "pose",
   },
   {
     key: "vitro",
@@ -187,6 +200,46 @@ const PRESETS: ReferencePreset[] = [
     prompt: "Historical structure reference, period-accurate armor silhouette, grounded construction details, authentic proportions",
     refType: "sketch",
     category: "structure",
+  },
+  {
+    key: "action_pose",
+    title: "#actionpose",
+    hint: "Dynamic runner active pose template",
+    tag: "Prompt",
+    thumbnail: "https://images.unsplash.com/photo-1476480862126-209bfaa8edc8?w=520&auto=format&fit=crop&q=82",
+    prompt: "Dynamic character action pose, athletic runner sprinting pose template, side-view bipedal skeleton wireframe, high contrast motion silhouette, solid grey backdrop",
+    refType: "pose",
+    category: "pose",
+  },
+  {
+    key: "studio_portrait",
+    title: "#studio-portrait",
+    hint: "Editorial studio portrait pose posture",
+    tag: "Prompt",
+    thumbnail: "https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=520&auto=format&fit=crop&q=82",
+    prompt: "Classic editorial portrait pose, female fashion model studio portrait posture, bipedal skeletal anchor, clean high-fashion visual outline, minimalist light grey studio backdrop",
+    refType: "pose",
+    category: "pose",
+  },
+  {
+    key: "mecha_pose",
+    title: "#mecha-a-pose",
+    hint: "Futuristic robotic bipedal A-pose sheet",
+    tag: "Trained",
+    thumbnail: "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=520&auto=format&fit=crop&q=82",
+    prompt: "Hard-surface armor A-pose guide, futuristic mecha robot bipedal skeletal pose template, symmetrical mechanical joint lines, neutral technical backdrop",
+    refType: "pose",
+    category: "pose",
+  },
+  {
+    key: "hero_lowangle",
+    title: "#heroview",
+    hint: "Cinematic low-angle hero silhouette",
+    tag: "Trained",
+    thumbnail: "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?w=520&auto=format&fit=crop&q=82",
+    prompt: "Dramatic low-angle hero pose silhouette, bipedal skeletal layout guide, cinematic perspective outline, powerful dynamic framing, solid dark grey backdrop",
+    refType: "pose",
+    category: "pose",
   },
   {
     key: "sparkling",
@@ -255,6 +308,7 @@ interface ReferenceLibraryModalProps {
   onClose: () => void;
   onSelect: (presets: ReferencePreset[]) => void;
   onUploadCustom?: () => void;
+  onGenerateCharacter?: (config: CharacterConfig) => void;
   initialCategory?: ReferenceCategoryKey;
 }
 
@@ -263,17 +317,31 @@ export function ReferenceLibraryModal({
   onClose,
   onSelect,
   onUploadCustom,
+  onGenerateCharacter,
   initialCategory = "style",
 }: ReferenceLibraryModalProps) {
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<ReferenceCategoryKey>(initialCategory);
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
 
+  // Character builder state
+  const [charGender, setCharGender] = useState<GenderKey | null>(null);
+  const [charCountry, setCharCountry] = useState<CountryKey | null>(null);
+  const [charVibe, setCharVibe] = useState<VibeKey>("clean");
+  const [charExtras, setCharExtras] = useState("");
+  const isCharacterTab = activeCategory === "character";
+  const canGenChar = charGender !== null || charCountry !== null || charExtras.trim().length > 0;
+
   useEffect(() => {
     if (!isOpen) return;
     setActiveCategory(initialCategory);
     setSelectedKeys([]);
     setSearch("");
+    // Reset character builder
+    setCharGender(null);
+    setCharCountry(null);
+    setCharVibe("clean");
+    setCharExtras("");
   }, [initialCategory, isOpen]);
 
   useEffect(() => {
@@ -416,6 +484,139 @@ export function ReferenceLibraryModal({
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 nowheel img-gen-prompt">
+              {/* ── Character Builder (only on Character tab) ── */}
+              {isCharacterTab && (
+                <div className="mb-8">
+                  <div
+                    className="rounded-xl border border-white/[0.08] p-5"
+                    style={{ backgroundColor: "#1a1a1a" }}
+                  >
+                    <h4 className="mb-4 text-sm font-semibold text-white/90">
+                      ✨ Character Builder
+                    </h4>
+
+                    {/* Gender */}
+                    <div className="mb-4">
+                      <span className="mb-2 block text-xs font-medium text-white/50">Gender</span>
+                      <div className="flex flex-wrap gap-2">
+                        {CHARACTER_GENDERS.map((g) => (
+                          <button
+                            key={g.key}
+                            type="button"
+                            onClick={() => setCharGender(charGender === g.key ? null : g.key)}
+                            className={[
+                              "rounded-lg border px-3 py-1.5 text-xs font-medium transition-all",
+                              charGender === g.key
+                                ? "border-[#5574ff] bg-[#5574ff]/20 text-white"
+                                : "border-white/[0.08] bg-white/[0.04] text-white/70 hover:border-white/[0.15] hover:text-white",
+                            ].join(" ")}
+                          >
+                            {g.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Country */}
+                    <div className="mb-4">
+                      <span className="mb-2 block text-xs font-medium text-white/50">Quốc gia</span>
+                      <div className="flex flex-wrap gap-2">
+                        {CHARACTER_COUNTRIES.map((c) => (
+                          <button
+                            key={c.key}
+                            type="button"
+                            onClick={() => setCharCountry(charCountry === c.key ? null : c.key)}
+                            className={[
+                              "rounded-lg border px-3 py-1.5 text-xs font-medium transition-all",
+                              charCountry === c.key
+                                ? "border-[#5574ff] bg-[#5574ff]/20 text-white"
+                                : "border-white/[0.08] bg-white/[0.04] text-white/70 hover:border-white/[0.15] hover:text-white",
+                            ].join(" ")}
+                          >
+                            {c.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Vibe */}
+                    <div className="mb-4">
+                      <span className="mb-2 block text-xs font-medium text-white/50">Vibe</span>
+                      <div className="flex flex-wrap gap-2">
+                        {CHARACTER_VIBES.map((v) => (
+                          <button
+                            key={v.key}
+                            type="button"
+                            onClick={() => setCharVibe(v.key)}
+                            className={[
+                              "rounded-lg border px-3 py-1.5 text-xs font-medium transition-all",
+                              charVibe === v.key
+                                ? "border-[#5574ff] bg-[#5574ff]/20 text-white"
+                                : "border-white/[0.08] bg-white/[0.04] text-white/70 hover:border-white/[0.15] hover:text-white",
+                            ].join(" ")}
+                          >
+                            {v.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Extras */}
+                    <div className="mb-5">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-xs font-medium text-white/50">Mô tả thêm (tuỳ chọn)</span>
+                        <span className="text-[10px] text-white/30">{charExtras.length}/200</span>
+                      </div>
+                      <textarea
+                        value={charExtras}
+                        onChange={(e) => setCharExtras(e.target.value)}
+                        maxLength={200}
+                        rows={2}
+                        placeholder="Tuổi, kiểu tóc, trang phục, biểu cảm…"
+                        className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-xs text-white outline-none placeholder:text-white/30 focus:border-white/[0.15] transition-colors resize-none"
+                      />
+                    </div>
+
+                    {/* Generate button */}
+                    <button
+                      type="button"
+                      disabled={!canGenChar}
+                      onClick={() => {
+                        if (!canGenChar) return;
+                        onGenerateCharacter?.({
+                          gender: charGender,
+                          country: charCountry,
+                          vibe: charVibe,
+                          extras: charExtras,
+                        });
+                        onClose();
+                      }}
+                      className={[
+                        "flex h-10 w-full items-center justify-center gap-2 rounded-lg text-xs font-semibold transition-all",
+                        canGenChar
+                          ? "bg-[#566cff] text-white hover:bg-[#667aff] active:scale-[0.98]"
+                          : "cursor-not-allowed bg-white/[0.06] text-white/30",
+                      ].join(" ")}
+                    >
+                      <Sparkles size={14} strokeWidth={2} />
+                      Generate Character
+                    </button>
+
+                    <p className="mt-3 text-[10px] leading-relaxed text-white/35">
+                      Auto-build prompt: portrait headshot · vibe styling · photorealistic — tối ưu cho character reference.
+                    </p>
+                  </div>
+
+                  {/* Divider */}
+                  <div className="mt-8 flex items-center gap-4">
+                    <span className="h-px flex-1 bg-white/[0.06]" />
+                    <span className="text-[10px] font-medium text-white/30">hoặc chọn preset</span>
+                    <span className="h-px flex-1 bg-white/[0.06]" />
+                  </div>
+                </div>
+              )}
+
+              {/* ── Preset grid ── */}
               {filteredPresets.length > 0 ? (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(128px,1fr))] gap-x-6 gap-y-8">
                   {filteredPresets.map((preset) => {

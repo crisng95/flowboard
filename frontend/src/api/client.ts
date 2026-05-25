@@ -257,23 +257,9 @@ export function getHealth() {
 // â”€â”€ DTOs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export type NodeType =
-  // legacy (Flowboard upstream â€” still creatable for backward compat)
-  | "character"
-  | "image"
-  | "video"
-  | "prompt"
   | "note"
-  | "visual_asset"
-  | "Storyboard"
-  // Concepta fork â€” game / arch / illustration asset pipeline
   | "reference"
-  | "style_pack"
-  | "concept"
-  | "multiview"
-  | "part"
   | "variant"
-  | "pose"
-  | "turntable"
   | "upload"
   | "text"
   | "add_reference"
@@ -783,86 +769,13 @@ export async function autoPrompt(
   return res.json() as Promise<AutoPromptResponse>;
 }
 
-// â”€â”€ Multi-view (Concepta fork) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-export type MultiviewMode = "edit_chain" | "sheet_regen";
-
-export interface AutoPromptMultiviewResponse {
-  node_id: number;
-  angles: string[];
-  prompts: string[];
-  /** Populated only when mode === "sheet_regen". Frontend can use this
-   *  to dispatch the Phase-1 sheet generation in the same flow. */
-  sheet_prompt?: string | null;
-}
-
-export interface AutoPromptSheetResponse {
-  node_id: number;
-  preset: string;
-  angles: string[];
-  sheet_prompt: string;
-  per_view_prompts: string[];
-}
-
-/**
- * Compose per-angle prompts for a Multi-view node. Backend returns
- * angles + prompts in lock-step; the dispatch handler then fans
- * them out as one root + N-1 edits.
- */
-export async function autoPromptMultiview(
-  nodeId: number,
-  preset: string,
-  mode: MultiviewMode = "edit_chain",
-): Promise<AutoPromptMultiviewResponse> {
-  const res = await fetch("/api/prompt/auto-multiview", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ node_id: nodeId, preset, mode }),
-  });
-  if (!res.ok) {
-    throw new Error(await extractErrorMessage(res));
-  }
-  return res.json() as Promise<AutoPromptMultiviewResponse>;
-}
-
-/** Phase 1 of the sheet_regen pipeline: returns the multi-panel sheet
- *  prompt + per-view prompts (with reference anchors) for Phase 2.
- *  Currently called inline by dispatchMultiview when mode === sheet_regen. */
-export async function autoPromptSheet(
-  nodeId: number,
-  preset: string,
-): Promise<AutoPromptSheetResponse> {
-  const res = await fetch("/api/prompt/auto-sheet", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ node_id: nodeId, preset }),
-  });
-  if (!res.ok) {
-    throw new Error(await extractErrorMessage(res));
-  }
-  return res.json() as Promise<AutoPromptSheetResponse>;
-}
-
-// â”€â”€ Part / Variant metadata (Concepta) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-export interface PartRegionDTO {
-  key: string;
-  label: string;
-}
+// â”€â”€ Variant metadata (Concepta) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export interface VariantAxisDTO {
   key: string;
   label: string;
 }
 
-/** Surface the canonical Part region list from the backend. The
- *  frontend uses the `label` for the picker UI and ships the `key`
- *  back on dispatch; the prompt template stays backend-side so we
- *  can evolve it without a frontend redeploy. */
-export async function getPartRegions(): Promise<PartRegionDTO[]> {
-  const res = await fetch("/api/concepta/part-regions");
-  if (!res.ok) throw new Error(`getPartRegions: ${res.status}`);
-  return res.json() as Promise<PartRegionDTO[]>;
-}
-
-/** Same idea as getPartRegions, but for Variant axes. */
+/** Surface the canonical Variant axis list from the backend. */
 export async function getVariantAxes(): Promise<VariantAxisDTO[]> {
   const res = await fetch("/api/concepta/variant-axes");
   if (!res.ok) throw new Error(`getVariantAxes: ${res.status}`);
@@ -1076,7 +989,7 @@ export async function cancelActivity(id: number): Promise<void> {
 }
 
 
-// ── References ───────────────────────────────────────────────────────────
+// -- References -----------------------------------------------------------
 // User-curated cross-board library of saved media. Backend mirror:
 // agent/flowboard/routes/references.py + db.models.Reference.
 // JSON wire format is snake_case (mirrors SQLModel column names);
@@ -1091,7 +1004,7 @@ export interface ReferenceItem {
   // exists purely as a re-ingest hint when the file goes missing.
   url: string | null;
   label: string;
-  kind: "image" | "character" | "visual_asset" | "storyboard_shot";
+  kind: "add_reference" | "upload" | "reference" | "variant";
   // Snapshot of the source node's aiBrief at save time; lets cross-board
   // spawn skip the re-vision call entirely.
   aiBrief: string | null;
@@ -1144,17 +1057,17 @@ interface ReferenceRowWire {
 function mapReferenceRow(row: ReferenceRowWire): ReferenceItem {
   // Coerce the kind string into the typed union — the backend already
   // validates against _ALLOWED_KINDS so any unknown value here would
-  // mean a backend bug. Fall back to "image" defensively rather than
+  // mean a backend bug. Fall back to "add_reference" defensively rather than
   // throwing, so a single bad row doesn't break the whole list render.
   const allowed: ReferenceItem["kind"][] = [
-    "image",
-    "character",
-    "visual_asset",
-    "storyboard_shot",
+    "add_reference",
+    "upload",
+    "reference",
+    "variant",
   ];
   const kind: ReferenceItem["kind"] = (allowed as string[]).includes(row.kind)
     ? (row.kind as ReferenceItem["kind"])
-    : "image";
+    : "add_reference";
   return {
     id: row.id,
     mediaId: row.media_id,

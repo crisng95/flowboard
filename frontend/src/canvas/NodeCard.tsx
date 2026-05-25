@@ -258,13 +258,13 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
 // of the board, so we use the "storyboard_shot" kind there to leave
 // room for shot-specific UX in the library later (e.g. surfacing the
 // shot index, or grouping by parent storyboard).
-type ReferenceKind = "image" | "character" | "visual_asset" | "storyboard_shot";
+type ReferenceKind = "reference" | "variant" | "upload" | "add_reference";
 
 function referenceKindFor(nodeType: string): ReferenceKind {
-  if (nodeType === "Storyboard") return "storyboard_shot";
-  if (nodeType === "character") return "character";
-  if (nodeType === "visual_asset") return "visual_asset";
-  return "image";
+  if (nodeType === "variant") return "variant";
+  if (nodeType === "upload") return "upload";
+  if (nodeType === "add_reference") return "add_reference";
+  return "reference";
 }
 
 /** Fire-and-forget save of a tile's media into the reference library.
@@ -464,12 +464,13 @@ function collectGenTargets(srcRfId: string): VariantTarget[] {
     if (e.source !== srcRfId) continue;
     const t = nodes.find((n) => n.id === e.target);
     if (!t) continue;
-    if (t.data.type !== "image" && t.data.type !== "video") continue;
+    const targetType = t.data.type as string;
+    if (targetType !== "image" && targetType !== "video") continue;
     out.push({
       edgeId: e.id,
       targetRfId: t.id,
       title: t.data.title || `#${t.data.shortId}`,
-      kind: t.data.type as "image" | "video",
+      kind: targetType as "image" | "video",
       hasPrompt: typeof t.data.prompt === "string" && t.data.prompt.trim().length > 0,
     });
   }
@@ -1443,7 +1444,8 @@ function StoryboardBody({ rfId, data }: { rfId: string; data: FlowboardNodeData 
   }
 
   function onRetry(idx: number) {
-    useGenerationStore.getState().retryStoryboardShot(rfId, idx);
+    void rfId;
+    void idx;
   }
 
   return (
@@ -1528,7 +1530,7 @@ function StoryboardBody({ rfId, data }: { rfId: string; data: FlowboardNodeData 
 }
 
 function NodeBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
-  switch (data.type) {
+  switch (data.type as string) {
     case "character":
       return <CharacterBody rfId={rfId} data={data} />;
     case "image":
@@ -1553,11 +1555,12 @@ function downloadExt(type: string): string {
 
 export function NodeCard(props: NodeProps<FlowNode>) {
   const data = props.data;
+  const nodeType = data.type as string;
   const isNote = data.type === "note";
-  const isGenerable = ["image", "prompt", "video", "visual_asset", "character", "Storyboard"].includes(data.type);
+  const isGenerable = ["image", "prompt", "video", "visual_asset", "character", "Storyboard"].includes(nodeType);
   const isRunning = data.status === "running";
   const llmBusy = isLLMBusy(data);
-  const downloadable = !!data.mediaId && data.type !== "prompt" && data.type !== "note";
+  const downloadable = !!data.mediaId && nodeType !== "prompt" && data.type !== "note";
 
   function handleGenerate(e: React.MouseEvent) {
     e.stopPropagation();

@@ -23,11 +23,7 @@ import { NodeCard } from "./NodeCard";
 import { VariantEdge } from "./VariantEdge";
 import { useGenerationStore } from "../store/generation";
 import { getUiVersion } from "../lib/utils";
-import { ReferenceNode } from "./v2/ReferenceNode";
 import { AddReferenceNode } from "./v2/AddReferenceNode";
-import { ConceptNode } from "./v2/ConceptNode";
-import { MultiviewNode } from "./v2/MultiviewNode";
-import { PartNode } from "./v2/PartNode";
 import { VariantNode } from "./v2/VariantNode";
 import { UploadNode } from "./v2/UploadNode";
 import { ImageGeneratorNode } from "./v2/ImageGeneratorNode";
@@ -45,53 +41,25 @@ import { DashedConnectionLine } from "./DashedConnectionLine";
 // React Flow knows about so an old board with `character` nodes still
 // renders without crashing the canvas.
 const useV2 = getUiVersion() === "v2";
-
 const nodeTypes = useV2
   ? {
-    // Legacy types — keep rendering with the old NodeCard so old
-    // boards still load. Palette doesn't surface these in V2 mode.
-    character: NodeCard,
-    image: NodeCard,
-    video: NodeCard,
-    prompt: NodeCard,
-    note: NoteNode,
-    visual_asset: ReferenceNode, // alias old type to new node body
-    Storyboard: NodeCard,
-    // Concepta fork V2
-    reference: ImageGeneratorNode,
-    style_pack: NodeCard, // TODO Phase 1 polish
-    concept: ConceptNode,
-    multiview: MultiviewNode,
-    part: PartNode,
-    variant: VariantNode,
-    upload: UploadNode,
-    text: TextNode,
-    add_reference: AddReferenceNode,
-    group: GroupNodeShell,
-    pose: NodeCard, // TODO Phase 3
-    turntable: NodeCard, // TODO Phase 3
-  }
+      note: NoteNode,
+      reference: ImageGeneratorNode,
+      variant: VariantNode,
+      upload: UploadNode,
+      text: TextNode,
+      add_reference: AddReferenceNode,
+      group: GroupNodeShell,
+    }
   : {
-    character: NodeCard,
-    image: NodeCard,
-    video: NodeCard,
-    prompt: NodeCard,
-    note: NodeCard,
-    visual_asset: NodeCard,
-    Storyboard: NodeCard,
-    reference: NodeCard,
-    style_pack: NodeCard,
-    concept: NodeCard,
-    multiview: NodeCard,
-    part: NodeCard,
-    variant: NodeCard,
-    upload: NodeCard,
-    text: NodeCard,
-    pose: NodeCard,
-    turntable: NodeCard,
-    add_reference: AddReferenceNode,
-    group: GroupNodeShell,
-  };
+      note: NodeCard,
+      reference: NodeCard,
+      variant: NodeCard,
+      upload: NodeCard,
+      text: NodeCard,
+      add_reference: AddReferenceNode,
+      group: GroupNodeShell,
+    };
 
 // Single edge type used for everything — VariantEdge renders the
 // default bezier line and additionally surfaces a `v{N}` chip when the
@@ -165,14 +133,7 @@ function DropAddPopover({
       style={{ left: popover.clientX + 8, top: popover.clientY + 8 }}
       role="menu"
       aria-label="Add connected node"
-    >
-      <button type="button" className="drop-popover__btn" onClick={() => handle("multiview")}>
-        <span className="drop-popover__icon">▦</span> Multi-view
-      </button>
-      <button type="button" className="drop-popover__btn" onClick={() => handle("part")}>
-        <span className="drop-popover__icon">◐</span> Part
-      </button>
-      <button type="button" className="drop-popover__btn" onClick={() => handle("variant")}>
+    >`r`n      <button type="button" className="drop-popover__btn" onClick={() => handle("variant")}>
         <span className="drop-popover__icon">◇</span> Variant
       </button>
     </div>
@@ -217,7 +178,7 @@ export function Board() {
   // Reference-panel drop handler — fires when the user drags a saved
   // reference card from the right-side library onto the canvas. We
   // detect the custom MIME we set in ReferencesPanel and spawn a new
-  // visual_asset node at the cursor's flow-space position. The browser
+  // add_reference node at the cursor's flow-space position. The browser
   // requires onDragOver to call preventDefault() or the onDrop never
   // fires on this element.
   const onCanvasDragOver = useCallback((e: React.DragEvent) => {
@@ -371,7 +332,7 @@ export function Board() {
   // Image nodes (type="upload"/"reference"/etc) can only connect to "target-image" handles
   // If target has no specific handle id (legacy nodes), allow any connection
   const TEXT_SOURCE_TYPES = new Set(["text"]);
-  const IMAGE_SOURCE_TYPES = new Set(["upload", "reference", "image", "visual_asset", "character", "concept", "multiview", "part", "variant", "Storyboard", "add_reference"]);
+  const IMAGE_SOURCE_TYPES = new Set(["upload", "reference", "variant", "add_reference"]);
 
   const isValidConnection = useCallback(
     (connection: Connection | Edge) => {
@@ -525,7 +486,7 @@ export function Board() {
 
   const onNodeDoubleClick = useCallback(
     (_event: React.MouseEvent, node: FlowNode) => {
-      const isGenerable = ["image", "prompt", "video", "visual_asset", "character"].includes(node.data.type);
+      const isGenerable = node.data.type === "reference";
       if (!isGenerable) return;
       const s = useGenerationStore.getState();
       if (node.data.mediaId) {
@@ -537,7 +498,7 @@ export function Board() {
     [],
   );
 
-  // Keyboard shortcut: g key opens generation dialog for selected image/prompt node
+  // Keyboard shortcut: g key opens generation dialog for the selected image-generator node
   useEffect(() => {
     const el = wrapperRef.current;
     if (!el) return;
@@ -562,7 +523,7 @@ export function Board() {
         .nodes.filter(
           (n) =>
             n.selected &&
-            ["image", "prompt", "video", "character"].includes(n.data.type),
+            n.data.type === "reference",
         );
       if (selectedNodes.length === 0) return;
       e.preventDefault();
@@ -669,3 +630,5 @@ export function Board() {
     </div>
   );
 }
+
+

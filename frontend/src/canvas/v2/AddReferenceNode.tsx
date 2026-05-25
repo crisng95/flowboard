@@ -11,7 +11,8 @@ import { ResizeHandle } from "./shared/ResizeHandle";
 import { useNodeWidth } from "./shared/useNodeWidth";
 import { persistNodeData } from "./shared/persistNodeData";
 import { createNode } from "../../api/client";
-import { ReferenceLibraryModal, referenceCategoryLabel, type ReferenceCategoryKey, type ReferencePreset } from "./shared/ReferenceLibraryModal";
+import { ReferenceLibraryModal, referenceCategoryLabel, type ReferenceCategoryKey, type ReferencePreset, type CharacterConfig } from "./shared/ReferenceLibraryModal";
+import { buildCharacterPrompt } from "./shared/buildCharacterPrompt";
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 500;
@@ -62,6 +63,8 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
   const userNote = (data.prompt as string | undefined) ?? "";
   const aiBrief = (data.aiBrief as string | undefined) ?? "";
   const aiBriefPending = (data.aiBriefStatus as string | undefined) === "pending";
+  const nodeStatus = (data.status as string | undefined) ?? "idle";
+  const isGenerating = nodeStatus === "queued" || nodeStatus === "running";
 
   // Hover with delay
   const [hovered, setHovered] = useState(false);
@@ -159,6 +162,30 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
     await Promise.all(presets.slice(1).map((preset, index) => spawnPresetNode(preset, index + 1)));
   }, [applyPresetToCurrentNode, spawnPresetNode]);
 
+  // Character builder → dispatch generation directly from this node
+  const handleGenerateCharacter = useCallback(async (config: CharacterConfig) => {
+    const prompt = buildCharacterPrompt(config);
+    // Persist character metadata and prompt on the node
+    persistNodeData(rfId, {
+      prompt,
+      refType: "character",
+      referenceCategory: "character",
+      charGender: config.gender ?? undefined,
+      charCountry: config.country ?? undefined,
+      charVibe: config.vibe,
+      aiBrief: null,
+      aiBriefStatus: undefined,
+    });
+    // Dispatch image generation — the generation store handles
+    // queued → running → done state transitions and polls for results.
+    // Aspect ratio is hardcoded to SQUARE for character headshots.
+    useGenerationStore.getState().dispatchGeneration(rfId, {
+      prompt,
+      aspectRatio: "IMAGE_ASPECT_RATIO_SQUARE",
+      variantCount: 1,
+    });
+  }, [rfId]);
+
   const displayUrl = mediaId && (mediaId.startsWith("http://") || mediaId.startsWith("https://"))
     ? mediaId
     : mediaId
@@ -203,6 +230,7 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
           "relative overflow-visible transition-all duration-300 ease-out",
           "border-[3px] border-white/[0.14] shadow-lg",
           selected && "ring-2 ring-accent/50",
+          isGenerating && "ring-2 ring-accent/30 animate-pulse",
           flow.dragOver && "ring-2 ring-accent/40",
         )}
         style={{ borderRadius: BORDER_RADIUS, backgroundColor: "#1a1a1a" }}
@@ -215,18 +243,9 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
           className={cn(
             "relative flex items-center justify-center cursor-pointer overflow-hidden",
             "transition-all duration-300 ease-out",
-            !mediaId && "min-h-[180px]",
+            !mediaId && !isGenerating && "min-h-[180px]",
           )}
           style={{
-            // Drive the box ratio from the actual image dimensions
-            // when available - that way 4:3, 3:4, 5:7, 21:9 (anything
-            // outside Flow's 3-bucket SQUARE/PORTRAIT/LANDSCAPE enum)
-            // all render at their true ratio. Backend keeps using
-            // the enum for downstream gen because Flow's API only
-            // accepts those three values.
-            // Fall back to the enum-derived CSS ratio while the image
-            // is still loading, then to 1:1, then to 1:1 for the
-            // empty drop-zone state.
             aspectRatio: mediaId
               ? imgSize
                 ? `${imgSize.w} / ${imgSize.h}`
@@ -252,7 +271,7 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
                 <div className="absolute inset-0 bg-black/50 transition-opacity duration-300 z-[5]" />
               )}
 
-              {/* Floating Fullscreen button bay cực chất chuẩn Magnific AI */}
+              {/* Floating Fullscreen button */}
               {showControls && !promptFocused && (
                 <button
                   type="button"
@@ -288,8 +307,18 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
           {/* Uploading */}
           {flow.bodyState === "uploading" && <UploadingOverlay />}
 
-          {/* Empty state chuẩn đẹp 1:1 Magnific AI */}
-          {flow.bodyState === "empty" && !flow.dragOver && (
+          {/* Generating character overlay */}
+          {isGenerating && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/40 backdrop-blur-sm z-10">
+              <div className="size-8 rounded-full border-2 border-white/20 border-t-accent animate-spin" />
+              <span className="text-2xs font-medium text-white/70">
+                {nodeStatus === "queued" ? "Queued…" : "Generating…"}
+              </span>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {flow.bodyState === "empty" && !flow.dragOver && !isGenerating && (
             <div
               className="flex size-full flex-col items-center justify-center gap-5 p-4 bg-white/[0.01] cursor-pointer hover:bg-white/[0.03] transition-colors duration-300"
               onClick={() => setShowLibrary(true)}
@@ -428,7 +457,7 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
           <ImageUp size={11} strokeWidth={2} />
         </div>
 
-        {/* Hover Tooltip trượt ngang bay ra cực mượt từ cạnh handle chuẩn Magnific AI */}
+        {/* Hover Tooltip */}
         <div className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-x-3 -translate-y-1/2 scale-90 whitespace-nowrap rounded-lg border border-white/[0.08] bg-[#2a2a2a] px-2.5 py-1.5 text-[10px] font-medium text-white/80 opacity-0 shadow-xl transition-all duration-200 ease-in-out group-hover/handle:translate-x-0 group-hover/handle:scale-100 group-hover/handle:opacity-100">
           Reference
         </div>
@@ -449,6 +478,7 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
         onClose={() => setShowLibrary(false)}
         onSelect={handleSelectPresets}
         onUploadCustom={flow.pickFile}
+        onGenerateCharacter={handleGenerateCharacter}
         initialCategory={libraryCategory}
       />
     </div>
