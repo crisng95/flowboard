@@ -11,6 +11,7 @@ import { ResizeHandle } from "./shared/ResizeHandle";
 import { useNodeWidth } from "./shared/useNodeWidth";
 import { persistNodeData } from "./shared/persistNodeData";
 import { HandleBadge } from "./shared/HandleBadge";
+import { edgeHandleClass, EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET } from "./shared/edgeHandle";
 import { createNode } from "../../api/client";
 import { ReferenceLibraryModal, referenceCategoryLabel, type ReferenceCategoryKey, type ReferencePreset, type CharacterConfig } from "./shared/ReferenceLibraryModal";
 import { buildCharacterPrompt } from "./shared/buildCharacterPrompt";
@@ -229,7 +230,7 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
         data-selected={selected || undefined}
         className={cn(
           "relative overflow-visible transition-all duration-300 ease-out",
-          "border-[3px] border-white/[0.14] shadow-lg",
+          "border-[3px] border-white/[0.14] shadow-[0_8px_28px_-10px_rgba(0,0,0,0.6)]",
           selected && "ring-2 ring-accent/50",
           isGenerating && "ring-2 ring-accent/30 animate-pulse",
           flow.dragOver && "ring-2 ring-accent/40",
@@ -427,6 +428,8 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
 
         {/* Resize handle */}
         <ResizeHandle
+          nodeId={rfId}
+          corners={["br", "bl", "tr"]}
           minWidth={MIN_WIDTH}
           maxWidth={MAX_WIDTH}
           currentWidth={nodeWidth}
@@ -441,11 +444,8 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
         type="source"
         position={Position.Right}
         id="source"
-        className={cn(
-          "!absolute !-right-0 !top-[48px] !h-7 !w-7 !border-0 !bg-transparent group/handle",
-          "transition-opacity duration-300 ease-out",
-          showHandle ? "!opacity-100" : "!opacity-0 !pointer-events-none",
-        )}
+        style={{ top: EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET }}
+        className={edgeHandleClass({ side: "right", visible: showHandle })}
       >
         <HandleBadge icon={ImageUp} active={hasConnectedEdge} label="Reference Image" side="right" />
       </Handle>

@@ -15,6 +15,7 @@ import { type ReactNode, useState, useRef } from "react";
 
 import { cn } from "../../lib/utils";
 import { HandleBadge } from "./shared/HandleBadge";
+import { edgeHandleClass, EDGE_HANDLE_TOP_OFFSET } from "./shared/edgeHandle";
 
 interface HandleSpec {
   id: string;
@@ -161,11 +162,8 @@ export function NodeShell({
           type="source"
           position={Position.Right}
           id={sourceHandle.id}
-          className={cn(
-            "!absolute !-right-0 !top-[20px] !h-7 !w-7 !border-0 !bg-transparent group/handle",
-            "transition-opacity duration-300 ease-out",
-            showSourceHandle ? "!opacity-100" : "!opacity-0 !pointer-events-none",
-          )}
+          style={{ top: EDGE_HANDLE_TOP_OFFSET }}
+          className={edgeHandleClass({ side: "right", visible: showSourceHandle })}
         >
           <HandleBadge
             icon={sourceHandle.icon}
@@ -184,11 +182,8 @@ export function NodeShell({
           type="target"
           position={Position.Left}
           id={targetHandle.id}
-          className={cn(
-            "!absolute !-left-0 !top-[20px] !h-7 !w-7 !border-0 !bg-transparent group/handle",
-            "transition-opacity duration-300 ease-out",
-            showTargetHandle ? "!opacity-100" : "!opacity-0 !pointer-events-none",
-          )}
+          style={{ top: EDGE_HANDLE_TOP_OFFSET }}
+          className={edgeHandleClass({ side: "left", visible: showTargetHandle })}
         >
           <HandleBadge
             icon={targetHandle.icon}

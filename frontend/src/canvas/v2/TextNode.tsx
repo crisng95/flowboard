@@ -41,6 +41,7 @@ function DualResizeHandle({
 }: DualResizeHandleProps) {
   const { getZoom } = useReactFlow();
   const [isDragging, setIsDragging] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const [liveSize, setLiveSize] = useState<{ w: number; h: number } | null>(null);
   const dragStateRef = useRef<{
     startX: number;
@@ -94,18 +95,20 @@ function DualResizeHandle({
 
   return (
     <div
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       onMouseDown={(e) => e.stopPropagation()}
       className={cn(
         "absolute z-10 flex items-center justify-center group",
-        isDragging ? "[&_path]:opacity-100" : forceVisible ? "[&_path]:opacity-30 group-hover:[&_path]:opacity-100" : "[&_path]:opacity-0",
+        isDragging ? "[&_path]:opacity-100" : forceVisible && isHovered ? "[&_path]:opacity-50" : "[&_path]:opacity-0",
         "[&_path]:transition-opacity [&_path]:duration-100",
         isDragging && "[&_path]:!opacity-100",
       )}
       style={{
         bottom: 0,
         right: 0,
-        width: 48,
-        height: 48,
+        width: 64,
+        height: 64,
         transform: "translate(50%, 50%)",
         background: "transparent",
         touchAction: "none",
@@ -142,7 +145,7 @@ function DualResizeHandle({
         <path
           d="M 36 22 A 14 14 0 0 1 22 36"
           stroke="rgba(0,0,0,0)"
-          strokeWidth="14"
+          strokeWidth="18"
           strokeLinecap="round"
           fill="none"
           pointerEvents="stroke"
@@ -154,7 +157,7 @@ function DualResizeHandle({
         <path
           d="M 36 22 A 14 14 0 0 1 22 36"
           stroke="rgba(255,255,255,0.95)"
-          strokeWidth="3"
+          strokeWidth="5"
           strokeLinecap="round"
           fill="none"
           pointerEvents="none"

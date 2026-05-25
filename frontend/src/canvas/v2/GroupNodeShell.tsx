@@ -71,16 +71,15 @@ function GroupCornerHandle({
   nodeId,
   locked,
   forceVisible,
-  color,
 }: {
   corner: Corner;
   nodeId: string;
   locked: boolean;
   forceVisible: boolean;
-  color: string;
 }) {
   const { getZoom, getNode, setNodes } = useReactFlow();
   const [isDragging, setIsDragging] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const [liveSize, setLiveSize] = useState<{ w: number; h: number } | null>(null);
   const persistGroupSize = useBoardStore((s) => s.persistGroupSize);
 
@@ -203,21 +202,24 @@ function GroupCornerHandle({
 
   return (
     <div
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       onMouseDown={(e) => e.stopPropagation()}
       className={cn(
         "absolute z-10 flex items-center justify-center group",
         isDragging
           ? "[&_path]:opacity-100"
           : forceVisible
-          ? "[&_path]:opacity-30 group-hover:[&_path]:opacity-100"
+          && isHovered
+          ? "[&_path]:opacity-50"
           : "[&_path]:opacity-0",
         "[&_path]:transition-opacity [&_path]:duration-100",
         isDragging && "[&_path]:!opacity-100",
       )}
       style={{
         ...CORNER_POSITION[corner],
-        width: 48,
-        height: 48,
+        width: 64,
+        height: 64,
         background: "transparent",
         touchAction: "none",
         pointerEvents: "auto",
@@ -258,7 +260,7 @@ function GroupCornerHandle({
           d={ARC_PATH}
           transform={CORNER_ROTATION[corner]}
           stroke="rgba(0,0,0,0)"
-          strokeWidth="14"
+          strokeWidth="18"
           strokeLinecap="round"
           fill="none"
           pointerEvents="stroke"
@@ -271,8 +273,8 @@ function GroupCornerHandle({
         <path
           d={ARC_PATH}
           transform={CORNER_ROTATION[corner]}
-          stroke={color}
-          strokeWidth="3"
+          stroke="rgba(255,255,255,0.95)"
+          strokeWidth="5"
           strokeLinecap="round"
           fill="none"
           pointerEvents="none"
@@ -322,7 +324,7 @@ export function GroupNodeShell({ id, data, selected, width, height }: NodeProps<
     }
   }
 
-  const showHandles = !!selected || hovered;
+  const showHandles = !!selected;
 
   return (
     <div
@@ -417,9 +419,9 @@ export function GroupNodeShell({ id, data, selected, width, height }: NodeProps<
       {/* 3-corner resize handles (arc style matching TextNode, omitting tl to avoid title occlusion) */}
       {!locked && (
         <>
-          <GroupCornerHandle corner="br" nodeId={id} locked={locked} forceVisible={showHandles} color={color} />
-          <GroupCornerHandle corner="bl" nodeId={id} locked={locked} forceVisible={showHandles} color={color} />
-          <GroupCornerHandle corner="tr" nodeId={id} locked={locked} forceVisible={showHandles} color={color} />
+          <GroupCornerHandle corner="br" nodeId={id} locked={locked} forceVisible={showHandles} />
+          <GroupCornerHandle corner="bl" nodeId={id} locked={locked} forceVisible={showHandles} />
+          <GroupCornerHandle corner="tr" nodeId={id} locked={locked} forceVisible={showHandles} />
         </>
       )}
 

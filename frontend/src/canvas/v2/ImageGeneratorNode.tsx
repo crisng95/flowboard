@@ -13,6 +13,7 @@ import { useNodeWidth } from "./shared/useNodeWidth";
 import { HandleBadge } from "./shared/HandleBadge";
 import { DropdownCaret } from "./shared/DropdownCaret";
 import { PickerDropdown } from "./shared/PickerDropdown";
+import { edgeHandleClass, EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET } from "./shared/edgeHandle";
 
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 600;
@@ -82,21 +83,15 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
 
   const edges = useEdges();
   const hasSourceEdge = edges.some((e) => e.source === rfId);
-  const hasTargetEdge = edges.some((e) => e.target === rfId);
+  const hasTextConnection = edges.some((e) => e.target === rfId && e.targetHandle === "target-text");
+  const hasImageConnection = edges.some((e) => e.target === rfId && e.targetHandle === "target-image");
   const connection = useConnection();
   const isConnecting = connection.inProgress && connection.fromNode?.id === rfId;
   const showSourceHandle = showControls || hasSourceEdge || isConnecting;
   const anyConnectionInProgress = connection.inProgress;
-  const showTargetHandles = showControls || hasTargetEdge || anyConnectionInProgress;
-  const targetHandleClassName = cn(
-    "!absolute !-left-0 !h-7 !w-7 !border-0 !bg-transparent",
-    "group/handle",
-    "transition-opacity duration-300 ease-out",
-    anyConnectionInProgress
-      ? "!opacity-100 !pointer-events-auto !z-50"
-      : showTargetHandles
-      ? "!opacity-100"
-      : "!opacity-0 !pointer-events-none",
+  const targetHandleClassName = (active: boolean) => cn(
+    edgeHandleClass({ side: "left", visible: showControls || active || anyConnectionInProgress }),
+    anyConnectionInProgress && "!pointer-events-auto !z-50",
   );
 
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -113,8 +108,8 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     const src = allNodes.find((n) => n.id === e.source);
     return src?.data.type === "text";
   });
-  const hasTextConnection = !!upstreamTextEdge;
-  const upstreamTextNode = hasTextConnection
+  const hasPromptSource = !!upstreamTextEdge;
+  const upstreamTextNode = hasPromptSource
     ? allNodes.find((n) => n.id === upstreamTextEdge!.source)
     : null;
   const upstreamText = ((upstreamTextNode?.data.prompt as string) ?? "").trim();
@@ -141,7 +136,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     setShowModelPicker(false);
   }
   function handleGenerate() {
-    const finalPrompt = hasTextConnection ? upstreamText : prompt.trim();
+    const finalPrompt = hasPromptSource ? upstreamText : prompt.trim();
     const hasImageRefs = edges.some((e) => {
       if (e.target !== rfId) return false;
       const src = allNodes.find((n) => n.id === e.source);
@@ -183,7 +178,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
         data-selected={selected || undefined}
         className={cn(
           "relative overflow-visible transition-all duration-300 ease-out",
-          "border-[3px] border-white/[0.14] shadow-lg",
+          "border-[3px] border-white/[0.14] shadow-[0_8px_28px_-10px_rgba(0,0,0,0.6)]",
           selected && "ring-2 ring-accent/50",
           isRunning && "ring-2 ring-accent/30 animate-pulse",
         )}
@@ -341,11 +336,11 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
             {/* Prompt */}
             <div className={cn("px-4 pb-1 transition-all duration-300 ease-out", promptFocused ? "pt-4" : "pt-2")}>
               <textarea
-                value={hasTextConnection ? upstreamText : prompt}
+                value={hasPromptSource ? upstreamText : prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 spellCheck={false}
                 placeholder="Describe the image you want to generate..."
-                disabled={hasTextConnection}
+                disabled={hasPromptSource}
                 rows={promptFocused ? 6 : 1}
                 onFocus={() => setPromptFocused(true)}
                 onBlur={() => setPromptFocused(false)}
@@ -440,6 +435,8 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
 
         {/* Resize handle */}
         <ResizeHandle
+          nodeId={rfId}
+          corners={["br", "bl", "tr"]}
           minWidth={MIN_WIDTH}
           maxWidth={MAX_WIDTH}
           currentWidth={nodeWidth}
@@ -451,23 +448,24 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
 
       {/* Source handle — right side */}
       <Handle type="source" position={Position.Right} id="source"
-        className={cn("!absolute !-right-0 !top-[48px] !h-7 !w-7 !border-0 !bg-transparent group/handle", "transition-opacity duration-300 ease-out", showSourceHandle ? "!opacity-100" : "!opacity-0 !pointer-events-none")}
+        className={edgeHandleClass({ side: "right", visible: showSourceHandle })}
+        style={{ top: EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET }}
       >
         <HandleBadge icon={ImageUp} active={hasSourceEdge} label="Generated Image" side="right" />
       </Handle>
 
       {/* Target handle (text input) — left side */}
       <Handle type="target" position={Position.Left} id="target-text" style={{ bottom: 54, top: "auto" }}
-        className={targetHandleClassName}
+        className={targetHandleClassName(hasTextConnection)}
       >
-        <HandleBadge icon={Type} active={hasTargetEdge} label="Prompt" side="left" />
+        <HandleBadge icon={Type} active={hasTextConnection} label="Prompt" side="left" />
       </Handle>
 
       {/* Target handle (image input) — left side */}
       <Handle type="target" position={Position.Left} id="target-image" style={{ bottom: 14, top: "auto" }}
-        className={targetHandleClassName}
+        className={targetHandleClassName(hasImageConnection)}
       >
-        <HandleBadge icon={ImageUp} active={hasTargetEdge} label="Reference Image" side="left" />
+        <HandleBadge icon={ImageUp} active={hasImageConnection} label="Reference Image" side="left" />
       </Handle>
     </div>
   );

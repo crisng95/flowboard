@@ -11,7 +11,7 @@
  *   • DOM order: target-text before target-image
  */
 import { useEffect, useRef, useState, useCallback } from "react";
-import { type NodeProps, useReactFlow, Handle, Position, useEdges, useConnection } from "@xyflow/react";
+import { type NodeProps, Handle, Position, useEdges, useConnection } from "@xyflow/react";
 import { Copy, Layers, Palette, Sparkles, Play, Type } from "lucide-react";
 
 import { useBoardStore, type FlowNode } from "../../store/board";
@@ -23,8 +23,10 @@ import { TextAreaField } from "./shared/SettingsFields";
 import { HandleBadge } from "./shared/HandleBadge";
 import { DropdownCaret } from "./shared/DropdownCaret";
 import { PickerDropdown } from "./shared/PickerDropdown";
+import { edgeHandleClass, EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET } from "./shared/edgeHandle";
 import { persistNodeData } from "./shared/persistNodeData";
 import { mediaUrl } from "./shared/useUploadFlow";
+import { ResizeHandle } from "./shared/ResizeHandle";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    LAYOUT CONSTANTS
@@ -226,140 +228,6 @@ function PortalDropdown({
 /* ═══════════════════════════════════════════════════════════════════════════
    CUSTOM RESIZE HANDLE
    ═══════════════════════════════════════════════════════════════════════════ */
-interface DualResizeHandleProps {
-  forceVisible?: boolean;
-  minWidth: number;
-  maxWidth: number;
-  currentWidth: number;
-  onResize: (width: number) => void;
-  onResizeEnd: (width: number) => void;
-}
-
-function CustomResizeHandle({
-  minWidth,
-  maxWidth,
-  currentWidth,
-  onResize,
-  onResizeEnd,
-  forceVisible = false,
-}: DualResizeHandleProps) {
-  const { getZoom } = useReactFlow();
-  const [isDragging, setIsDragging] = useState(false);
-  const [liveWidth, setLiveWidth] = useState<number | null>(null);
-  const dragStateRef = useRef<{
-    startX: number;
-    startWidth: number;
-    zoom: number;
-  } | null>(null);
-
-  function onPointerDown(e: React.PointerEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    dragStateRef.current = {
-      startX: e.clientX,
-      startWidth: currentWidth,
-      zoom: getZoom(),
-    };
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    setIsDragging(true);
-    setLiveWidth(Math.round(currentWidth));
-  }
-
-  function onPointerMove(e: React.PointerEvent) {
-    const s = dragStateRef.current;
-    if (!s) return;
-    const deltaX = (e.clientX - s.startX) / s.zoom;
-    const nextW = Math.max(minWidth, Math.min(maxWidth, s.startWidth + deltaX));
-    onResize(nextW);
-    setLiveWidth(Math.round(nextW));
-  }
-
-  function onPointerUp(e: React.PointerEvent) {
-    const s = dragStateRef.current;
-    if (!s) return;
-    const deltaX = (e.clientX - s.startX) / s.zoom;
-    const finalW = Math.max(minWidth, Math.min(maxWidth, s.startWidth + deltaX));
-    dragStateRef.current = null;
-    setIsDragging(false);
-    setLiveWidth(null);
-    try {
-      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch {}
-    onResizeEnd(finalW);
-  }
-
-  return (
-    <div
-      onMouseDown={(e) => e.stopPropagation()}
-      className={cn(
-        "absolute z-10 flex items-center justify-center group",
-        isDragging ? "[&_path]:opacity-100" : forceVisible ? "[&_path]:opacity-30 group-hover:[&_path]:opacity-100" : "[&_path]:opacity-0",
-        "[&_path]:transition-opacity [&_path]:duration-100",
-        isDragging && "[&_path]:!opacity-100",
-      )}
-      style={{
-        bottom: 0,
-        right: 20,
-        width: 48,
-        height: 48,
-        transform: "translate(50%, 50%)",
-        background: "transparent",
-        touchAction: "none",
-      }}
-    >
-      {liveWidth !== null && (
-        <div
-          className="absolute pointer-events-none rounded-full border text-[10px] font-mono leading-none px-2 py-1 tabular-nums animate-fade-in"
-          style={{
-            bottom: "calc(100% + 6px)",
-            right: "50%",
-            transform: "translateX(50%)",
-            backgroundColor: "#1c1f27",
-            borderColor: "rgba(255,255,255,0.14)",
-            color: "rgba(255,255,255,0.9)",
-            whiteSpace: "nowrap",
-            zIndex: 100,
-          }}
-          aria-live="polite"
-        >
-          {liveWidth}px
-        </div>
-      )}
-      <svg
-        viewBox="0 0 48 48"
-        style={{
-          width: "100%",
-          height: "100%",
-          pointerEvents: "none",
-          filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.5))",
-          overflow: "visible",
-        }}
-      >
-        <path
-          d="M 36 22 A 14 14 0 0 1 22 36"
-          stroke="rgba(0,0,0,0)"
-          strokeWidth="14"
-          strokeLinecap="round"
-          fill="none"
-          pointerEvents="stroke"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-        />
-        <path
-          d="M 36 22 A 14 14 0 0 1 22 36"
-          stroke="rgba(255,255,255,0.95)"
-          strokeWidth="3"
-          strokeLinecap="round"
-          fill="none"
-          pointerEvents="none"
-        />
-      </svg>
-    </div>
-  );
-}
-
 /* ═══════════════════════════════════════════════════════════════════════════
    VARIANT NODE COMPONENT
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -528,18 +396,10 @@ export function VariantNode(props: NodeProps<FlowNode>) {
   const hasImageConnection = edges.some((e) => e.target === rfId && e.targetHandle === "target-image");
   const hasSourceEdge = edges.some((e) => e.source === rfId);
 
-  const hasTargetEdge = edges.some((e) => e.target === rfId);
-  const showTargetHandles = showControls || hasTargetEdge || connection.inProgress;
   const anyConnectionInProgress = connection.inProgress;
-  const targetHandleClassName = cn(
-    "!absolute !-left-0 !h-7 !w-7 !border-0 !bg-transparent",
-    "group/handle",
-    "transition-opacity duration-300 ease-out",
-    anyConnectionInProgress
-      ? "!opacity-100 !pointer-events-auto !z-50"
-      : showTargetHandles
-      ? "!opacity-100"
-      : "!opacity-0 !pointer-events-none",
+  const targetHandleClassName = (active: boolean) => cn(
+    edgeHandleClass({ side: "left", visible: showControls || active || anyConnectionInProgress }),
+    anyConnectionInProgress && "!pointer-events-auto !z-50",
   );
 
   const allNodes = useBoardStore.getState().nodes;
@@ -602,7 +462,7 @@ export function VariantNode(props: NodeProps<FlowNode>) {
         data-selected={selected || undefined}
         className={cn(
           "relative overflow-visible transition-all duration-300 ease-out",
-          "border-[3px] border-white/[0.14] shadow-lg",
+          "border-[3px] border-white/[0.14] shadow-[0_8px_28px_-10px_rgba(0,0,0,0.6)]",
           selected && "ring-2 ring-accent/50",
           isProcessing && "ring-2 ring-accent/30 animate-pulse",
         )}
@@ -907,17 +767,19 @@ export function VariantNode(props: NodeProps<FlowNode>) {
           </div>
         </div>
 
+        <ResizeHandle
+          nodeId={rfId}
+          corners={["br", "bl", "tr"]}
+          minWidth={MIN_WIDTH}
+          maxWidth={MAX_WIDTH}
+          currentWidth={width}
+          onResize={onResize}
+          onResizeEnd={onResizeEnd}
+          forceVisible={!!selected}
+        />
       </div>
 
       {/* Resize handle — placed OUTSIDE card body, sibling of 20px-padded wrapper */}
-      <CustomResizeHandle
-        minWidth={MIN_WIDTH}
-        maxWidth={MAX_WIDTH}
-        currentWidth={width}
-        onResize={onResize}
-        onResizeEnd={onResizeEnd}
-        forceVisible={!!selected}
-      />
 
       {/* ═══════════════════════════════════════════════════════════════════
          HANDLES — placed OUTSIDE card body as siblings of 20px-padded wrapper
@@ -929,11 +791,8 @@ export function VariantNode(props: NodeProps<FlowNode>) {
         type="source"
         position={Position.Right}
         id="source"
-        className={cn(
-          "!absolute !-right-0 !top-[48px] !h-7 !w-7 !border-0 !bg-transparent group/handle",
-          "transition-opacity duration-300 ease-out",
-          showSourceHandle ? "!opacity-100" : "!opacity-0 !pointer-events-none",
-        )}
+        style={{ top: EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET }}
+        className={edgeHandleClass({ side: "right", visible: showSourceHandle })}
       >
         <HandleBadge icon={Palette} active={hasSourceEdge} label="Variant Output" side="right" />
       </Handle>
@@ -943,7 +802,7 @@ export function VariantNode(props: NodeProps<FlowNode>) {
         type="target"
         position={Position.Left}
         id="target-text"
-        className={targetHandleClassName}
+        className={targetHandleClassName(hasTextConnection)}
         style={{ top: "auto", bottom: 54 }}
       >
         <HandleBadge icon={Type} active={hasTextConnection} label="Prompt" side="left" />
@@ -954,7 +813,7 @@ export function VariantNode(props: NodeProps<FlowNode>) {
         type="target"
         position={Position.Left}
         id="target-image"
-        className={targetHandleClassName}
+        className={targetHandleClassName(hasImageConnection)}
         style={{ top: "auto", bottom: 14 }}
       >
         <HandleBadge icon={Layers} active={hasImageConnection} label="Start Image" side="left" />

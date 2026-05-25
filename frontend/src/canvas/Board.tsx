@@ -663,10 +663,11 @@ export function Board({
         onSelectionContextMenu={onSelectionContextMenu}
         isValidConnection={isValidConnection}
         connectionLineComponent={DashedConnectionLine}
+        multiSelectionKeyCode="Shift"
         nodesDraggable={toolMode !== "pan"}
         elementsSelectable={toolMode !== "pan"}
         selectionOnDrag={toolMode !== "pan"}
-        panOnDrag={toolMode === "pan"}
+        panOnDrag={toolMode === "pan" ? [0, 1] : [1]}
         panOnScroll
         fitView
         proOptions={{ hideAttribution: true }}

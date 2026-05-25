@@ -26,6 +26,7 @@ import { ResizeHandle } from "./shared/ResizeHandle";
 import { HandleBadge } from "./shared/HandleBadge";
 import { DropdownCaret } from "./shared/DropdownCaret";
 import { PickerDropdown } from "./shared/PickerDropdown";
+import { edgeHandleClass, EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET } from "./shared/edgeHandle";
 import { mediaUrl } from "./shared/useUploadFlow";
 import { useNodeWidth } from "./shared/useNodeWidth";
 
@@ -34,8 +35,10 @@ const MAX_WIDTH = 760;
 const DEFAULT_WIDTH = 620;
 const BORDER_RADIUS = 16;
 const HOVER_LEAVE_DELAY = 200;
-const TOP_HANDLE_FIRST = 48;
-const TOP_HANDLE_SECOND = 88;
+const TOP_HANDLE_FIRST = EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET;
+const TOP_HANDLE_SECOND = EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET + 40;
+const TOP_HANDLE_THIRD = EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET + 80;
+const TOP_HANDLE_FOURTH = EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET + 120;
 const INPUT_HANDLE_BOTTOM_REFERENCES = 22;
 const INPUT_HANDLE_BOTTOM_END = 64;
 const INPUT_HANDLE_BOTTOM_START = 106;
@@ -230,13 +233,7 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
   }
 
   function handleClass(role: "source" | "target", active: boolean) {
-    return cn(
-      "!absolute !h-7 !w-7 !border-0 !bg-transparent",
-      "group/handle",
-      role === "source" ? "!-right-0" : "!-left-0",
-      "transition-opacity duration-300 ease-out",
-      active ? "!opacity-100" : "!opacity-0 !pointer-events-none",
-    );
+    return edgeHandleClass({ side: role === "source" ? "right" : "left", visible: active });
   }
 
   const handleVisible = (role: "source" | "target", handleId?: string) => {
@@ -304,7 +301,7 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
         data-selected={selected || undefined}
         className={cn(
           "relative overflow-visible transition-all duration-300 ease-out",
-          "border-[3px] border-white/[0.14] shadow-lg",
+          "border-[3px] border-white/[0.14] shadow-[0_8px_28px_-10px_rgba(0,0,0,0.6)]",
           selected && "ring-2 ring-accent/50",
           isRunning && "ring-2 ring-accent/30 animate-pulse",
         )}
@@ -591,6 +588,8 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
         </div>
 
         <ResizeHandle
+          nodeId={rfId}
+          corners={["br", "bl", "tr"]}
           minWidth={MIN_WIDTH}
           maxWidth={MAX_WIDTH}
           currentWidth={nodeWidth}
@@ -622,7 +621,7 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
         type="source"
         position={Position.Right}
         id="source-video"
-        style={{ bottom: 64, top: "auto" }}
+        style={{ top: TOP_HANDLE_THIRD }}
         className={handleClass("source", handleVisible("source", "source-video"))}
       >
         <HandleBadge icon={Video} active={edges.some((e) => e.source === rfId && e.sourceHandle === "source-video")} label="Generated Video" side="right" />
@@ -631,7 +630,7 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
         type="source"
         position={Position.Right}
         id="source-audio"
-        style={{ bottom: 22, top: "auto" }}
+        style={{ top: TOP_HANDLE_FOURTH }}
         className={handleClass("source", handleVisible("source", "source-audio"))}
       >
         <HandleBadge icon={AudioLines} active={edges.some((e) => e.source === rfId && e.sourceHandle === "source-audio")} label="Audio" side="right" />

@@ -231,6 +231,8 @@ export function UploadNode(props: NodeProps<FlowNode>) {
 
         {/* Resize handle */}
         <ResizeHandle
+          nodeId={rfId}
+          corners={["br", "bl", "tr"]}
           minWidth={MIN_WIDTH}
           maxWidth={MAX_WIDTH}
           currentWidth={nodeWidth}
