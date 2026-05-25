@@ -3,6 +3,11 @@ import { useReactFlow } from "@xyflow/react";
 import {
   Plus,
   StickyNote,
+  MessageSquarePlus,
+  MousePointer2,
+  Hand,
+  Scissors,
+  Settings2,
   Undo2,
   Redo2,
   Search,
@@ -123,25 +128,38 @@ export function AddNodePanel({ onClose, position }: { onClose: () => void; posit
 
 export function AddNodePalette() {
   const [panelOpen, setPanelOpen] = useState(false);
+  const tool = useBoardStore((s) => s.toolMode);
+  const setToolMode = useBoardStore((s) => s.setToolMode);
+  const undo = useBoardStore((s) => s.undo);
+  const redo = useBoardStore((s) => s.redo);
+  const canUndo = useBoardStore((s) => s.historyPast.length > 0);
+  const canRedo = useBoardStore((s) => s.historyFuture.length > 0);
+  const { screenToFlowPosition } = useReactFlow();
+  const addNodeOfType = useBoardStore((s) => s.addNodeOfType);
+
+  function spawnNote() {
+    const pos = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+    void addNodeOfType("note", pos);
+  }
 
   return (
     <div
-      className="absolute top-1/2 -translate-y-1/2 left-4 z-10 flex flex-col items-center gap-1 px-1 py-1.5 rounded-xl"
+      className="absolute top-1/2 -translate-y-1/2 left-4 z-40 nowheel nodrag flex flex-col items-center gap-1 px-1.5 py-2 rounded-[22px]"
       style={{
-        backgroundColor: "rgba(14, 16, 22, 0.8)",
-        backdropFilter: "blur(12px)",
-        border: "1px solid rgba(255,255,255,0.06)",
+        backgroundColor: "rgba(20, 21, 27, 0.88)",
+        backdropFilter: "blur(18px)",
+        border: "1px solid rgba(255,255,255,0.08)",
+        boxShadow: "0 20px 40px rgba(0,0,0,0.35)",
       }}
     >
-      {/* Add node button */}
       <div className="relative">
         <button
           onClick={() => setPanelOpen(!panelOpen)}
           className={cn(
-            "flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-150 cursor-pointer",
+            "flex items-center justify-center w-9 h-9 rounded-full transition-all duration-150 cursor-pointer",
             panelOpen
-              ? "bg-white/[0.12] text-white"
-              : "text-white/60 hover:text-white hover:bg-white/[0.08]",
+              ? "bg-white text-black"
+              : "text-white/80 hover:text-white hover:bg-white/[0.08]",
           )}
           title="Add node"
         >
@@ -150,32 +168,87 @@ export function AddNodePalette() {
         {panelOpen && <AddNodePanel onClose={() => setPanelOpen(false)} />}
       </div>
 
-      {/* Note mode button (placeholder) */}
       <button
-        className="flex items-center justify-center w-8 h-8 rounded-lg text-white/60 hover:text-white hover:bg-white/[0.08] transition-all duration-150 cursor-pointer"
-        title="Note (coming soon)"
-        disabled
+        type="button"
+        onClick={() => setToolMode("select")}
+        className={cn(
+          "flex items-center justify-center w-9 h-9 rounded-full transition-all duration-150 cursor-pointer",
+          tool === "select" ? "bg-white text-black" : "text-white/60 hover:text-white hover:bg-white/[0.08]",
+        )}
+        title="Select tool"
       >
-        <StickyNote size={16} strokeWidth={1.5} />
+        <MousePointer2 size={16} strokeWidth={1.5} />
       </button>
 
-      {/* Separator */}
-      <span className="h-px w-4 bg-white/[0.08] my-0.5" />
-
-      {/* Undo */}
       <button
-        className="flex items-center justify-center w-8 h-8 rounded-lg text-white/60 hover:text-white hover:bg-white/[0.08] transition-all duration-150 cursor-pointer"
+        type="button"
+        onClick={() => setToolMode("pan")}
+        className={cn(
+          "flex items-center justify-center w-9 h-9 rounded-full transition-all duration-150 cursor-pointer",
+          tool === "pan" ? "bg-white text-black" : "text-white/60 hover:text-white hover:bg-white/[0.08]",
+        )}
+        title="Pan tool"
+      >
+        <Hand size={16} strokeWidth={1.5} />
+      </button>
+
+      <button
+        type="button"
+        onClick={() => setToolMode("cut")}
+        className={cn(
+          "flex items-center justify-center w-9 h-9 rounded-full transition-all duration-150 cursor-pointer",
+          tool === "cut" ? "bg-white text-black" : "text-white/60 hover:text-white hover:bg-white/[0.08]",
+        )}
+        title="Cut connections"
+      >
+        <Scissors size={16} strokeWidth={1.5} />
+      </button>
+
+      <span className="h-px w-5 bg-white/[0.08] my-0.5" />
+
+      <button
+        type="button"
+        onClick={spawnNote}
+        className="flex items-center justify-center w-9 h-9 rounded-full text-white/60 hover:text-white hover:bg-white/[0.08] transition-all duration-150 cursor-pointer"
+        title="Add note"
+      >
+        <MessageSquarePlus size={16} strokeWidth={1.5} />
+      </button>
+
+      <button
+        type="button"
+        onClick={() => void undo()}
+        className={cn(
+          "flex items-center justify-center w-9 h-9 rounded-full transition-all duration-150",
+          canUndo ? "text-white/60 hover:text-white hover:bg-white/[0.08] cursor-pointer" : "text-white/35 cursor-not-allowed",
+        )}
         title="Undo"
+        disabled={!canUndo}
       >
         <Undo2 size={16} strokeWidth={1.5} />
       </button>
 
-      {/* Redo */}
       <button
-        className="flex items-center justify-center w-8 h-8 rounded-lg text-white/60 hover:text-white hover:bg-white/[0.08] transition-all duration-150 cursor-pointer"
+        type="button"
+        onClick={() => void redo()}
+        className={cn(
+          "flex items-center justify-center w-9 h-9 rounded-full transition-all duration-150",
+          canRedo ? "text-white/60 hover:text-white hover:bg-white/[0.08] cursor-pointer" : "text-white/35 cursor-not-allowed",
+        )}
         title="Redo"
+        disabled={!canRedo}
       >
         <Redo2 size={16} strokeWidth={1.5} />
+      </button>
+
+      <span className="h-px w-5 bg-white/[0.08] my-0.5" />
+
+      <button
+        type="button"
+        className="flex items-center justify-center w-9 h-9 rounded-full text-white/60 hover:text-white hover:bg-white/[0.08] transition-all duration-150 cursor-pointer"
+        title="Settings"
+      >
+        <Settings2 size={16} strokeWidth={1.5} />
       </button>
     </div>
   );

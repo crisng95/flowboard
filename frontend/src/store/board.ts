@@ -16,6 +16,8 @@ import {
   type Board,
   type NodeType,
   type NodeStatus as ApiNodeStatus,
+  type EdgeDTO,
+  type NodeDTO as ApiNodeDTO,
 } from "../api/client";
 
 export type { NodeType };
@@ -167,6 +169,13 @@ export interface FlowboardEdgeData extends Record<string, unknown> {
   sourceVariantIdx?: number | null;
 }
 
+type ToolMode = "select" | "pan" | "cut";
+
+type BoardSnapshot = {
+  nodes: FlowNode[];
+  edges: Edge<FlowboardEdgeData>[];
+};
+
 /** Map an EdgeDTO from the backend into ReactFlow's Edge shape, carrying
  * the variant pin through `data` so dispatch + edge UI can read it. */
 function edgeFromDto(dto: {
@@ -194,6 +203,154 @@ function defaultTargetHandleForConnection(sourceNode?: FlowNode, targetNode?: Fl
   }
   const sourceType = sourceNode.type ?? sourceNode.data?.type;
   return sourceType === "text" ? "target-text" : "target-image";
+}
+
+function cloneSnapshot(snapshot: BoardSnapshot): BoardSnapshot {
+  return {
+    nodes: structuredClone(snapshot.nodes),
+    edges: structuredClone(snapshot.edges),
+  };
+}
+
+function snapshotSignature(snapshot: BoardSnapshot): string {
+  return JSON.stringify({
+    nodes: snapshot.nodes.map((node) => ({
+      id: node.id,
+      type: node.type,
+      position: node.position,
+      parentId: node.parentId ?? null,
+      extent: node.extent ?? null,
+      zIndex: node.zIndex ?? null,
+      data: node.data,
+      style: node.style ?? null,
+    })),
+    edges: snapshot.edges.map((edge) => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      sourceHandle: edge.sourceHandle ?? null,
+      targetHandle: edge.targetHandle ?? null,
+      data: edge.data ?? null,
+    })),
+  });
+}
+
+function snapshotFromState(nodes: FlowNode[], edges: Edge<FlowboardEdgeData>[]): BoardSnapshot {
+  return cloneSnapshot({ nodes, edges });
+}
+
+function snapshotFromDetail(detail: { nodes: ApiNodeDTO[]; edges: EdgeDTO[] }): BoardSnapshot {
+  return {
+    nodes: applyGroupLockCascade(sortNodesParentFirst(detail.nodes.map((dto) => nodeFromDto(dto)))),
+    edges: detail.edges.map(edgeFromDto),
+  };
+}
+
+function stripNodeDataForPersistence(data: FlowboardNodeData): Record<string, unknown> {
+  const { type: _type, shortId: _shortId, status: _status, ...persisted } = data;
+  return structuredClone(persisted);
+}
+
+function nodeFrame(node: FlowNode): { w?: number; h?: number } {
+  const style = (node.style ?? {}) as { width?: number; height?: number };
+  return {
+    w: typeof style.width === "number" ? style.width : undefined,
+    h: typeof style.height === "number" ? style.height : undefined,
+  };
+}
+
+async function reconcileSnapshotToBackend(
+  boardId: number,
+  current: BoardSnapshot,
+  target: BoardSnapshot,
+): Promise<void> {
+  for (const edge of current.edges) {
+    const dbId = parseInt(edge.id, 10);
+    if (!Number.isNaN(dbId)) {
+      try {
+        await deleteEdge(dbId);
+      } catch {
+        // Best effort; missing edge after a prior delete is fine.
+      }
+    }
+  }
+
+  const targetNodeIds = new Set(target.nodes.map((node) => node.id));
+  const nodesToDelete = current.nodes
+    .filter((node) => !targetNodeIds.has(node.id))
+    .sort((a, b) => Number(Boolean(b.parentId)) - Number(Boolean(a.parentId)));
+
+  for (const node of nodesToDelete) {
+    const dbId = parseInt(node.id, 10);
+    if (!Number.isNaN(dbId)) {
+      try {
+        await deleteNode(dbId);
+      } catch {
+        // Ignore cascading/group delete races.
+      }
+    }
+  }
+
+  const currentNodeIds = new Set(current.nodes.map((node) => node.id));
+  const idMap = new Map<string, string>();
+  for (const node of target.nodes) {
+    if (currentNodeIds.has(node.id)) idMap.set(node.id, node.id);
+  }
+
+  for (const node of sortNodesParentFirst(target.nodes)) {
+    const persistedData = stripNodeDataForPersistence(node.data);
+    const parentId =
+      node.parentId && idMap.get(node.parentId)
+        ? parseInt(idMap.get(node.parentId)!, 10)
+        : null;
+    const frame = nodeFrame(node);
+
+    if (currentNodeIds.has(node.id)) {
+      const dbId = parseInt(node.id, 10);
+      if (Number.isNaN(dbId)) continue;
+      await patchNode(dbId, {
+        x: Math.round(node.position.x),
+        y: Math.round(node.position.y),
+        w: frame.w,
+        h: frame.h,
+        status: node.data.status,
+        parent_id: parentId,
+        data: persistedData,
+      });
+      continue;
+    }
+
+    const created = await createNode({
+      board_id: boardId,
+      type: node.data.type,
+      x: Math.round(node.position.x),
+      y: Math.round(node.position.y),
+      w: frame.w,
+      h: frame.h,
+      parent_id: parentId,
+      data: persistedData,
+    });
+    idMap.set(node.id, String(created.id));
+    if (node.data.status && node.data.status !== created.status) {
+      await patchNode(created.id, { status: node.data.status });
+    }
+  }
+
+  for (const edge of target.edges) {
+    const sourceId = idMap.get(edge.source) ?? edge.source;
+    const targetId = idMap.get(edge.target) ?? edge.target;
+    const sourceDbId = parseInt(sourceId, 10);
+    const targetDbId = parseInt(targetId, 10);
+    if (Number.isNaN(sourceDbId) || Number.isNaN(targetDbId)) continue;
+    await createEdge({
+      board_id: boardId,
+      source_id: sourceDbId,
+      target_id: targetDbId,
+      source_handle: edge.sourceHandle ?? "source",
+      target_handle: edge.targetHandle ?? undefined,
+      source_variant_idx: (edge.data?.sourceVariantIdx as number | null | undefined) ?? null,
+    });
+  }
 }
 
 // -- React Flow internal-update bridge --------------------------------
@@ -448,6 +605,8 @@ function persistBoardId(id: number | null): void {
 
 // -- Store ------------------------------------------------------------------
 interface BoardState {
+  currentView: "spaces" | "canvas";
+  toolMode: ToolMode;
   boardId: number | null;
   boardName: string;
   // Lightweight summary list rendered by the ProjectSidebar ï¿½ full node /
@@ -457,7 +616,17 @@ interface BoardState {
   edges: Edge[];
   loading: boolean;
   error: string | null;
+  historyPast: BoardSnapshot[];
+  historyFuture: BoardSnapshot[];
+  historyPresent: BoardSnapshot | null;
+  historySuspend: boolean;
 
+  setView(view: "spaces" | "canvas"): void;
+  setToolMode(mode: ToolMode): void;
+  selectProject(id: number): Promise<void>;
+  commitHistorySnapshot(): void;
+  undo(): Promise<void>;
+  redo(): Promise<void>;
   loadInitialBoard(): Promise<void>;
   refreshBoardState(): Promise<void>;
   refreshBoardList(): Promise<void>;
@@ -544,6 +713,8 @@ interface BoardState {
 }
 
 export const useBoardStore = create<BoardState>((set, get) => ({
+  currentView: "spaces",
+  toolMode: "select",
   boardId: null,
   boardName: "",
   boards: [],
@@ -551,6 +722,91 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   edges: [],
   loading: false,
   error: null,
+  historyPast: [],
+  historyFuture: [],
+  historyPresent: null,
+  historySuspend: false,
+
+  setView(view) {
+    set({ currentView: view });
+  },
+
+  setToolMode(mode) {
+    set({ toolMode: mode });
+  },
+
+  async selectProject(id) {
+    await get().switchBoard(id);
+    set({ currentView: "canvas" });
+  },
+
+  commitHistorySnapshot() {
+    const state = get();
+    if (state.historySuspend) return;
+    const current = snapshotFromState(state.nodes, state.edges);
+    const signature = snapshotSignature(current);
+    const present = state.historyPresent;
+    if (present && snapshotSignature(present) === signature) return;
+    set((s) => ({
+      historyPast: s.historyPresent
+        ? [...s.historyPast.slice(-39), cloneSnapshot(s.historyPresent)]
+        : s.historyPast,
+      historyFuture: [],
+      historyPresent: current,
+    }));
+  },
+
+  async undo() {
+    const state = get();
+    if (state.boardId === null || state.historyPast.length === 0 || state.historyPresent === null) return;
+    const current = snapshotFromState(state.nodes, state.edges);
+    const target = cloneSnapshot(state.historyPast[state.historyPast.length - 1]);
+    const nextPast = state.historyPast.slice(0, -1);
+    const nextFuture = [cloneSnapshot(state.historyPresent), ...state.historyFuture].slice(0, 40);
+    set({ historySuspend: true });
+    try {
+      await reconcileSnapshotToBackend(state.boardId, current, target);
+      const detail = await getBoard(state.boardId);
+      const restored = snapshotFromDetail(detail);
+      set({
+        nodes: restored.nodes,
+        edges: restored.edges,
+        historyPast: nextPast,
+        historyFuture: nextFuture,
+        historyPresent: cloneSnapshot(restored),
+        historySuspend: false,
+      });
+    } catch (error) {
+      console.error("undo failed", error);
+      set({ historySuspend: false, error: "Undo failed" });
+    }
+  },
+
+  async redo() {
+    const state = get();
+    if (state.boardId === null || state.historyFuture.length === 0 || state.historyPresent === null) return;
+    const current = snapshotFromState(state.nodes, state.edges);
+    const target = cloneSnapshot(state.historyFuture[0]);
+    const nextFuture = state.historyFuture.slice(1);
+    const nextPast = [...state.historyPast.slice(-39), cloneSnapshot(state.historyPresent)];
+    set({ historySuspend: true });
+    try {
+      await reconcileSnapshotToBackend(state.boardId, current, target);
+      const detail = await getBoard(state.boardId);
+      const restored = snapshotFromDetail(detail);
+      set({
+        nodes: restored.nodes,
+        edges: restored.edges,
+        historyPast: nextPast,
+        historyFuture: nextFuture,
+        historyPresent: cloneSnapshot(restored),
+        historySuspend: false,
+      });
+    } catch (error) {
+      console.error("redo failed", error);
+      set({ historySuspend: false, error: "Redo failed" });
+    }
+  },
 
   async loadInitialBoard() {
     set({ loading: true, error: null });
@@ -568,20 +824,19 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         boards = [board];
       }
       const detail = await getBoard(board.id);
-
-      const nodes: FlowNode[] = applyGroupLockCascade(
-        sortNodesParentFirst(detail.nodes.map((dto) => nodeFromDto(dto))),
-      );
-
-      const edges: Edge[] = detail.edges.map(edgeFromDto);
+      const snapshot = snapshotFromDetail(detail);
 
       set({
         boardId: detail.board.id,
         boardName: detail.board.name,
         boards,
-        nodes,
-        edges,
+        nodes: snapshot.nodes,
+        edges: snapshot.edges,
         loading: false,
+        historyPast: [],
+        historyFuture: [],
+        historyPresent: cloneSnapshot(snapshot),
+        historySuspend: false,
       });
       persistBoardId(detail.board.id);
     } catch (err) {
@@ -603,16 +858,17 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const detail = await getBoard(id);
-      const nodes: FlowNode[] = applyGroupLockCascade(
-        sortNodesParentFirst(detail.nodes.map((dto) => nodeFromDto(dto))),
-      );
-      const edges: Edge[] = detail.edges.map(edgeFromDto);
+      const snapshot = snapshotFromDetail(detail);
       set({
         boardId: detail.board.id,
         boardName: detail.board.name,
-        nodes,
-        edges,
+        nodes: snapshot.nodes,
+        edges: snapshot.edges,
         loading: false,
+        historyPast: [],
+        historyFuture: [],
+        historyPresent: cloneSnapshot(snapshot),
+        historySuspend: false,
       });
       persistBoardId(detail.board.id);
     } catch (err) {
@@ -665,11 +921,15 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     if (boardId === null) return;
     try {
       const detail = await getBoard(boardId);
-      const nodes: FlowNode[] = applyGroupLockCascade(
-        sortNodesParentFirst(detail.nodes.map((dto) => nodeFromDto(dto))),
-      );
-      const edges: Edge[] = detail.edges.map(edgeFromDto);
-      set({ nodes, edges });
+      const snapshot = snapshotFromDetail(detail);
+      set({
+        nodes: snapshot.nodes,
+        edges: snapshot.edges,
+        historyPast: [],
+        historyFuture: [],
+        historyPresent: cloneSnapshot(snapshot),
+        historySuspend: false,
+      });
     } catch {
       // ignore ï¿½ leave state alone, next poll will retry
     }

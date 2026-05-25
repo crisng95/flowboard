@@ -140,9 +140,17 @@ function DropAddPopover({
   );
 }
 
-export function Board() {
+export function Board({
+  showMiniMap = true,
+  showControls = true,
+}: {
+  showMiniMap?: boolean;
+  showControls?: boolean;
+}) {
   const nodes = useBoardStore((s) => s.nodes);
   const edges = useBoardStore((s) => s.edges);
+  const toolMode = useBoardStore((s) => s.toolMode);
+  const commitHistorySnapshot = useBoardStore((s) => s.commitHistorySnapshot);
   const setNodes = useBoardStore((s) => s.setNodes);
   const setEdges = useBoardStore((s) => s.setEdges);
   const addEdgeFromConnection = useBoardStore((s) => s.addEdgeFromConnection);
@@ -160,6 +168,13 @@ export function Board() {
       registerUpdateNodeInternals(null);
     };
   }, [updateNodeInternals]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      commitHistorySnapshot();
+    }, 260);
+    return () => window.clearTimeout(timer);
+  }, [nodes, edges, commitHistorySnapshot]);
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [selectionContextMenu, setSelectionContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -539,6 +554,14 @@ export function Board() {
     return () => el.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  const onEdgeClick = useCallback(
+    (_event: React.MouseEvent, edge: Edge) => {
+      if (toolMode !== "cut") return;
+      void deleteEdgeByRfId(edge.id);
+    },
+    [toolMode, deleteEdgeByRfId],
+  );
+
   // Keyboard shortcut: Ctrl+G (or Cmd+G) to group selected nodes
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -575,6 +598,7 @@ export function Board() {
   return (
     <div
       ref={wrapperRef}
+      className={toolMode === "cut" ? "board-shell board-shell--cut" : "board-shell"}
       style={{ flex: 1, minHeight: 0, width: "100%", height: "100%" }}
       onDragOver={onCanvasDragOver}
       onDrop={onCanvasDrop}
@@ -592,6 +616,7 @@ export function Board() {
         onConnectEnd={onConnectEnd}
         onNodesDelete={onNodesDelete}
         onEdgesDelete={onEdgesDelete}
+        onEdgeClick={onEdgeClick}
         onNodeDoubleClick={onNodeDoubleClick}
         deleteKeyCode={["Backspace", "Delete"]}
         defaultEdgeOptions={defaultEdgeOptions}
@@ -604,12 +629,17 @@ export function Board() {
         onSelectionContextMenu={onSelectionContextMenu}
         isValidConnection={isValidConnection}
         connectionLineComponent={DashedConnectionLine}
+        nodesDraggable={toolMode !== "pan"}
+        elementsSelectable={toolMode !== "pan"}
+        selectionOnDrag={toolMode !== "pan"}
+        panOnDrag={toolMode === "pan"}
+        panOnScroll
         fitView
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={24} size={1.3} color="rgba(255,255,255,0.15)" />
-        <MiniMap pannable zoomable />
-        <Controls />
+        {showMiniMap ? <MiniMap pannable zoomable /> : null}
+        {showControls ? <Controls /> : null}
         {contextMenu && (
           <div style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y, zIndex: 100 }}>
             <AddNodePanel onClose={() => setContextMenu(null)} position={contextMenu} />
