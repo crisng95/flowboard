@@ -10,6 +10,9 @@ import { mediaUrl } from "./shared/useUploadFlow";
 import { persistNodeData } from "./shared/persistNodeData";
 import { ResizeHandle } from "./shared/ResizeHandle";
 import { useNodeWidth } from "./shared/useNodeWidth";
+import { HandleBadge } from "./shared/HandleBadge";
+import { DropdownCaret } from "./shared/DropdownCaret";
+import { PickerDropdown } from "./shared/PickerDropdown";
 
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 600;
@@ -87,6 +90,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
   const showTargetHandles = showControls || hasTargetEdge || anyConnectionInProgress;
   const targetHandleClassName = cn(
     "!absolute !-left-0 !h-7 !w-7 !border-0 !bg-transparent",
+    "group/handle",
     "transition-opacity duration-300 ease-out",
     anyConnectionInProgress
       ? "!opacity-100 !pointer-events-auto !z-50"
@@ -99,6 +103,8 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
   const [showAspectPicker, setShowAspectPicker] = useState(false);
   const [promptFocused, setPromptFocused] = useState(false);
   const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null);
+  const modelButtonRef = useRef<HTMLButtonElement>(null);
+  const aspectButtonRef = useRef<HTMLButtonElement>(null);
 
   const allNodes = useBoardStore.getState().nodes;
   const upstreamTextEdge = edges.find((e) => {
@@ -367,37 +373,45 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
               {/* Model picker */}
               <div className="relative">
                 <button
+                  ref={modelButtonRef}
                   onClick={() => { setShowModelPicker(!showModelPicker); setShowAspectPicker(false); }}
-                  className="flex items-center gap-1 rounded-full px-2 py-1 text-2xs font-medium text-white/80 hover:text-white transition-colors whitespace-nowrap"
-                  style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+                  className="flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
+                  style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
                 >
-                  {currentModel.label} <span className="text-[8px] opacity-50">▾</span>
+                  {currentModel.label} <DropdownCaret className="text-white/50" />
                 </button>
-                {showModelPicker && (
-                  <div className="absolute bottom-full left-0 mb-1 rounded-lg p-1 shadow-xl border border-white/[0.08] z-50" style={{ backgroundColor: "#2a2a2a" }}>
-                    {MODEL_OPTIONS.map((m) => (
-                      <button key={m.key} onClick={() => setModel(m.key)} className={cn("block w-full text-left px-3 py-1.5 rounded-md text-2xs whitespace-nowrap transition-colors", m.key === modelKey ? "text-accent bg-accent/10" : "text-white/80 hover:text-white hover:bg-white/[0.06]")}>{m.label}</button>
-                    ))}
-                  </div>
-                )}
+                <PickerDropdown
+                  anchorRef={modelButtonRef}
+                  isOpen={showModelPicker}
+                  onClose={() => setShowModelPicker(false)}
+                  items={MODEL_OPTIONS.map((option) => ({ key: option.key, label: option.label }))}
+                  activeKey={modelKey}
+                  onPick={setModel}
+                  minWidth={156}
+                  matchAnchorWidth={false}
+                />
               </div>
 
               {/* Aspect picker */}
               <div className="relative">
                 <button
+                  ref={aspectButtonRef}
                   onClick={() => { setShowAspectPicker(!showAspectPicker); setShowModelPicker(false); }}
-                  className="flex items-center gap-1 rounded-full px-2 py-1 text-2xs font-medium text-white/80 hover:text-white transition-colors whitespace-nowrap"
-                  style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+                  className="flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
+                  style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
                 >
-                  {aspectKey} <span className="text-[8px] opacity-50">▾</span>
+                  {aspectKey} <DropdownCaret className="text-white/50" />
                 </button>
-                {showAspectPicker && (
-                  <div className="absolute bottom-full left-0 mb-1 rounded-lg p-1 shadow-xl border border-white/[0.08] z-50" style={{ backgroundColor: "#2a2a2a" }}>
-                    {ASPECT_OPTIONS.map((a) => (
-                      <button key={a} onClick={() => setAspect(a)} className={cn("block w-full text-left px-3 py-1.5 rounded-md text-2xs whitespace-nowrap transition-colors", a === aspectKey ? "text-accent bg-accent/10" : "text-white/80 hover:text-white hover:bg-white/[0.06]")}>{a}</button>
-                    ))}
-                  </div>
-                )}
+                <PickerDropdown
+                  anchorRef={aspectButtonRef}
+                  isOpen={showAspectPicker}
+                  onClose={() => setShowAspectPicker(false)}
+                  items={ASPECT_OPTIONS.map((option) => ({ key: option, label: option }))}
+                  activeKey={aspectKey}
+                  onPick={(key) => setAspect(key as AspectOption)}
+                  minWidth={86}
+                  matchAnchorWidth={false}
+                />
               </div>
 
               <div className="flex-1" />
@@ -411,7 +425,12 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
               <button
                 onClick={handleGenerate}
                 disabled={isRunning}
-                className={cn("p-2 rounded-full transition-all duration-150", isRunning ? "bg-accent/30 text-accent/50 cursor-not-allowed" : "bg-accent/30 text-accent hover:bg-accent/40 cursor-pointer")}
+                className={cn(
+                  "p-2 rounded-full border transition-all duration-150 shadow-sm",
+                  isRunning
+                    ? "bg-[#8f939b] border-[#8f939b] text-white/45 cursor-not-allowed"
+                    : "bg-[#f3f4f6] border-[#f3f4f6] text-[#1c2027] hover:bg-white hover:border-white hover:scale-[1.06] cursor-pointer"
+                )}
               >
                 {mediaId || mediaIds.length > 0 ? <RefreshCw size={14} strokeWidth={2} /> : <Play size={14} strokeWidth={2} fill="currentColor" />}
               </button>
@@ -432,29 +451,23 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
 
       {/* Source handle — right side */}
       <Handle type="source" position={Position.Right} id="source"
-        className={cn("!absolute !-right-0 !top-[48px] !h-7 !w-7 !border-0 !bg-transparent", "transition-opacity duration-300 ease-out", showSourceHandle ? "!opacity-100" : "!opacity-0 !pointer-events-none")}
+        className={cn("!absolute !-right-0 !top-[48px] !h-7 !w-7 !border-0 !bg-transparent group/handle", "transition-opacity duration-300 ease-out", showSourceHandle ? "!opacity-100" : "!opacity-0 !pointer-events-none")}
       >
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full border transition-all duration-150" style={{ backgroundColor: "#2b2b2b", borderColor: hasSourceEdge ? "rgba(124,92,255,0.7)" : "rgba(124,92,255,0.4)", color: "rgba(255,255,255,0.7)" }}>
-          <ImageUp size={11} strokeWidth={2} />
-        </div>
+        <HandleBadge icon={ImageUp} active={hasSourceEdge} label="Generated Image" side="right" />
       </Handle>
 
       {/* Target handle (text input) — left side */}
       <Handle type="target" position={Position.Left} id="target-text" style={{ bottom: 54, top: "auto" }}
         className={targetHandleClassName}
       >
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full border transition-all duration-150" style={{ backgroundColor: "#2b2b2b", borderColor: hasTargetEdge ? "rgba(124,92,255,0.7)" : "rgba(124,92,255,0.4)", color: "rgba(255,255,255,0.7)" }}>
-          <Type size={11} strokeWidth={2} />
-        </div>
+        <HandleBadge icon={Type} active={hasTargetEdge} label="Prompt" side="left" />
       </Handle>
 
       {/* Target handle (image input) — left side */}
       <Handle type="target" position={Position.Left} id="target-image" style={{ bottom: 14, top: "auto" }}
         className={targetHandleClassName}
       >
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full border transition-all duration-150" style={{ backgroundColor: "#2b2b2b", borderColor: hasTargetEdge ? "rgba(124,92,255,0.7)" : "rgba(124,92,255,0.4)", color: "rgba(255,255,255,0.7)" }}>
-          <ImageUp size={11} strokeWidth={2} />
-        </div>
+        <HandleBadge icon={ImageUp} active={hasTargetEdge} label="Reference Image" side="left" />
       </Handle>
     </div>
   );

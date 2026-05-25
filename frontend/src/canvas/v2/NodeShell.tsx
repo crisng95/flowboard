@@ -14,6 +14,7 @@ import type { LucideIcon } from "lucide-react";
 import { type ReactNode, useState, useRef } from "react";
 
 import { cn } from "../../lib/utils";
+import { HandleBadge } from "./shared/HandleBadge";
 
 interface HandleSpec {
   id: string;
@@ -161,21 +162,17 @@ export function NodeShell({
           position={Position.Right}
           id={sourceHandle.id}
           className={cn(
-            "!absolute !-right-0 !top-[20px] !h-7 !w-7 !border-0 !bg-transparent",
+            "!absolute !-right-0 !top-[20px] !h-7 !w-7 !border-0 !bg-transparent group/handle",
             "transition-opacity duration-300 ease-out",
             showSourceHandle ? "!opacity-100" : "!opacity-0 !pointer-events-none",
           )}
         >
-          <div
-            className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full border transition-all duration-150"
-            style={{
-              backgroundColor: "#2b2b2b",
-              borderColor: hasSourceEdge ? "rgba(124,92,255,0.7)" : "rgba(124,92,255,0.4)",
-              color: "rgba(255,255,255,0.7)",
-            }}
-          >
-            <sourceHandle.icon size={11} strokeWidth={2} />
-          </div>
+          <HandleBadge
+            icon={sourceHandle.icon}
+            active={hasSourceEdge}
+            label={sourceHandle.label}
+            side="right"
+          />
         </Handle>
       )}
 
@@ -188,21 +185,17 @@ export function NodeShell({
           position={Position.Left}
           id={targetHandle.id}
           className={cn(
-            "!absolute !-left-0 !top-[20px] !h-7 !w-7 !border-0 !bg-transparent",
+            "!absolute !-left-0 !top-[20px] !h-7 !w-7 !border-0 !bg-transparent group/handle",
             "transition-opacity duration-300 ease-out",
             showTargetHandle ? "!opacity-100" : "!opacity-0 !pointer-events-none",
           )}
         >
-          <div
-            className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full border transition-all duration-150"
-            style={{
-              backgroundColor: "#2b2b2b",
-              borderColor: hasTargetEdge ? "rgba(124,92,255,0.7)" : "rgba(124,92,255,0.4)",
-              color: "rgba(255,255,255,0.7)",
-            }}
-          >
-            <targetHandle.icon size={11} strokeWidth={2} />
-          </div>
+          <HandleBadge
+            icon={targetHandle.icon}
+            active={hasTargetEdge}
+            label={targetHandle.label}
+            side="left"
+          />
         </Handle>
       )}
     </div>

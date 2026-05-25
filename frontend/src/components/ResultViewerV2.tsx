@@ -1,5 +1,5 @@
 /**
- * ResultViewerV2 — premium modal for viewing generated media.
+ * ResultViewerV2 - premium modal for viewing generated media.
  *
  * Magnific-inspired:
  *   - Backdrop blur (glass overlay)
@@ -7,19 +7,7 @@
  *   - Right panel: metadata card (prompt, model, aspect, time)
  *   - Download button
  *   - Variant navigation (thumbnail strip bottom)
- *   - Keyboard: Esc close, ← → navigate, D download
- *
- * This is a THIN wrapper that delegates to the existing V1
- * ResultViewer for complex features (regenerate, refine, clone,
- * ref-source chips). V2 only overrides the visual shell + adds
- * download. When the user needs advanced features they click
- * "Advanced →" which opens the V1 modal.
- *
- * Why not rewrite V1 entirely: 1500+ lines of battle-tested state
- * management (media polling, retry, variant navigation, prompt edit,
- * storyboard shot handling). Rewriting risks regressions. The thin
- * wrapper approach gives premium visuals NOW while preserving
- * reliability.
+ *   - Keyboard: Esc close, left/right navigate, D download
  */
 import { useCallback, useEffect, useState } from "react";
 import { Download, X, ChevronLeft, ChevronRight } from "lucide-react";
@@ -28,6 +16,25 @@ import { mediaUrl } from "../api/client";
 import { useBoardStore } from "../store/board";
 import { useGenerationStore } from "../store/generation";
 import { cn } from "../lib/utils";
+
+const VIDEO_MODEL_LABELS: Record<string, string> = {
+  lite: "Lite",
+  fast: "Fast",
+  quality: "Quality",
+  lite_relaxed: "Lite (Low Priority)",
+  abra_r2v_4s: "Omni Flash · 4s",
+  abra_r2v_6s: "Omni Flash · 6s",
+  abra_r2v_8s: "Omni Flash · 8s",
+  abra_r2v_10s: "Omni Flash · 10s",
+};
+
+function formatModelLabel(data: Record<string, unknown>): string {
+  const imageModel = typeof data.imageModel === "string" ? data.imageModel : undefined;
+  if (imageModel) return imageModel;
+  const videoQuality = typeof data.videoQuality === "string" ? data.videoQuality : undefined;
+  if (!videoQuality) return "—";
+  return VIDEO_MODEL_LABELS[videoQuality] ?? videoQuality;
+}
 
 export function ResultViewerV2() {
   const openViewer = useGenerationStore((s) => s.openViewer);
@@ -38,12 +45,10 @@ export function ResultViewerV2() {
   const node = rfId ? nodes.find((n) => n.id === rfId) : undefined;
   const data = node?.data;
 
-  // Variant navigation
   const mediaIds: string[] = (data?.mediaIds ?? (data?.mediaId ? [data.mediaId] : []))
     .filter((m): m is string => typeof m === "string" && !!m);
   const [activeIdx, setActiveIdx] = useState(0);
 
-  // Sync activeIdx when viewer opens at a specific variant
   useEffect(() => {
     setActiveIdx(openViewer.idx ?? 0);
   }, [openViewer.idx, rfId]);
@@ -51,11 +56,13 @@ export function ResultViewerV2() {
   const currentMediaId = mediaIds[activeIdx] ?? mediaIds[0];
   const hasMultiple = mediaIds.length > 1;
 
-  // Keyboard shortcuts
   const onKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (!rfId) return;
-      if (e.key === "Escape") { e.preventDefault(); closeResultViewer(); }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeResultViewer();
+      }
       if (e.key === "ArrowRight" && hasMultiple) {
         setActiveIdx((i) => (i + 1) % mediaIds.length);
       }
@@ -67,8 +74,7 @@ export function ResultViewerV2() {
         downloadCurrent();
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rfId, hasMultiple, mediaIds.length, activeIdx],
+    [rfId, hasMultiple, mediaIds.length, closeResultViewer, activeIdx],
   );
 
   useEffect(() => {
@@ -89,7 +95,7 @@ export function ResultViewerV2() {
   const nodeType = data.type as string;
   const isVideo = nodeType === "video" || nodeType === "turntable";
   const prompt = (data.prompt as string | undefined) ?? "(no prompt)";
-  const model = (data.imageModel as string | undefined) ?? (data.videoQuality as string | undefined) ?? "—";
+  const model = formatModelLabel(data as Record<string, unknown>);
   const aspect = (data.aspectRatio as string | undefined)?.replace("IMAGE_ASPECT_RATIO_", "").toLowerCase() ?? "—";
   const renderedAt = data.renderedAt
     ? new Date(data.renderedAt as string).toLocaleString()
@@ -108,7 +114,6 @@ export function ResultViewerV2() {
         if (e.target === e.currentTarget) closeResultViewer();
       }}
     >
-      {/* Left panel — media */}
       <div className="flex-1 flex items-center justify-center p-6 relative">
         {isVideo ? (
           <video
@@ -126,7 +131,6 @@ export function ResultViewerV2() {
           />
         )}
 
-        {/* Variant nav arrows */}
         {hasMultiple && (
           <>
             <button
@@ -148,7 +152,6 @@ export function ResultViewerV2() {
           </>
         )}
 
-        {/* Variant counter */}
         {hasMultiple && (
           <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
             {mediaIds.map((_, i) => (
@@ -158,9 +161,7 @@ export function ResultViewerV2() {
                 onClick={() => setActiveIdx(i)}
                 className={cn(
                   "size-2 rounded-full transition-all",
-                  i === activeIdx
-                    ? "bg-accent scale-125"
-                    : "bg-white/30 hover:bg-white/50",
+                  i === activeIdx ? "bg-accent scale-125" : "bg-white/30 hover:bg-white/50",
                 )}
                 aria-label={`Variant ${i + 1}`}
               />
@@ -169,7 +170,6 @@ export function ResultViewerV2() {
         )}
       </div>
 
-      {/* Right panel — metadata */}
       <div
         className="w-[320px] shrink-0 flex flex-col overflow-y-auto"
         style={{
@@ -177,7 +177,6 @@ export function ResultViewerV2() {
           borderLeft: "1px solid rgba(255,255,255,0.06)",
         }}
       >
-        {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-3">
           <div>
             <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-status-done/20 text-status-done mb-1.5">
@@ -200,7 +199,6 @@ export function ResultViewerV2() {
           </button>
         </div>
 
-        {/* Prompt section */}
         <div className="px-5 py-3 border-t border-white/[0.04]">
           <span className="text-[9px] font-semibold uppercase tracking-wider text-ink-muted mb-1.5 block">
             Prompt
@@ -210,7 +208,6 @@ export function ResultViewerV2() {
           </p>
         </div>
 
-        {/* Metadata grid */}
         <div className="px-5 py-3 border-t border-white/[0.04]">
           <span className="text-[9px] font-semibold uppercase tracking-wider text-ink-muted mb-2 block">
             Metadata
@@ -235,7 +232,6 @@ export function ResultViewerV2() {
           </div>
         </div>
 
-        {/* Actions */}
         <div className="px-5 py-4 border-t border-white/[0.04] mt-auto">
           <button
             type="button"
@@ -249,10 +245,9 @@ export function ResultViewerV2() {
             <Download size={14} /> Download
           </button>
 
-          {/* Keyboard hints */}
           <div className="flex items-center justify-center gap-3 mt-3 text-[9px] text-ink-placeholder">
             <span>Esc close</span>
-            {hasMultiple && <span>← → navigate</span>}
+            {hasMultiple && <span>Left/Right navigate</span>}
             <span>D download</span>
           </div>
         </div>

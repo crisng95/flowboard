@@ -10,6 +10,7 @@ import { UploadingOverlay } from "./shared/UploadingOverlay";
 import { ResizeHandle } from "./shared/ResizeHandle";
 import { useNodeWidth } from "./shared/useNodeWidth";
 import { persistNodeData } from "./shared/persistNodeData";
+import { HandleBadge } from "./shared/HandleBadge";
 import { createNode } from "../../api/client";
 import { ReferenceLibraryModal, referenceCategoryLabel, type ReferenceCategoryKey, type ReferencePreset, type CharacterConfig } from "./shared/ReferenceLibraryModal";
 import { buildCharacterPrompt } from "./shared/buildCharacterPrompt";
@@ -446,21 +447,7 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
           showHandle ? "!opacity-100" : "!opacity-0 !pointer-events-none",
         )}
       >
-        <div
-          className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full border transition-all duration-300 ease-out"
-          style={{
-            backgroundColor: "#2b2b2b",
-            borderColor: hasConnectedEdge ? "rgba(124,92,255,0.7)" : "rgba(124,92,255,0.4)",
-            color: "rgba(255,255,255,0.7)",
-          }}
-        >
-          <ImageUp size={11} strokeWidth={2} />
-        </div>
-
-        {/* Hover Tooltip */}
-        <div className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-x-3 -translate-y-1/2 scale-90 whitespace-nowrap rounded-lg border border-white/[0.08] bg-[#2a2a2a] px-2.5 py-1.5 text-[10px] font-medium text-white/80 opacity-0 shadow-xl transition-all duration-200 ease-in-out group-hover/handle:translate-x-0 group-hover/handle:scale-100 group-hover/handle:opacity-100">
-          Reference
-        </div>
+        <HandleBadge icon={ImageUp} active={hasConnectedEdge} label="Reference Image" side="right" />
       </Handle>
 
       {/* Hidden file input */}

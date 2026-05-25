@@ -1,7 +1,7 @@
-// Static maps for type → label and status → color/icon. Kept in one
+// Static maps for type -> label and status -> color/icon. Kept in one
 // file so adding a new activity type means touching one place. Icons
-// (SVG) live in ActivityIcon.tsx; status icons stay as ASCII glyphs
-// since they read clean at small sizes.
+// (SVG) live in ActivityIcon.tsx; status icons stay as short text
+// glyphs so they read cleanly at small sizes.
 
 export const ACTIVITY_TYPE_META: Record<
   string,
@@ -13,31 +13,30 @@ export const ACTIVITY_TYPE_META: Record<
   planner:           { label: "Planner",             group: "llm" },
   gen_image:         { label: "Generate image",      group: "gen" },
   gen_video:         { label: "Generate video",      group: "gen" },
+  gen_video_omni:    { label: "Generate video",      group: "gen" },
   edit_image:        { label: "Edit image",          group: "gen" },
   upload:            { label: "Upload (file)",       group: "upload" },
   upload_url:        { label: "Upload (link)",       group: "upload" },
 };
 
-// Fallback for unknown types — keeps the UI rendering forward-compat
-// when the backend ships a new type before the frontend catches up.
 export function metaFor(type: string) {
-  return (
-    ACTIVITY_TYPE_META[type] ?? { label: type, group: "llm" as const }
-  );
+  return ACTIVITY_TYPE_META[type] ?? { label: type, group: "llm" as const };
 }
 
 export const STATUS_META: Record<
   string,
   { icon: string; label: string; tone: "muted" | "running" | "ok" | "fail" }
 > = {
-  queued:  { icon: "⋯", label: "queued",  tone: "muted" },
-  running: { icon: "⟳", label: "running", tone: "running" },
-  done:    { icon: "✓", label: "done",    tone: "ok" },
-  failed:  { icon: "✗", label: "failed",  tone: "fail" },
+  queued:   { icon: "\u22EF", label: "queued",   tone: "muted" },
+  running:  { icon: "\u27F3", label: "running",  tone: "running" },
+  done:     { icon: "\u2713", label: "done",     tone: "ok" },
+  failed:   { icon: "\u2717", label: "failed",   tone: "fail" },
+  canceled: { icon: "\u2298", label: "canceled", tone: "muted" },
+  timeout:  { icon: "\u23F1", label: "timeout",  tone: "fail" },
 };
 
 export function statusMeta(status: string) {
-  return STATUS_META[status] ?? { icon: "•", label: status, tone: "muted" as const };
+  return STATUS_META[status] ?? { icon: "\u2022", label: status, tone: "muted" as const };
 }
 
 export function relativeTime(iso: string): string {

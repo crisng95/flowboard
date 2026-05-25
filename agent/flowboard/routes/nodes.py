@@ -15,10 +15,12 @@ NodeType = Literal[
     "note",
     "reference",
     "variant",
+    "video",
     "upload",
     "text",
     "add_reference",
     "group",
+    "Storyboard",
 ]
 NodeStatus = Literal["idle", "queued", "running", "done", "error"]
 

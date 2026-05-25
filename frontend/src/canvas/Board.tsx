@@ -27,6 +27,7 @@ import { AddReferenceNode } from "./v2/AddReferenceNode";
 import { VariantNode } from "./v2/VariantNode";
 import { UploadNode } from "./v2/UploadNode";
 import { ImageGeneratorNode } from "./v2/ImageGeneratorNode";
+import { VideoGeneratorNode } from "./v2/VideoGeneratorNode";
 import { AddNodePanel } from "./AddNodePalette";
 import { TextNode } from "./v2/TextNode";
 import { NoteNode } from "./v2/NoteNode";
@@ -46,6 +47,7 @@ const nodeTypes = useV2
       note: NoteNode,
       reference: ImageGeneratorNode,
       variant: VariantNode,
+      video: VideoGeneratorNode,
       upload: UploadNode,
       text: TextNode,
       add_reference: AddReferenceNode,
@@ -55,6 +57,7 @@ const nodeTypes = useV2
       note: NodeCard,
       reference: NodeCard,
       variant: NodeCard,
+      video: NodeCard,
       upload: NodeCard,
       text: NodeCard,
       add_reference: AddReferenceNode,
@@ -371,6 +374,7 @@ export function Board({
   // If target has no specific handle id (legacy nodes), allow any connection
   const TEXT_SOURCE_TYPES = new Set(["text"]);
   const IMAGE_SOURCE_TYPES = new Set(["upload", "reference", "variant", "add_reference"]);
+  const VIDEO_IMAGE_SOURCE_TYPES = new Set(["upload", "reference", "variant", "add_reference", "video"]);
 
   const isValidConnection = useCallback(
     (connection: Connection | Edge) => {
@@ -386,6 +390,13 @@ export function Board({
       }
       if (targetHandle === "target-image") {
         return IMAGE_SOURCE_TYPES.has(sourceType);
+      }
+      if (
+        targetHandle === "target-start-image" ||
+        targetHandle === "target-end-image" ||
+        targetHandle === "target-references"
+      ) {
+        return VIDEO_IMAGE_SOURCE_TYPES.has(sourceType);
       }
       return true;
     },

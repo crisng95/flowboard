@@ -6,16 +6,6 @@ const POLL_CLOSED_MS = 30_000;
 const PAGE_SIZE = 50;
 const LAST_SEEN_KEY = "flowboard:activity:lastSeenId";
 
-/**
- * Lightweight feed manager for the activity bell. Owns:
- *   - The visible list of items (paginated)
- *   - Polling cadence (5s while panel open, 30s closed,
- *     paused on tab visibility hidden)
- *   - Unread badge math (running count + failed-since-lastSeen)
- *   - lastSeenId persistence in sessionStorage
- *
- * Returns immutable arrays so React reconciles cheaply on diffs.
- */
 export function useActivityFeed(panelOpen: boolean) {
   const [items, setItems] = useState<ActivityListItem[]>([]);
   const [nextBeforeId, setNextBeforeId] = useState<number | null>(null);
@@ -45,7 +35,6 @@ export function useActivityFeed(panelOpen: boolean) {
       setNextBeforeId(res.next_before_id);
       setLoading(false);
     } catch {
-      // Network blip — keep stale list, try next tick.
       if (aliveRef.current) setLoading(false);
     }
   }, []);
@@ -90,17 +79,19 @@ export function useActivityFeed(panelOpen: boolean) {
     try {
       sessionStorage.setItem(LAST_SEEN_KEY, String(top));
     } catch {
-      // ignore (private mode etc)
+      // ignore
     }
   }, [items]);
 
-  // Unread = running OR (failed AND id > lastSeenId).
-  // Running is always "live" so it counts regardless of lastSeenId.
+  // Unread = running OR (failed/timeout AND id > lastSeenId).
   let runningCount = 0;
   let unreadFailed = 0;
   for (const it of items) {
     if (it.status === "running" || it.status === "queued") runningCount += 1;
-    else if (it.status === "failed" && it.id > lastSeenId) unreadFailed += 1;
+    else if (
+      (it.status === "failed" || it.status === "timeout") &&
+      it.id > lastSeenId
+    ) unreadFailed += 1;
   }
   const unreadCount = runningCount + unreadFailed;
   const hasFailed = unreadFailed > 0;

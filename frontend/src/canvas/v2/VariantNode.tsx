@@ -11,9 +11,8 @@
  *   • DOM order: target-text before target-image
  */
 import { useEffect, useRef, useState, useCallback } from "react";
-import { createPortal } from "react-dom";
 import { type NodeProps, useReactFlow, Handle, Position, useEdges, useConnection } from "@xyflow/react";
-import { Check, Copy, Layers, Palette, Sparkles, Play, Type } from "lucide-react";
+import { Copy, Layers, Palette, Sparkles, Play, Type } from "lucide-react";
 
 import { useBoardStore, type FlowNode } from "../../store/board";
 import { useGenerationStore } from "../../store/generation";
@@ -21,6 +20,9 @@ import { cn } from "../../lib/utils";
 import { SettingsDrawer } from "./shared/SettingsDrawer";
 import { SettingsButton } from "./shared/SettingsButton";
 import { TextAreaField } from "./shared/SettingsFields";
+import { HandleBadge } from "./shared/HandleBadge";
+import { DropdownCaret } from "./shared/DropdownCaret";
+import { PickerDropdown } from "./shared/PickerDropdown";
 import { persistNodeData } from "./shared/persistNodeData";
 import { mediaUrl } from "./shared/useUploadFlow";
 
@@ -159,7 +161,9 @@ function PortalDropdown({
   multiSelect = false,
   label,
 }: PortalDropdownProps) {
-  // Compute button label
+  void menuPos;
+  void menuId;
+
   let displayLabel: string;
   if (multiSelect) {
     const arr = Array.isArray(value) ? value : [];
@@ -177,92 +181,44 @@ function PortalDropdown({
         disabled={disabled}
         onClick={() => setOpen(!open)}
         className={cn(
-          "h-7 px-3.5 rounded-full flex items-center justify-between gap-1.5 text-2xs font-medium bg-[#27272a] border border-white/5 transition-all duration-150 cursor-pointer select-none",
+          "h-7 px-2.5 rounded-full flex items-center justify-between gap-1.5 text-2xs font-medium border border-white/[0.06] transition-all duration-150 cursor-pointer select-none backdrop-blur-md",
           disabled
             ? "text-white/30 cursor-not-allowed opacity-40"
-            : "text-zinc-200 hover:text-white hover:border-white/20 active:bg-black/60",
+            : "text-white/78 hover:text-white hover:border-white/14 hover:bg-white/[0.07]",
         )}
+        style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
       >
         <span className="truncate max-w-[100px]">{displayLabel}</span>
-        <span className="text-[7px] opacity-70">▼</span>
+        <DropdownCaret open={open} className="text-white/55" />
       </button>
 
-      {open && !disabled && menuPos && createPortal(
-        <div
-          id={menuId}
-          className="fixed rounded-lg p-1 border border-white/[0.08] shadow-xl z-[9999] nowheel magnific-dropdown-scroll flex flex-col gap-1"
-          style={{
-            left: menuPos.left,
-            top: menuPos.top,
-            backgroundColor: "#1a1a1a",
-            width: "180px",
-            maxHeight: "280px",
-            overflowY: "auto",
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          {options.map((opt) => {
-            const isDisabled = disabledOptions.includes(opt);
-            const isActive = multiSelect
-              ? Array.isArray(value) && value.includes(opt)
-              : opt === value;
-
-            return (
-              <button
-                key={opt}
-                type="button"
-                disabled={isDisabled}
-                onClick={() => {
-                  if (multiSelect) {
-                    const arr = Array.isArray(value) ? value : [];
-                    const next = arr.includes(opt)
-                      ? arr.filter((v) => v !== opt)
-                      : [...arr, opt];
-                    onChange(next);
-                    // Keep menu open for multi-select
-                  } else {
-                    onChange(opt);
-                    setOpen(false);
-                  }
-                }}
-                className={cn(
-                  "w-full px-2.5 py-1.5 rounded-md text-2xs transition-colors flex items-center gap-2.5",
-                  isDisabled
-                    ? "text-white/25 cursor-not-allowed hover:bg-transparent"
-                    : isActive
-                    ? "text-white bg-white/[0.06]"
-                    : "text-white/70 hover:text-white hover:bg-white/[0.06] cursor-pointer",
-                )}
-              >
-                {multiSelect && (
-                  <div
-                    className={cn(
-                      "w-3.5 h-3.5 rounded-full flex items-center justify-center shrink-0 border transition-all duration-150",
-                      isActive
-                        ? "bg-accent border-accent"
-                        : "border-white/25 bg-transparent",
-                    )}
-                  >
-                    {isActive && (
-                      <Check size={9} strokeWidth={3} className="text-white" />
-                    )}
-                  </div>
-                )}
-                <span className="truncate flex-1 text-left">{opt}</span>
-                {!multiSelect && isActive && (
-                  <Check size={12} strokeWidth={2.5} className="text-accent shrink-0" />
-                )}
-                {isDisabled && (
-                  <span className="text-[8px] px-1 rounded bg-white/10 text-white/60 font-semibold uppercase tracking-wider">
-                    Soon
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>,
-        document.body,
-      )}
+      <PickerDropdown
+        anchorRef={buttonRef}
+        isOpen={open && !disabled}
+        onClose={() => setOpen(false)}
+        items={options.map((opt) => ({
+          key: opt,
+          label: opt,
+          disabled: disabledOptions.includes(opt),
+          badge: disabledOptions.includes(opt) ? "Soon" : undefined,
+        }))}
+        activeKey={typeof value === "string" ? value : undefined}
+        activeKeys={Array.isArray(value) ? value : undefined}
+        multiSelect={multiSelect}
+        onPick={(opt) => {
+          if (multiSelect) {
+            const arr = Array.isArray(value) ? value : [];
+            const next = arr.includes(opt) ? arr.filter((v) => v !== opt) : [...arr, opt];
+            onChange(next);
+            return;
+          }
+          onChange(opt);
+          setOpen(false);
+        }}
+        minWidth={multiSelect ? 148 : label === undefined && options.every((opt) => opt.length <= 4) ? 86 : 120}
+        matchAnchorWidth={false}
+        estimatedHeight={280}
+      />
     </>
   );
 }
@@ -577,6 +533,7 @@ export function VariantNode(props: NodeProps<FlowNode>) {
   const anyConnectionInProgress = connection.inProgress;
   const targetHandleClassName = cn(
     "!absolute !-left-0 !h-7 !w-7 !border-0 !bg-transparent",
+    "group/handle",
     "transition-opacity duration-300 ease-out",
     anyConnectionInProgress
       ? "!opacity-100 !pointer-events-auto !z-50"
@@ -933,15 +890,15 @@ export function VariantNode(props: NodeProps<FlowNode>) {
                 disabled={isProcessing}
                 onClick={handleRun}
                 className={cn(
-                  "absolute right-3 bottom-3 p-2 rounded-full transition-all duration-150 z-30",
+                  "absolute right-3 bottom-3 p-2 rounded-full border transition-all duration-150 z-30 shadow-sm",
                   isProcessing
-                    ? "bg-accent/30 text-accent/50 cursor-not-allowed"
-                    : "bg-accent/30 text-accent hover:bg-accent/40 cursor-pointer"
+                    ? "bg-[#8f939b] border-[#8f939b] text-white/45 cursor-not-allowed"
+                    : "bg-[#f3f4f6] border-[#f3f4f6] text-[#1c2027] hover:bg-white hover:border-white hover:scale-[1.06] cursor-pointer"
                 )}
                 title="Run Variant Generation"
               >
                 {isProcessing ? (
-                  <Sparkles size={14} className="animate-spin text-accent" />
+                  <Sparkles size={14} className="animate-spin" />
                 ) : (
                   <Play size={14} strokeWidth={2} fill="currentColor" />
                 )}
@@ -973,21 +930,12 @@ export function VariantNode(props: NodeProps<FlowNode>) {
         position={Position.Right}
         id="source"
         className={cn(
-          "!absolute !-right-0 !top-[48px] !h-7 !w-7 !border-0 !bg-transparent",
+          "!absolute !-right-0 !top-[48px] !h-7 !w-7 !border-0 !bg-transparent group/handle",
           "transition-opacity duration-300 ease-out",
           showSourceHandle ? "!opacity-100" : "!opacity-0 !pointer-events-none",
         )}
       >
-        <div
-          className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full border transition-all duration-150"
-          style={{
-            backgroundColor: "#2b2b2b",
-            borderColor: hasSourceEdge ? "rgba(124,92,255,0.7)" : "rgba(124,92,255,0.4)",
-            color: "rgba(255,255,255,0.7)",
-          }}
-        >
-          <Palette size={11} strokeWidth={2} />
-        </div>
+        <HandleBadge icon={Palette} active={hasSourceEdge} label="Variant Output" side="right" />
       </Handle>
 
       {/* Target handle (text input) — left side bottom: 54px */}
@@ -998,16 +946,7 @@ export function VariantNode(props: NodeProps<FlowNode>) {
         className={targetHandleClassName}
         style={{ top: "auto", bottom: 54 }}
       >
-        <div
-          className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full border transition-all duration-150"
-          style={{
-            backgroundColor: "#2b2b2b",
-            borderColor: hasTextConnection ? "rgba(124,92,255,0.7)" : "rgba(124,92,255,0.4)",
-            color: "rgba(255,255,255,0.7)",
-          }}
-        >
-          <Type size={11} strokeWidth={2} />
-        </div>
+        <HandleBadge icon={Type} active={hasTextConnection} label="Prompt" side="left" />
       </Handle>
 
       {/* Target handle (image/layer input) — left side bottom: 14px */}
@@ -1018,16 +957,7 @@ export function VariantNode(props: NodeProps<FlowNode>) {
         className={targetHandleClassName}
         style={{ top: "auto", bottom: 14 }}
       >
-        <div
-          className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full border transition-all duration-150"
-          style={{
-            backgroundColor: "#2b2b2b",
-            borderColor: hasImageConnection ? "rgba(124,92,255,0.7)" : "rgba(124,92,255,0.4)",
-            color: "rgba(255,255,255,0.7)",
-          }}
-        >
-          <Layers size={11} strokeWidth={2} />
-        </div>
+        <HandleBadge icon={Layers} active={hasImageConnection} label="Start Image" side="left" />
       </Handle>
 
 

@@ -117,7 +117,7 @@ export function UploadNode(props: NodeProps<FlowNode>) {
         selected={selected}
         width={nodeWidth}
         status={normaliseStatus(data.status)}
-        sourceHandle={{ id: "source", icon: ImageUp, label: "Upload output" }}
+        sourceHandle={{ id: "source", icon: ImageUp, label: "Uploaded Image" }}
         padded={false}
       >
         {/* Image slot */}

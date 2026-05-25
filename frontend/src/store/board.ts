@@ -45,6 +45,8 @@ export interface StoryboardShot {
   error?: string;
 }
 
+export type StoryboardGrid = "2x2" | "2x3" | "2x4";
+
 export interface FlowboardNodeData extends Record<string, unknown> {
   type: NodeType;
   shortId: string;
@@ -107,6 +109,12 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   // plain text in that case so the user knows it's an estimate.
   imageModel?: string;
   videoQuality?: string;
+  videoModel?: string;
+  omniFlashDuration?: number;
+  soundEnabled?: boolean;
+  cameraMode?: string;
+  startImageMediaId?: string;
+  endImageMediaId?: string;
   // Character-builder selections ï¿½ persisted on dispatch so the detail
   // panel can show "Country / Vibe / Gender" pills under METADATA. Keys
   // (`vn`, `clean`, `female`) match the constants in
@@ -151,6 +159,7 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   shots?: StoryboardShot[];
   shotCount?: number; // 1..8; mirrors shots.length
   narrativeSeed?: string; // user free-text feeding the planner
+  storyboardGrid?: StoryboardGrid;
 
   // Group node fields (type === "group"). The frame container that
   // owns child nodes via parent_id. `groupColor` drives the header /
@@ -198,6 +207,10 @@ function edgeFromDto(dto: {
 
 function defaultTargetHandleForConnection(sourceNode?: FlowNode, targetNode?: FlowNode): string | undefined {
   if (!sourceNode || !targetNode) return undefined;
+  if (targetNode.data?.type === "video") {
+    const sourceType = sourceNode.type ?? sourceNode.data?.type;
+    return sourceType === "text" ? "target-text" : "target-start-image";
+  }
   if (targetNode.data?.type !== "reference" && targetNode.data?.type !== "variant") {
     return "target";
   }
@@ -392,10 +405,12 @@ const TYPE_TITLE: Partial<Record<NodeType, string>> = {
   note: "Note",
   reference: "Image Generator",
   variant: "Variant",
+  video: "Video Generator",
   upload: "Upload",
   text: "Text",
   add_reference: "Add Reference",
   group: "Group",
+  Storyboard: "Storyboard",
 };
 
 /**
@@ -500,10 +515,17 @@ function nodeFromDto(
       imageModel: d["imageModel"] as string | undefined,
       modelKey: d["modelKey"] as string | undefined,
       videoQuality: d["videoQuality"] as string | undefined,
+      videoModel: d["videoModel"] as string | undefined,
+      omniFlashDuration: d["omniFlashDuration"] as number | undefined,
+      soundEnabled: d["soundEnabled"] as boolean | undefined,
+      cameraMode: d["cameraMode"] as string | undefined,
+      startImageMediaId: d["startImageMediaId"] as string | undefined,
+      endImageMediaId: d["endImageMediaId"] as string | undefined,
       // Legacy character builder (still loaded for old boards)
       charCountry: d["charCountry"] as string | undefined,
       charVibe: d["charVibe"] as string | undefined,
       charGender: d["charGender"] as string | undefined,
+      storyboardGrid: d["storyboardGrid"] as StoryboardGrid | undefined,
       // Concepta fork
       styleKey: d["styleKey"] as string | undefined,
       typeKey: d["typeKey"] as string | undefined,
@@ -1204,8 +1226,8 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       };
       set((s) => ({ nodes: [...s.nodes, node] }));
       return node.id;
-    } catch {
-      // surface silently for now
+    } catch (err) {
+      console.error("addReferenceNode failed", { mediaId: ref.mediaId, err });
     }
     return null;
   },

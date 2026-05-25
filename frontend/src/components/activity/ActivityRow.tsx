@@ -15,7 +15,8 @@ export function ActivityRow({ item, onClick, onCancel }: ActivityRowProps) {
   const node = item.node_short_id ? `· #${item.node_short_id}` : "";
   const dur = item.duration_ms !== null ? formatDuration(item.duration_ms) : "";
   const [busy, setBusy] = useState(false);
-  const canCancel = item.status === "queued" && !!onCancel;
+  const canCancel =
+    (item.status === "queued" || item.status === "running") && !!onCancel;
 
   async function handleCancel(e: React.MouseEvent) {
     e.stopPropagation();
@@ -59,10 +60,14 @@ export function ActivityRow({ item, onClick, onCancel }: ActivityRowProps) {
         </div>
         <div className="activity-row__meta">
           {relativeTime(item.created_at)}
-          {dur && (item.status === "done" || item.status === "failed") && (
-            <span className="activity-row__dur"> · {dur}</span>
-          )}
-          {item.status === "failed" && (
+          {dur &&
+            (item.status === "done"
+              || item.status === "failed"
+              || item.status === "canceled"
+              || item.status === "timeout") && (
+              <span className="activity-row__dur"> · {dur}</span>
+            )}
+          {(item.status === "failed" || item.status === "timeout") && (
             <span className="activity-row__hint"> · click for error</span>
           )}
         </div>
@@ -82,7 +87,7 @@ export function ActivityRow({ item, onClick, onCancel }: ActivityRowProps) {
           aria-label={`Cancel ${meta.label}`}
           title="Cancel"
         >
-          {busy ? "…" : "Cancel"}
+          {busy ? "..." : "Cancel"}
         </button>
       )}
     </div>

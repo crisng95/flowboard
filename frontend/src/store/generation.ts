@@ -152,36 +152,116 @@ export function isMaterialRefDemoted(
   return false;
 }
 
-function collectUpstreamRefMediaIds(targetRfId: string): string[] {
+export function resolveEdgeMediaSelection(targetRfId: string, edgeId: string): {
+  mediaId: string | null;
+  variantIdx: number | null;
+  allVariants: string[];
+} {
+  const { nodes, edges } = useBoardStore.getState();
+  const edge = edges.find((e) => e.id === edgeId && e.target === targetRfId);
+  if (!edge) return { mediaId: null, variantIdx: null, allVariants: [] };
+  const src = nodes.find((n) => n.id === edge.source);
+  if (!src) return { mediaId: null, variantIdx: null, allVariants: [] };
+  if (src.data.type === "video") {
+    if (edge.sourceHandle === "source-start-image" && typeof src.data.startImageMediaId === "string") {
+      return { mediaId: src.data.startImageMediaId, variantIdx: null, allVariants: [src.data.startImageMediaId] };
+    }
+    if (edge.sourceHandle === "source-end-image" && typeof src.data.endImageMediaId === "string") {
+      return { mediaId: src.data.endImageMediaId, variantIdx: null, allVariants: [src.data.endImageMediaId] };
+    }
+  }
+
+  const variants = (Array.isArray(src.data.mediaIds) ? src.data.mediaIds : [])
+    .filter((m): m is string => typeof m === "string" && m.length > 0);
+  const pin = (edge.data?.sourceVariantIdx ?? null) as number | null;
+
+  if (pin !== null && pin >= 0 && pin < variants.length) {
+    return { mediaId: variants[pin], variantIdx: pin, allVariants: variants };
+  }
+  if (typeof src.data.mediaId === "string" && src.data.mediaId) {
+    const idx = variants.indexOf(src.data.mediaId);
+    return {
+      mediaId: src.data.mediaId,
+      variantIdx: idx >= 0 ? idx : null,
+      allVariants: variants,
+    };
+  }
+  if (variants.length > 0) {
+    return { mediaId: variants[0], variantIdx: 0, allVariants: variants };
+  }
+  return { mediaId: null, variantIdx: null, allVariants: [] };
+}
+
+function collectUpstreamRefMediaIds(targetRfId: string, allowedTargetHandles?: string[]): string[] {
   const { nodes, edges } = useBoardStore.getState();
   const ids: string[] = [];
 
   for (const e of edges) {
     if (e.target !== targetRfId) continue;
+    if (allowedTargetHandles && !allowedTargetHandles.includes(e.targetHandle ?? "target")) continue;
     const src = nodes.find((n) => n.id === e.source);
     if (!src || !REF_SOURCE_TYPES.has(src.data.type)) continue;
 
-    const variants = Array.isArray(src.data.mediaIds) ? src.data.mediaIds : [];
-    const pinned = (e.data?.sourceVariantIdx ?? null) as number | null;
-
-    let chosen: string | null = null;
-    if (
-      pinned !== null
-      && pinned >= 0
-      && pinned < variants.length
-      && typeof variants[pinned] === "string"
-      && variants[pinned]
-    ) {
-      chosen = variants[pinned] as string;
-    } else if (typeof src.data.mediaId === "string" && src.data.mediaId) {
-      chosen = src.data.mediaId;
-    } else if (variants.length > 0 && typeof variants[0] === "string" && variants[0]) {
-      chosen = variants[0] as string;
-    }
+    const { mediaId: chosen } = resolveEdgeMediaSelection(targetRfId, e.id);
 
     if (chosen) ids.push(chosen);
   }
   return ids;
+}
+
+export function getVideoNodeInputs(targetRfId: string): {
+  startImage: string | null;
+  endImage: string | null;
+  referenceImages: string[];
+  textPrompt: string | null;
+  startEdgeId: string | null;
+  endEdgeId: string | null;
+  referenceEdgeIds: string[];
+} {
+  const { nodes, edges } = useBoardStore.getState();
+  let startImage: string | null = null;
+  let endImage: string | null = null;
+  let textPrompt: string | null = null;
+  let startEdgeId: string | null = null;
+  let endEdgeId: string | null = null;
+  const referenceImages: string[] = [];
+  const referenceEdgeIds: string[] = [];
+
+  for (const e of edges) {
+    if (e.target !== targetRfId) continue;
+    const src = nodes.find((n) => n.id === e.source);
+    if (!src) continue;
+    const handle = e.targetHandle ?? "target";
+    if (handle === "target-text") {
+      if (typeof src.data.prompt === "string" && src.data.prompt.trim()) {
+        textPrompt = src.data.prompt.trim();
+      }
+      continue;
+    }
+    if (!REF_SOURCE_TYPES.has(src.data.type)) continue;
+    const { mediaId } = resolveEdgeMediaSelection(targetRfId, e.id);
+    if (!mediaId) continue;
+    if (handle === "target-start-image") {
+      startImage = mediaId;
+      startEdgeId = e.id;
+    } else if (handle === "target-end-image") {
+      endImage = mediaId;
+      endEdgeId = e.id;
+    } else if (handle === "target-references") {
+      referenceImages.push(mediaId);
+      referenceEdgeIds.push(e.id);
+    }
+  }
+
+  return {
+    startImage,
+    endImage,
+    referenceImages,
+    textPrompt,
+    startEdgeId,
+    endEdgeId,
+    referenceEdgeIds,
+  };
 }
 
 /**
@@ -558,7 +638,10 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         // bearing edge (character / image / visual_asset / Storyboard)
         // and pass them all, not just the one edge the i2v UI picked.
         if (isOmni) {
-          const ingredients = collectUpstreamRefMediaIds(rfId);
+          const videoInputs = getVideoNodeInputs(rfId);
+          const ingredients = videoInputs.referenceImages.length > 0
+            ? videoInputs.referenceImages
+            : (videoInputs.startImage ? [videoInputs.startImage] : []);
           if (ingredients.length === 0) {
             useBoardStore.getState().updateNodeData(rfId, {
               status: "error",
@@ -589,9 +672,13 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           // image / variant batch" because that's the model's input
           // contract. Omni's ingredient validation above runs first
           // when isOmni; this check only fires for the Veo branch.
-          const hasMulti =
-            Array.isArray(opts.sourceMediaIds) && opts.sourceMediaIds.length > 0;
-          if (!hasMulti && !opts.sourceMediaId) {
+          const videoInputs = getVideoNodeInputs(rfId);
+          const startMediaIds = Array.isArray(opts.sourceMediaIds) && opts.sourceMediaIds.length > 0
+            ? opts.sourceMediaIds
+            : undefined;
+          const startMediaId = opts.sourceMediaId ?? videoInputs.startImage ?? undefined;
+          const hasMulti = Array.isArray(startMediaIds) && startMediaIds.length > 0;
+          if (!hasMulti && !startMediaId) {
             useBoardStore.getState().updateNodeData(rfId, { status: "error", error: "no source media" });
             set({ error: "Veo i2v requires a source image (connect an upstream image node)" });
             return;
@@ -608,9 +695,9 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             video_quality: settings.videoQuality,
           };
           if (hasMulti) {
-            videoParams.start_media_ids = opts.sourceMediaIds;
+            videoParams.start_media_ids = startMediaIds;
           } else {
-            videoParams.start_media_id = opts.sourceMediaId;
+            videoParams.start_media_id = startMediaId;
           }
           reqDto = await createRequest({
             type: "gen_video",
@@ -736,10 +823,16 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               req.type === "gen_image"
                 ? (req.params["image_model"] as string | undefined)
                 : undefined;
-            const stampedVideoQuality =
-              req.type === "gen_video"
-                ? (req.params["video_quality"] as string | undefined)
-                : undefined;
+            let stampedVideoQuality: string | undefined;
+            if (req.type === "gen_video") {
+              stampedVideoQuality =
+                req.params["video_quality"] as string | undefined;
+            } else if (req.type === "gen_video_omni") {
+              const duration = req.params["duration_s"] as number | undefined;
+              if (duration === 4 || duration === 6 || duration === 8 || duration === 10) {
+                stampedVideoQuality = `abra_r2v_${duration}s`;
+              }
+            }
             const renderedAt = new Date().toISOString();
             useBoardStore.getState().updateNodeData(rfId, {
               status: "done",

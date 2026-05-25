@@ -14,12 +14,13 @@
 import { useCallback, useRef, useState, useEffect } from "react";
 import { type NodeProps, useReactFlow, NodeToolbar, Position } from "@xyflow/react";
 import { Bold, Italic, List, ListOrdered, Minus, Copy, Trash2, Check, Ban } from "lucide-react";
-import { createPortal } from "react-dom";
 
 import { useBoardStore, type FlowNode } from "../../store/board";
 import { persistNodeData } from "./shared/persistNodeData";
 import { cn } from "../../lib/utils";
 import { createNode } from "../../api/client";
+import { DropdownCaret } from "./shared/DropdownCaret";
+import { PickerDropdown } from "./shared/PickerDropdown";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    LAYOUT CONSTANTS
@@ -329,6 +330,8 @@ function ColorDropdownPortal({
   value: string;
   onChange: (val: string) => void;
 }) {
+  void menuId;
+
   return (
     <>
       <button
@@ -338,61 +341,44 @@ function ColorDropdownPortal({
         className="h-7 px-2 rounded-full flex items-center justify-center gap-1.5 bg-transparent hover:bg-white/[0.08] transition-all cursor-pointer select-none text-white/70 hover:text-white nodrag"
       >
         <ColorSwatch colorKey={value} className="h-3.5 w-3.5 shrink-0" />
-        <span className="text-[7px] text-white/50 select-none">
-          {open ? "▲" : "▼"}
-        </span>
+        <DropdownCaret open={open} className="text-white/50 select-none" />
       </button>
 
-      {open && (
-        <div
-          id={menuId}
-          className="absolute -top-11 left-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full z-[9999] shadow-lg animate-fade-in"
-          style={{
-            backgroundColor: "rgba(20, 20, 20, 0.95)",
-            backdropFilter: "blur(12px)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            boxShadow: "0 8px 28px -10px rgba(0,0,0,0.6)",
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          {Object.keys(COLOR_OPTIONS).map((key) => {
-            const isSelected = key === value;
-            const option = COLOR_OPTIONS[key];
-            return (
-              <button
-                key={key}
-                type="button"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={() => {
-                  onChange(key);
-                  setOpen(false);
-                }}
-                className="w-5.5 h-5.5 rounded-full border transition-transform hover:scale-110 relative flex items-center justify-center shrink-0 cursor-pointer"
-                style={{
-                  backgroundColor: option.isTransparent ? "#ffffff" : option.bg,
-                  width: "20px",
-                  height: "20px",
-                  borderColor: isSelected ? "#f5f5f5" : "rgba(255,255,255,0.2)",
-                  boxShadow: isSelected ? "0 0 0 2px rgba(124,92,255,0.5)" : "none",
-                }}
-              >
-                {option.isTransparent && (
-                  <div className="absolute inset-0 rounded-full overflow-hidden flex items-center justify-center">
-                    {/* Red diagonal line for None */}
-                    <div className="w-[22px] h-[2px] bg-red-500 rotate-[45deg]" />
-                  </div>
-                )}
-                {isSelected && !option.isTransparent && (
-                  <div
-                    className="w-1.5 h-1.5 rounded-full"
-                    style={{ backgroundColor: option.text }}
-                  />
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      <PickerDropdown
+        anchorRef={buttonRef}
+        isOpen={open}
+        onClose={() => setOpen(false)}
+        items={Object.keys(COLOR_OPTIONS).map((key) => ({
+          key,
+          label: COLOR_OPTIONS[key].label,
+        }))}
+        activeKey={value}
+        onPick={(key) => {
+          onChange(key);
+          setOpen(false);
+        }}
+        minWidth={112}
+        estimatedHeight={260}
+        matchAnchorWidth={false}
+        renderItem={(item, state) => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => {
+              onChange(item.key);
+              setOpen(false);
+            }}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors",
+              state.active ? "bg-white/[0.08] text-white" : "text-white/78 hover:bg-white/[0.06] hover:text-white",
+            )}
+          >
+            <ColorSwatch colorKey={item.key} className="h-4 w-4 shrink-0" />
+            <span className="flex-1 text-2xs font-medium">{item.label}</span>
+            {state.active && <Check size={12} className="shrink-0 text-accent" />}
+          </button>
+        )}
+      />
     </>
   );
 }
@@ -411,6 +397,9 @@ function SizeDropdownPortal({
   value,
   onChange,
 }: SizeDropdownProps) {
+  void menuPos;
+  void menuId;
+
   return (
     <>
       <button
@@ -420,47 +409,23 @@ function SizeDropdownPortal({
         className="h-7 px-2 rounded-full flex items-center justify-between gap-1 text-[10px] font-medium bg-transparent hover:bg-white/[0.08] transition-all cursor-pointer select-none text-white/70 hover:text-white nodrag"
       >
         <span className="truncate max-w-[80px]">{value}</span>
-        <span className="text-[6px] text-white/50">▼</span>
+        <DropdownCaret open={open} className="text-white/50" />
       </button>
 
-      {open && menuPos && createPortal(
-        <div
-          id={menuId}
-          className="fixed rounded-lg p-1 border border-white/[0.08] shadow-xl z-[9999] nowheel flex flex-col gap-1"
-          style={{
-            left: menuPos.left,
-            top: menuPos.top,
-            backgroundColor: "#1a1a1a",
-            width: "120px",
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          {FONT_SIZES.map((size) => {
-            const isActive = size === value;
-            return (
-              <button
-                key={size}
-                type="button"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={() => {
-                  onChange(size);
-                  setOpen(false);
-                }}
-                className={cn(
-                  "w-full px-2 py-1.5 rounded-md text-2xs transition-colors flex items-center justify-between",
-                  isActive
-                    ? "text-white bg-white/[0.06]"
-                    : "text-white/70 hover:text-white hover:bg-white/[0.06] cursor-pointer",
-                )}
-              >
-                <span className="truncate text-left">{size}</span>
-                {isActive && <Check size={10} className="text-accent shrink-0" />}
-              </button>
-            );
-          })}
-        </div>,
-        document.body,
-      )}
+      <PickerDropdown
+        anchorRef={buttonRef}
+        isOpen={open}
+        onClose={() => setOpen(false)}
+        items={FONT_SIZES.map((size) => ({ key: size, label: size }))}
+        activeKey={value}
+        onPick={(key) => {
+          onChange(key as FontSizeOption);
+          setOpen(false);
+        }}
+        minWidth={104}
+        matchAnchorWidth={false}
+        estimatedHeight={220}
+      />
     </>
   );
 }

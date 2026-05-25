@@ -260,10 +260,12 @@ export type NodeType =
   | "note"
   | "reference"
   | "variant"
+  | "video"
   | "upload"
   | "text"
   | "add_reference"
-  | "group";
+  | "group"
+  | "Storyboard";
 export type NodeStatus = "idle" | "queued" | "running" | "done" | "error" | "partial";
 
 export interface Board {
@@ -688,7 +690,7 @@ export function getMediaStatus(mediaId: string): Promise<MediaStatus> {
 
 export function mediaUrl(mediaId: string): string {
   const clean = mediaId.replace(/^media\//, "");
-  return `/media/${encodeURIComponent(clean)}`;
+  return `${getBaseUrl()}/media/${encodeURIComponent(clean)}`;
 }
 
 // â”€â”€ Upload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -933,7 +935,7 @@ export async function testLlmProvider(
 export type ActivityType =
   | "auto_prompt" | "auto_prompt_batch"
   | "vision" | "planner"
-  | "gen_image" | "gen_video" | "edit_image"
+  | "gen_image" | "gen_video" | "gen_video_omni" | "edit_image"
   | "upload"
   | "text" | "upload_url";
 export type ActivityStatus = "queued" | "running" | "done" | "failed";

@@ -15,6 +15,7 @@ import {
   ImageUp,
   Upload,
   Layers,
+  Video,
 } from "lucide-react";
 
 import { useBoardStore } from "../store/board";
@@ -56,6 +57,7 @@ const CATEGORIES: Category[] = [
   {
     name: "MEDIA",
     nodes: [
+      { type: "video", icon: Video, label: "Video Generator" },
       { type: "upload", icon: Upload, label: "Upload" },
     ],
   },

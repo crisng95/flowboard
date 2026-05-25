@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   useGenerationStore,
   REF_DISPATCH_TYPES,
+  getVideoNodeInputs,
+  resolveEdgeMediaSelection,
   isMaterialRefDemoted,
   targetHasStructuralRef,
 } from "../store/generation";
@@ -220,16 +222,25 @@ export function GenerationDialog() {
   // multiple variants, we batch-i2v one video per variant — `sourceMediaIds`
   // captures the full set; `sourceMediaId` is the active variant for the
   // legacy single-source path.
-  const sourceEdge = isVideo ? edges.find((e) => e.target === rfId) : undefined;
+  const videoInputs = isVideo && rfId ? getVideoNodeInputs(rfId) : null;
+  const sourceEdge = isVideo && videoInputs?.startEdgeId
+    ? edges.find((e) => e.id === videoInputs.startEdgeId)
+    : undefined;
   const sourceNode = sourceEdge ? nodes.find((n) => n.id === sourceEdge.source) : undefined;
-  const sourceMediaId = sourceNode?.data.mediaId ?? null;
+  const sourceMediaId = videoInputs?.startImage ?? null;
   // Drop null placeholders from the upstream variant list — partial-
   // batch results may carry them, but downstream dispatch needs a
   // dense array of valid mediaIds to feed into Flow.
   const sourceMediaIds: string[] = isVideo
-    ? (sourceNode?.data.mediaIds ?? (sourceMediaId ? [sourceMediaId] : []))
+    ? (Array.isArray(sourceNode?.data.mediaIds) ? sourceNode?.data.mediaIds : [])
         .filter((m): m is string => typeof m === "string" && m.length > 0)
     : [];
+  const endImageNode = isVideo && videoInputs?.endEdgeId
+    ? (() => {
+        const edge = edges.find((e) => e.id === videoInputs.endEdgeId);
+        return edge ? nodes.find((n) => n.id === edge.source) : undefined;
+      })()
+    : undefined;
 
   // Image nodes: list every upstream ref edge feeding this target. We
   // walk edges (not just nodes) so we can read each edge's variant pin
@@ -247,7 +258,7 @@ export function GenerationDialog() {
   // separate list from refSourceNodes; the dialog renders them as a
   // text-only chip alongside image refs so the user can SEE that a
   // Prompt node is influencing the gen.
-  const promptSourceNodes = (!isVideo || isOmniVideo) && rfId
+  const promptSourceNodes = rfId
     ? edges
         .filter((e) => e.target === rfId)
         .map((e) => {
@@ -259,39 +270,30 @@ export function GenerationDialog() {
         .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     : [];
 
-  const refSourceNodes = (!isVideo || isOmniVideo) && rfId
+  const refSourceNodes = rfId
     ? edges
         .filter((e) => e.target === rfId)
         .map((e) => {
           const n = nodes.find((node) => node.id === e.source);
           if (!n || !REF_SOURCE_TYPES.has(n.data.type)) return null;
+          if (isVideo) {
+            const handle = e.targetHandle ?? "target";
+            if (isOmniVideo) {
+              if (handle !== "target-references" && handle !== "target-start-image") return null;
+            } else if (handle !== "target-references") {
+              return null;
+            }
+          }
           // Burn-and-bake: when at least one structural `add_reference`
           // is upstream, the dispatcher drops every material
           // `add_reference` from `ref_media_ids`. Hide them in the
           // chip preview too so the UI matches what Flow receives.
           // The directive lives in the auto-prompt text instead.
           if (rfId && isMaterialRefDemoted(n, targetHasStructuralRef(rfId))) return null;
-          const variants = (Array.isArray(n.data.mediaIds) ? n.data.mediaIds : [])
-            .filter((m): m is string => typeof m === "string" && m.length > 0);
-          const pin = (e.data?.sourceVariantIdx ?? null) as number | null;
-          let mediaId: string | undefined;
-          let variantIdx: number | null = null;
-          if (pin !== null && pin >= 0 && pin < variants.length) {
-            mediaId = variants[pin];
-            variantIdx = pin;
-          } else if (typeof n.data.mediaId === "string" && n.data.mediaId) {
-            mediaId = n.data.mediaId;
-            // When dispatch falls back to source.mediaId, that's
-            // typically variants[0] (gen-result writes mediaId =
-            // mediaIds[0]). Surface that as the displayed variantIdx
-            // so the chip's badge matches what Flow will receive,
-            // even before the user clicks to pin explicitly.
-            const idx = variants.indexOf(n.data.mediaId);
-            variantIdx = idx >= 0 ? idx : null;
-          } else if (variants.length > 0) {
-            mediaId = variants[0];
-            variantIdx = 0;
-          }
+          const resolved = resolveEdgeMediaSelection(rfId, e.id);
+          const variants = resolved.allVariants;
+          const mediaId = resolved.mediaId ?? undefined;
+          const variantIdx = resolved.variantIdx;
           if (!mediaId) return null;
           return {
             edgeId: e.id,
@@ -321,7 +323,18 @@ export function GenerationDialog() {
         nodes,
         useBoardStore.getState().edges,
       );
-      if (inherited !== null) {
+      const persistedAspect = openNode?.data.aspectRatio;
+      if (
+        persistedAspect === "VIDEO_ASPECT_RATIO_LANDSCAPE" ||
+        persistedAspect === "VIDEO_ASPECT_RATIO_PORTRAIT" ||
+        persistedAspect === "IMAGE_ASPECT_RATIO_SQUARE" ||
+        persistedAspect === "IMAGE_ASPECT_RATIO_PORTRAIT" ||
+        persistedAspect === "IMAGE_ASPECT_RATIO_LANDSCAPE" ||
+        persistedAspect === "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR" ||
+        persistedAspect === "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE"
+      ) {
+        nextAspect = persistedAspect;
+      } else if (inherited !== null) {
         nextAspect = inherited;
       } else if (openNodeType === "video") {
         nextAspect = "VIDEO_ASPECT_RATIO_LANDSCAPE";
@@ -329,22 +342,37 @@ export function GenerationDialog() {
         nextAspect = "IMAGE_ASPECT_RATIO_LANDSCAPE";
       }
       setAspectRatio(nextAspect);
+      if (openNodeType === "video" && openNode) {
+        const nodeVideoModel = openNode.data.videoModel;
+        const nodeVideoQuality = openNode.data.videoQuality;
+        const nodeOmniDuration = openNode.data.omniFlashDuration;
+        if (nodeVideoModel === "veo" || nodeVideoModel === "omni_flash") {
+          setVideoModel(nodeVideoModel);
+        }
+        if (
+          nodeVideoQuality === "fast" ||
+          nodeVideoQuality === "lite" ||
+          nodeVideoQuality === "quality" ||
+          nodeVideoQuality === "lite_relaxed"
+        ) {
+          setVideoQuality(nodeVideoQuality);
+        }
+        if (
+          nodeOmniDuration === 4 ||
+          nodeOmniDuration === 6 ||
+          nodeOmniDuration === 8 ||
+          nodeOmniDuration === 10
+        ) {
+          setOmniFlashDuration(nodeOmniDuration);
+        }
+      }
       setVariants(1);
       setCamera("static");
       setAutoBuilding(false);
       setAutoPromptUsed(false);
       // Default-select every upstream source variant for video targets so
       // the user just hits Generate when they want all videos.
-      const upstreamEdge = useBoardStore
-        .getState()
-        .edges.find((e) => e.target === rfId);
-      const upstreamNode = upstreamEdge
-        ? useBoardStore.getState().nodes.find((n) => n.id === upstreamEdge.source)
-        : undefined;
-      const ups =
-        upstreamNode?.data.mediaIds ??
-        (upstreamNode?.data.mediaId ? [upstreamNode.data.mediaId] : []);
-      setSelectedSourceIdx(new Set(ups.map((_, i) => i)));
+      setSelectedSourceIdx(new Set(sourceMediaIds.map((_, i) => i)));
       triggerRef.current = document.activeElement;
       // Focus textarea on open
       setTimeout(() => firstFocusRef.current?.focus(), 50);
@@ -534,6 +562,21 @@ export function GenerationDialog() {
       setAutoBuilding(false);
     }
     if (isVideo) {
+      const dbId = parseInt(rfId, 10);
+      useBoardStore.getState().updateNodeData(rfId, {
+        videoModel: videoModelFamily,
+        videoQuality,
+        omniFlashDuration,
+      });
+      if (!isNaN(dbId)) {
+        patchNode(dbId, {
+          data: {
+            videoModel: videoModelFamily,
+            videoQuality,
+            omniFlashDuration,
+          },
+        }).catch(() => {});
+      }
       // Append the camera-movement constraint to whatever motion prompt
       // we have (manual or auto-synthesised). Putting it last makes it
       // the dominant instruction the model resolves against — overrides
@@ -579,7 +622,7 @@ export function GenerationDialog() {
   const isWorking = autoBuilding || nodeLLMBusy;
 
   const canGenerate = isOmniVideo
-    ? refSourceNodes.length > 0 && !isWorking
+    ? (refSourceNodes.length > 0 || !!sourceMediaId) && !isWorking
     : isVideo
     ? selectedSourceIdx.size > 0 && !isWorking
     : !isWorking;
@@ -750,13 +793,32 @@ export function GenerationDialog() {
           </div>
         )}
 
+        {isVideo && videoInputs?.endImage && endImageNode && (
+          <div className="gen-dialog__field">
+            <span className="gen-dialog__label">End image</span>
+            <div className="source-image-row">
+              <img
+                className="source-image-row__thumb"
+                src={mediaUrl(videoInputs.endImage)}
+                alt={endImageNode.data.title}
+              />
+              <span className="source-image-row__label">
+                #{endImageNode.data.shortId}
+              </span>
+            </div>
+            <p className="gen-dialog__hint">
+              End image is wired and preserved on the node, but the current backend video flow does not consume it yet.
+            </p>
+          </div>
+        )}
+
         {/* Source references — image refs AND prompt-text refs. Prompt nodes don't have
             media but their text feeds the auto-prompt synth, so we
             surface them as text chips next to the thumbnails. */}
-        {(!isVideo || isOmniVideo) && (refSourceNodes.length > 0 || promptSourceNodes.length > 0) && (
+        {(refSourceNodes.length > 0 || promptSourceNodes.length > 0) && (
           <div className="gen-dialog__field">
             <span className="gen-dialog__label">
-              Source references ({refSourceNodes.length + promptSourceNodes.length})
+              {isVideo ? "References" : "Source references"} ({refSourceNodes.length + promptSourceNodes.length})
             </span>
             <div className="ref-source-row">
               {promptSourceNodes.map((p) => {

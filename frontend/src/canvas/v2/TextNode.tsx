@@ -202,7 +202,7 @@ export function TextNode(props: NodeProps<FlowNode>) {
         shortId={shortId}
         selected={selected}
         width={width}
-        sourceHandle={{ id: "source", icon: Type, label: "Text output" }}
+        sourceHandle={{ id: "source", icon: Type, label: "Prompt Text" }}
         padded={true}
       >
         <div
