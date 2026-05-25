@@ -15,13 +15,13 @@ const COMMUNITY_URL = "https://www.facebook.com/groups/flowkit.flowboard.communi
  * Dashboard Settings popover anchored to the AccountPanel gear button.
  *
  * Surfaces the model context that drives every generation:
- *   - Paygate tier — auto-detected from Flow's createProject response,
+ *   - Paygate tier - auto-detected from Flow's createProject response,
  *     read-only (this isn't user-selectable, it's a fact of their plan).
- *   - Video quality — Veo 3.1 Lite / Fast / Quality, plus Ultra-only
+ *   - Video quality - Veo 3.1 Lite / Fast / Quality, plus Ultra-only
  *     Lite Relaxed / Fast Relaxed (0-credit low-priority queue). Applies
  *     to BOTH portrait and landscape; backend resolves
- *     [tier][quality][aspect] → concrete Flow model key.
- *   - Image model — Banana Pro vs Banana 2 picker. Persisted to
+ *     [tier][quality][aspect] -> concrete Flow model key.
+ *   - Image model - Banana Pro vs Banana 2 picker. Persisted to
  *     localStorage; every gen_image / edit_image dispatch reads it.
  */
 
@@ -29,24 +29,24 @@ const IMAGE_MODELS: { key: ImageModelKey; label: string; hint: string }[] = [
   {
     key: "NANO_BANANA_PRO",
     label: "Nano Banana Pro",
-    hint: "GEM_PIX_2 — premium, higher fidelity, slightly slower",
+    hint: "GEM_PIX_2 - premium, higher fidelity, slightly slower",
   },
   {
     key: "NANO_OMNI",
     label: "Nano Omni",
-    hint: "OMNI — Google's latest next-gen unified model, ultra-high fidelity and context awareness.",
+    hint: "OMNI - Google's latest next-gen unified model, ultra-high fidelity and context awareness.",
   },
   {
     key: "NANO_BANANA_2",
     label: "Nano Banana 2",
-    hint: "NARWHAL — faster, lighter checkpoint",
+    hint: "NARWHAL - faster, lighter checkpoint",
   },
 ];
 
-// Order: lite → fast → quality (paid), then the Ultra-only relaxed
+// Order: lite -> fast -> quality (paid), then the Ultra-only relaxed
 // variants (0-credit low-priority queue). Lite/Fast/Quality are
 // available on both Pro (Tier 1) and Ultra (Tier 2); the *_relaxed
-// entries are Ultra-only — Pro users see them locked.
+// entries are Ultra-only - Pro users see them locked.
 const VIDEO_QUALITIES: {
   key: VideoQuality;
   label: string;
@@ -62,7 +62,7 @@ const VIDEO_QUALITIES: {
   {
     key: "fast",
     label: "Veo 3.1 Fast",
-    hint: "Default — balanced fidelity and speed. Applies to both 16:9 and 9:16.",
+    hint: "Default - balanced fidelity and speed. Applies to both 16:9 and 9:16.",
     ultraOnly: false,
   },
   {
@@ -74,7 +74,7 @@ const VIDEO_QUALITIES: {
   {
     key: "lite_relaxed",
     label: "Veo 3.1 Lite (Low Priority)",
-    hint: "Same Lite checkpoint, low-priority queue — 0 credits. Slower turnaround when Flow is busy.",
+    hint: "Same Lite checkpoint, low-priority queue - 0 credits. Slower turnaround when Flow is busy.",
     ultraOnly: true,
   },
 ];
@@ -83,11 +83,11 @@ interface SettingsPanelProps {
   open: boolean;
   onClose(): void;
   // Provided by AccountPanel. Called when the user clicks "Sign out"
-  // — AccountPanel owns the post-logout state reset (clear cached
+  // - AccountPanel owns the post-logout state reset (clear cached
   // profile, kick the /me poll). Pass undefined when no identity is
   // loaded (the button auto-hides in that case).
   onLogout?: () => Promise<void> | void;
-  // True while the parent's logout call is in flight — disables the
+  // True while the parent's logout call is in flight - disables the
   // button so a double-click doesn't fire two POSTs.
   logoutPending?: boolean;
 }
@@ -138,7 +138,7 @@ export function SettingsPanel({ open, onClose, onLogout, logoutPending }: Settin
     ? "Ultra"
     : tier === "PAYGATE_TIER_ONE"
       ? "Pro"
-      : "Detecting…";
+      : "Detecting...";
 
   return (
     <div
@@ -156,213 +156,188 @@ export function SettingsPanel({ open, onClose, onLogout, logoutPending }: Settin
         aria-label="Settings"
       >
         <div className="settings-panel__header">
-        <span className="settings-panel__title">Settings</span>
-        <button
-          type="button"
-          className="settings-panel__close"
-          onClick={onClose}
-          aria-label="Close settings"
-        >
-          ×
-        </button>
-      </div>
-
-      <div className="settings-panel__section">
-        <div className="settings-panel__label">Account tier</div>
-        <div className="settings-panel__value settings-panel__value--readonly">
-          {tierLabel}
-        </div>
-        <div className="settings-panel__hint">
-          Auto-detected from Google Flow when the first project loads.
-        </div>
-      </div>
-
-      {/* Single unified Video model picker — flat list of every option
-          (Veo tiers + Omni Flash). Selecting a Veo row stamps both
-          videoModel="veo" + the matching quality; selecting Omni Flash
-          stamps videoModel="omni_flash" (duration is picked per dispatch
-          in the GenerationDialog). */}
-      <div className="settings-panel__section">
-        <div className="settings-panel__label">Video model family</div>
-        <div className="settings-panel__radio-group">
-          <label
-            className={`settings-panel__radio${videoModel === "veo" ? " settings-panel__radio--active" : ""}`}
+          <span className="settings-panel__title">Settings</span>
+          <button
+            type="button"
+            className="settings-panel__close"
+            onClick={onClose}
+            aria-label="Close settings"
           >
-            <input
-              type="radio"
-              name="video-model-family"
-              value="veo"
-              checked={videoModel === "veo"}
-              onChange={() => setVideoModel("veo")}
-            />
-            <div>
-              <div className="settings-panel__radio-label">Veo 3.1 (i2v)</div>
-              <div className="settings-panel__radio-hint">
-                Image-to-video from a single source image. ~8s clips.
-                Quality tier (lite / fast / quality) selectable below.
-              </div>
-            </div>
-          </label>
-          <label
-            className={`settings-panel__radio${isOmniSelected ? " settings-panel__radio--active" : ""}`}
-          >
-            <input
-              type="radio"
-              name="video-model-family"
-              value="omni_flash"
-              checked={isOmniSelected}
-              onChange={() => setVideoModel("omni_flash")}
-            />
-            <div>
-              <div className="settings-panel__radio-label">Omni Flash (r2v)</div>
-              <div className="settings-panel__radio-hint">
-                Reference-image to video. Variable duration (4 / 6 / 8 / 10s)
-                picked per dispatch. Credit cost: 15 / 20 / 25 / 30.
-                Portrait + landscape; no Veo quality tiers.
-              </div>
-            </div>
-          </label>
+            x
+          </button>
         </div>
-      </div>
 
-      {showVeoQuality && (
-      <div className="settings-panel__section">
-        <div className="settings-panel__label">Veo quality tier</div>
-        <div className="settings-panel__radio-group">
-          {VIDEO_QUALITIES.map((q) => {
-            const locked = q.ultraOnly && tier !== "PAYGATE_TIER_TWO";
-            const checked = videoModel === "veo" && videoQuality === q.key;
-            return (
-              <label
-                key={q.key}
-                className={`settings-panel__radio${checked ? " settings-panel__radio--active" : ""}${locked ? " settings-panel__radio--locked" : ""}`}
-              >
-                <input
-                  type="radio"
-                  name="video-model"
-                  value={`veo:${q.key}`}
-                  checked={checked}
-                  disabled={locked}
-                  onChange={() => {
-                    setVideoModel("veo");
-                    setVideoQuality(q.key);
-                  }}
-                />
-                <div>
-                  <div className="settings-panel__radio-label">
-                    {q.label}
-                    {q.ultraOnly && (
-                      <span className="model-badge">Ultra only</span>
-                    )}
-                  </div>
-                  <div className="settings-panel__radio-hint">{q.hint}</div>
-                </div>
-              </label>
-            );
-          })}
-          <label
-            className={`settings-panel__radio${isOmniSelected ? " settings-panel__radio--active" : ""}`}
-          >
-            <input
-              type="radio"
-              name="video-model"
-              value="omni_flash"
-              checked={isOmniSelected}
-              onChange={() => setVideoModel("omni_flash")}
-            />
-            <div>
-              <div className="settings-panel__radio-label">
-                Omni Flash (r2v)
-              </div>
-              <div className="settings-panel__radio-hint">
-                Reference-image to video. Variable duration (4 / 6 / 8 / 10s)
-                picked per dispatch — 15 / 20 / 25 / 30 credits. Portrait +
-                landscape supported.
-              </div>
-            </div>
-          </label>
+        <div className="settings-panel__section">
+          <div className="settings-panel__label">Account tier</div>
+          <div className="settings-panel__value settings-panel__value--readonly">
+            {tierLabel}
+          </div>
+          <div className="settings-panel__hint">
+            Auto-detected from Google Flow when the first project loads.
+          </div>
         </div>
-      </div>
-      )}
 
-      <div className="settings-panel__section">
-        <div className="settings-panel__label">Image model</div>
-        <div className="settings-panel__radio-group">
-          {IMAGE_MODELS.map((m) => (
+        {/* Single unified Video model picker - family first, then Veo-only
+            quality below when Veo is selected. */}
+        <div className="settings-panel__section">
+          <div className="settings-panel__label">Video model family</div>
+          <div className="settings-panel__radio-group">
             <label
-              key={m.key}
-              className={`settings-panel__radio${imageModel === m.key ? " settings-panel__radio--active" : ""}`}
+              className={`settings-panel__radio${videoModel === "veo" ? " settings-panel__radio--active" : ""}`}
             >
               <input
                 type="radio"
-                name="image-model"
-                value={m.key}
-                checked={imageModel === m.key}
-                onChange={() => setImageModel(m.key)}
+                name="video-model-family"
+                value="veo"
+                checked={videoModel === "veo"}
+                onChange={() => setVideoModel("veo")}
               />
               <div>
-                <div className="settings-panel__radio-label">{m.label}</div>
-                <div className="settings-panel__radio-hint">{m.hint}</div>
+                <div className="settings-panel__radio-label">Veo 3.1 (i2v)</div>
+                <div className="settings-panel__radio-hint">
+                  Image-to-video from a single source image. ~8s clips.
+                  Quality tier (lite / fast / quality) selectable below.
+                </div>
               </div>
             </label>
-          ))}
-        </div>
-      </div>
-
-      <div className="settings-panel__section">
-        <div className="settings-panel__label">About</div>
-        <div className="settings-panel__about-row">
-          <span className="settings-panel__about-key">Version</span>
-          <span className="settings-panel__about-value">
-            <code>v{APP_VERSION}</code>
-            {updateAvailable && latestRelease && (
-              <a
-                className="settings-panel__update-badge"
-                href={latestRelease.htmlUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={`Latest: ${latestRelease.tagName}`}
-              >
-                New version {latestRelease.tagName} →
-              </a>
-            )}
-          </span>
-        </div>
-        <div className="settings-panel__about-row">
-          <span className="settings-panel__about-key">Community</span>
-          <a
-            className="settings-panel__about-link"
-            href={COMMUNITY_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            FlowKit & Flowboard on Facebook →
-          </a>
-        </div>
-      </div>
-
-      {onLogout && (
-        // Sign out lives here (not in the AccountPanel chip) so the
-        // chip stays narrow enough for the email + status row to
-        // render without ellipsizing on default sidebar widths.
-        <div className="settings-panel__section settings-panel__section--logout">
-          <button
-            type="button"
-            className="settings-panel__logout-btn"
-            onClick={onLogout}
-            disabled={logoutPending}
-          >
-            {logoutPending ? "Signing out…" : "Sign out from Flow account"}
-          </button>
-          <div className="settings-panel__hint">
-            Clears the cached identity and tells the extension to drop
-            its in-memory token. The WebSocket stays open so signing
-            back in doesn't require a Chrome restart.
+            <label
+              className={`settings-panel__radio${isOmniSelected ? " settings-panel__radio--active" : ""}`}
+            >
+              <input
+                type="radio"
+                name="video-model-family"
+                value="omni_flash"
+                checked={isOmniSelected}
+                onChange={() => setVideoModel("omni_flash")}
+              />
+              <div>
+                <div className="settings-panel__radio-label">Omni Flash (r2v)</div>
+                <div className="settings-panel__radio-hint">
+                  Reference-image to video. Variable duration (4 / 6 / 8 / 10s)
+                  picked per dispatch. Credit cost: 15 / 20 / 25 / 30.
+                  Portrait + landscape; no Veo quality tiers.
+                </div>
+              </div>
+            </label>
           </div>
         </div>
-      )}
+
+        {showVeoQuality && (
+          <div className="settings-panel__section">
+            <div className="settings-panel__label">Veo quality tier</div>
+            <div className="settings-panel__radio-group">
+              {VIDEO_QUALITIES.map((q) => {
+                const locked = q.ultraOnly && tier !== "PAYGATE_TIER_TWO";
+                const checked = videoModel === "veo" && videoQuality === q.key;
+                return (
+                  <label
+                    key={q.key}
+                    className={`settings-panel__radio${checked ? " settings-panel__radio--active" : ""}${locked ? " settings-panel__radio--locked" : ""}`}
+                  >
+                    <input
+                      type="radio"
+                      name="video-model"
+                      value={`veo:${q.key}`}
+                      checked={checked}
+                      disabled={locked}
+                      onChange={() => {
+                        setVideoModel("veo");
+                        setVideoQuality(q.key);
+                      }}
+                    />
+                    <div>
+                      <div className="settings-panel__radio-label">
+                        {q.label}
+                        {q.ultraOnly && (
+                          <span className="model-badge">Ultra only</span>
+                        )}
+                      </div>
+                      <div className="settings-panel__radio-hint">{q.hint}</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="settings-panel__section">
+          <div className="settings-panel__label">Image model</div>
+          <div className="settings-panel__radio-group">
+            {IMAGE_MODELS.map((m) => (
+              <label
+                key={m.key}
+                className={`settings-panel__radio${imageModel === m.key ? " settings-panel__radio--active" : ""}`}
+              >
+                <input
+                  type="radio"
+                  name="image-model"
+                  value={m.key}
+                  checked={imageModel === m.key}
+                  onChange={() => setImageModel(m.key)}
+                />
+                <div>
+                  <div className="settings-panel__radio-label">{m.label}</div>
+                  <div className="settings-panel__radio-hint">{m.hint}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="settings-panel__section">
+          <div className="settings-panel__label">About</div>
+          <div className="settings-panel__about-row">
+            <span className="settings-panel__about-key">Version</span>
+            <span className="settings-panel__about-value">
+              <code>v{APP_VERSION}</code>
+              {updateAvailable && latestRelease && (
+                <a
+                  className="settings-panel__update-badge"
+                  href={latestRelease.htmlUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`Latest: ${latestRelease.tagName}`}
+                >
+                  New version {latestRelease.tagName}
+                </a>
+              )}
+            </span>
+          </div>
+          <div className="settings-panel__about-row">
+            <span className="settings-panel__about-key">Community</span>
+            <a
+              className="settings-panel__about-link"
+              href={COMMUNITY_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              FlowKit & Flowboard on Facebook
+            </a>
+          </div>
+        </div>
+
+        {onLogout && (
+          // Sign out lives here (not in the AccountPanel chip) so the
+          // chip stays narrow enough for the email + status row to
+          // render without ellipsizing on default sidebar widths.
+          <div className="settings-panel__section settings-panel__section--logout">
+            <button
+              type="button"
+              className="settings-panel__logout-btn"
+              onClick={onLogout}
+              disabled={logoutPending}
+            >
+              {logoutPending ? "Signing out..." : "Sign out from Flow account"}
+            </button>
+            <div className="settings-panel__hint">
+              Clears the cached identity and tells the extension to drop
+              its in-memory token. The WebSocket stays open so signing
+              back in doesn't require a Chrome restart.
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
-

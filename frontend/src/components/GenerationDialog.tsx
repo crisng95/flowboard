@@ -619,8 +619,7 @@ export function GenerationDialog() {
         </div>
 
         {/* Prompt */}
-        (
-          <div className="gen-dialog__field">
+        <div className="gen-dialog__field">
             <div className="gen-dialog__label-row">
               <label className="gen-dialog__label" htmlFor="gen-prompt">
                 {isVideo ? "Motion prompt" : "Prompt"}
@@ -659,8 +658,7 @@ export function GenerationDialog() {
                   : "✨ Đang dựng prompt từ upstream context…"}
               </p>
             )}
-          </div>
-        )
+        </div>
 
         {/* Source image (video only — i2v, multi-select variants → N videos) */}
         {isVideo && !isOmniVideo && (
