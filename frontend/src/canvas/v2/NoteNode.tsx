@@ -309,37 +309,27 @@ function DualResizeHandle({
 /* ═══════════════════════════════════════════════════════════════════════════
    PORTAL COLOR & SIZE DROPDOWNS
    ═══════════════════════════════════════════════════════════════════════════ */
-interface DropdownProps {
-  buttonRef: React.RefObject<HTMLButtonElement>;
-  open: boolean;
-  setOpen: (val: boolean) => void;
-  menuPos: { left: number; top: number } | null;
-  menuId: string;
-}
-
 
 function ColorDropdownPortal({
   buttonRef,
   open,
   setOpen,
-  menuId,
   value,
   onChange,
 }: {
   buttonRef: React.RefObject<HTMLButtonElement>;
   open: boolean;
   setOpen: (val: boolean) => void;
-  menuId: string;
   value: string;
   onChange: (val: string) => void;
 }) {
-  void menuId;
 
   return (
     <>
       <button
         ref={buttonRef}
         type="button"
+        onMouseDown={(e) => e.stopPropagation()}
         onClick={() => setOpen(!open)}
         className="h-7 px-2 rounded-full flex items-center justify-center gap-1.5 bg-transparent hover:bg-white/[0.08] transition-all cursor-pointer select-none text-white/70 hover:text-white nodrag"
       >
@@ -386,7 +376,10 @@ function ColorDropdownPortal({
   );
 }
 
-interface SizeDropdownProps extends DropdownProps {
+interface SizeDropdownProps {
+  buttonRef: React.RefObject<HTMLButtonElement>;
+  open: boolean;
+  setOpen: (val: boolean) => void;
   value: FontSizeOption;
   onChange: (val: FontSizeOption) => void;
 }
@@ -395,19 +388,15 @@ function SizeDropdownPortal({
   buttonRef,
   open,
   setOpen,
-  menuPos,
-  menuId,
   value,
   onChange,
 }: SizeDropdownProps) {
-  void menuPos;
-  void menuId;
-
   return (
     <>
       <button
         ref={buttonRef}
         type="button"
+        onMouseDown={(e) => e.stopPropagation()}
         onClick={() => setOpen(!open)}
         className="h-7 px-2 rounded-full flex items-center justify-between gap-1 text-[10px] font-medium bg-transparent hover:bg-white/[0.08] transition-all cursor-pointer select-none text-white/70 hover:text-white nodrag"
       >
@@ -476,60 +465,9 @@ export function NoteNode(props: NodeProps<FlowNode>) {
   // Dropdown States
   const [showColorMenu, setShowColorMenu] = useState(false);
   const [showSizeMenu, setShowSizeMenu] = useState(false);
-  const [sizeMenuPos, setSizeMenuPos] = useState<{ left: number; top: number } | null>(null);
 
   const colorBtnRef = useRef<HTMLButtonElement>(null);
   const sizeBtnRef = useRef<HTMLButtonElement>(null);
-
-  // Coordinate tracking for Portals
-  useEffect(() => {
-    const activePickers = {
-      color: { open: showColorMenu, btn: colorBtnRef, setPos: () => {}, menuId: `note-color-menu-${rfId}`, close: () => setShowColorMenu(false) },
-      size: { open: showSizeMenu, btn: sizeBtnRef, setPos: setSizeMenuPos, menuId: `note-size-menu-${rfId}`, close: () => setShowSizeMenu(false) },
-    };
-
-    const hasAnyOpen = showColorMenu || showSizeMenu;
-    if (!hasAnyOpen) {
-      setSizeMenuPos(null);
-      return;
-    }
-
-    let raf = 0;
-    function tick() {
-      Object.values(activePickers).forEach(({ open, btn, setPos }) => {
-        if (open && btn.current) {
-          const rect = btn.current.getBoundingClientRect();
-          setPos({
-            left: rect.left,
-            top: rect.bottom + 4,
-          });
-        } else {
-          setPos(null);
-        }
-      });
-      raf = requestAnimationFrame(tick);
-    }
-    raf = requestAnimationFrame(tick);
-
-    function onDocumentPointerDown(e: PointerEvent) {
-      const target = e.target as Node | null;
-      if (!target) return;
-
-      Object.values(activePickers).forEach(({ open, btn, menuId, close }) => {
-        if (!open) return;
-        if (btn.current && btn.current.contains(target)) return;
-        const menuEl = document.getElementById(menuId);
-        if (menuEl && menuEl.contains(target)) return;
-        close();
-      });
-    }
-
-    document.addEventListener("pointerdown", onDocumentPointerDown, true);
-    return () => {
-      cancelAnimationFrame(raf);
-      document.removeEventListener("pointerdown", onDocumentPointerDown, true);
-    };
-  }, [showColorMenu, showSizeMenu, rfId]);
 
   // Sync size changes to board store and persist
   const onResize = useCallback(
@@ -702,7 +640,6 @@ export function NoteNode(props: NodeProps<FlowNode>) {
               buttonRef={colorBtnRef}
               open={showColorMenu}
               setOpen={setShowColorMenu}
-              menuId={`note-color-menu-${rfId}`}
               value={noteColor}
               onChange={handleColorChange}
             />
@@ -713,8 +650,6 @@ export function NoteNode(props: NodeProps<FlowNode>) {
             buttonRef={sizeBtnRef}
             open={showSizeMenu}
             setOpen={setShowSizeMenu}
-            menuPos={sizeMenuPos}
-            menuId={`note-size-menu-${rfId}`}
             value={noteFontSize}
             onChange={handleFontSizeChange}
           />
@@ -799,7 +734,7 @@ export function NoteNode(props: NodeProps<FlowNode>) {
       <div
         className={cn(
           "relative border flex flex-col p-4 overflow-hidden transition-colors transition-shadow duration-200 ease-out",
-          "shadow-[0_8px_28px_-10px_rgba(0,0,0,0.6)]",
+          !colorStyle.isTransparent && "shadow-[0_8px_28px_-10px_rgba(0,0,0,0.6)]",
           selected && "ring-2 ring-accent/60",
         )}
         style={{

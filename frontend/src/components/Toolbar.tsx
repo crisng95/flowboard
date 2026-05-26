@@ -3,6 +3,7 @@ import { useBoardStore } from "../store/board";
 import { ActivityBell } from "./activity/ActivityBell";
 import { AiProviderBadge } from "./AiProviderBadge";
 import { SponsorButton } from "./SponsorDialog";
+import { AppLogo } from "./AppLogo";
 
 export function Toolbar() {
   const boardName = useBoardStore((s) => s.boardName);
@@ -35,7 +36,10 @@ export function Toolbar() {
 
   return (
     <div className="toolbar">
-      <span className="toolbar-wordmark">Flowboard</span>
+      <div className="flex items-center gap-2 select-none">
+        <AppLogo className="size-5 shrink-0" />
+        <span className="toolbar-wordmark">Flowboard</span>
+      </div>
       <span className="toolbar-sep" aria-hidden="true">/</span>
       {editing ? (
         <input

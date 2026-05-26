@@ -7,7 +7,7 @@ import {
   patchNode,
 } from "../api/client";
 import { useBoardStore } from "./board";
-import { useSettingsStore, type ImageModelKey } from "./settings";
+import { normalizeImageModelKey, useSettingsStore, type ImageModelKey } from "./settings";
 
 type PollEntry = { requestId: number; timerId: ReturnType<typeof setTimeout> | null };
 
@@ -69,8 +69,105 @@ interface GenerationState {
     },
   ): Promise<void>;
 
+  runNodeGraph(rfId: string): Promise<void>;
+
   cancelGeneration(rfId: string): void;
   clearError(): void;
+}
+
+const IMAGE_NODE_ASPECT_TO_FLOW = {
+  "1:1": "IMAGE_ASPECT_RATIO_SQUARE",
+  "3:4": "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR",
+  "4:3": "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE",
+  "16:9": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+  "9:16": "IMAGE_ASPECT_RATIO_PORTRAIT",
+} as const;
+
+const VIDEO_NODE_ASPECT_TO_FLOW = {
+  "16:9": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+  "9:16": "VIDEO_ASPECT_RATIO_PORTRAIT",
+} as const;
+
+const VIDEO_CAMERA_INSTRUCTIONS = {
+  static:
+    "Camera: locked-off static frame, no zoom and no pan. Keep the full subject and any product clearly visible in the frame for the entire clip. Background and crop must not change.",
+  dynamic:
+    "Camera: subtle dolly or pan is allowed if it fits the scene, but subject motion is the main story.",
+} as const;
+
+const VARIANT_MODE_TO_AXIS_KEY: Record<string, string> = {
+  Age: "age",
+  Custom: "custom",
+  Demographics: "demographics",
+  Expressions: "expressions",
+  Storyboard: "storyboard",
+  Reframe: "reframe",
+};
+
+function gridToVariantCount(grid: string | undefined): number {
+  if (!grid) return 9;
+  const parts = grid.split("x");
+  if (parts.length !== 2) return 9;
+  const rows = parseInt(parts[0], 10);
+  const cols = parseInt(parts[1], 10);
+  if (Number.isNaN(rows) || Number.isNaN(cols)) return 9;
+  return Math.max(1, rows * cols);
+}
+
+function primaryNodeType(node: { type?: string; data?: { type?: string } }): string | undefined {
+  return node.data?.type ?? node.type;
+}
+
+function hasRenderableMedia(node: { data: Record<string, unknown> }): boolean {
+  if (typeof node.data.mediaId === "string" && node.data.mediaId.length > 0) return true;
+  if (Array.isArray(node.data.mediaIds)) {
+    return node.data.mediaIds.some((mediaId) => typeof mediaId === "string" && mediaId.length > 0);
+  }
+  return false;
+}
+
+function isRunnableNodeType(type: string | undefined): boolean {
+  return type === "reference" || type === "variant" || type === "video";
+}
+
+function getUpstreamTextPrompt(targetRfId: string): string {
+  const { nodes, edges } = useBoardStore.getState();
+  const textEdge = edges.find((edge) => {
+    if (edge.target !== targetRfId) return false;
+    if (edge.targetHandle === "target-text") return true;
+    const src = nodes.find((node) => node.id === edge.source);
+    return primaryNodeType(src ?? {}) === "text";
+  });
+  if (!textEdge) return "";
+  const sourceNode = nodes.find((node) => node.id === textEdge.source);
+  return ((sourceNode?.data.prompt as string | undefined) ?? "").trim();
+}
+
+async function waitForNodeSettled(
+  get: () => GenerationState,
+  rfId: string,
+): Promise<"done" | "error" | "idle"> {
+  return new Promise((resolve) => {
+    const check = () => {
+      const node = useBoardStore.getState().nodes.find((entry) => entry.id === rfId);
+      const status = (node?.data.status as string | undefined) ?? "idle";
+      const active = get().active[rfId];
+      if (active || status === "queued" || status === "running") {
+        setTimeout(check, 250);
+        return;
+      }
+      if (status === "done" || status === "partial") {
+        resolve("done");
+        return;
+      }
+      if (status === "error") {
+        resolve("error");
+        return;
+      }
+      resolve("idle");
+    };
+    check();
+  });
 }
 
 // Walk the board to collect mediaIds of every upstream media-bearing node
@@ -164,11 +261,25 @@ export function resolveEdgeMediaSelection(targetRfId: string, edgeId: string): {
   const src = nodes.find((n) => n.id === edge.source);
   if (!src) return { mediaId: null, variantIdx: null, allVariants: [] };
   if (src.data.type === "video") {
-    if (edge.sourceHandle === "source-start-image" && typeof src.data.startImageMediaId === "string") {
-      return { mediaId: src.data.startImageMediaId, variantIdx: null, allVariants: [src.data.startImageMediaId] };
+    if (edge.sourceHandle === "source-start-image") {
+      const directStart = typeof src.data.startImageMediaId === "string" ? src.data.startImageMediaId : null;
+      if (directStart) {
+        return { mediaId: directStart, variantIdx: null, allVariants: [directStart] };
+      }
+      const startEdge = edges.find((candidate) => candidate.target === src.id && candidate.targetHandle === "target-start-image");
+      if (startEdge) {
+        return resolveEdgeMediaSelection(src.id, startEdge.id);
+      }
     }
-    if (edge.sourceHandle === "source-end-image" && typeof src.data.endImageMediaId === "string") {
-      return { mediaId: src.data.endImageMediaId, variantIdx: null, allVariants: [src.data.endImageMediaId] };
+    if (edge.sourceHandle === "source-end-image") {
+      const directEnd = typeof src.data.endImageMediaId === "string" ? src.data.endImageMediaId : null;
+      if (directEnd) {
+        return { mediaId: directEnd, variantIdx: null, allVariants: [directEnd] };
+      }
+      const endEdge = edges.find((candidate) => candidate.target === src.id && candidate.targetHandle === "target-end-image");
+      if (endEdge) {
+        return resolveEdgeMediaSelection(src.id, endEdge.id);
+      }
     }
   }
 
@@ -191,6 +302,150 @@ export function resolveEdgeMediaSelection(targetRfId: string, edgeId: string): {
     return { mediaId: variants[0], variantIdx: 0, allVariants: variants };
   }
   return { mediaId: null, variantIdx: null, allVariants: [] };
+}
+
+async function runNodeDirect(
+  get: () => GenerationState,
+  rfId: string,
+): Promise<void> {
+  const board = useBoardStore.getState();
+  const node = board.nodes.find((entry) => entry.id === rfId);
+  if (!node) throw new Error("node_not_found");
+
+  const nodeType = primaryNodeType(node);
+  if (nodeType === "reference") {
+    const prompt = getUpstreamTextPrompt(rfId) || ((node.data.prompt as string | undefined) ?? "").trim();
+    const hasImageRefs = board.edges.some((edge) => {
+      if (edge.target !== rfId) return false;
+      const sourceNode = board.nodes.find((entry) => entry.id === edge.source);
+      return primaryNodeType(sourceNode ?? {}) !== "text";
+    });
+    if (!prompt && !hasImageRefs) {
+      throw new Error("image_node_missing_prompt_or_refs");
+    }
+    const aspectKey = ((node.data.aspectKey as string | undefined) ?? "1:1") as keyof typeof IMAGE_NODE_ASPECT_TO_FLOW;
+    const imageCount = Math.max(
+      1,
+      Math.min(
+        (node.data.imageCount as number | undefined)
+          ?? (node.data.variantCount as number | undefined)
+          ?? 1,
+        4,
+      ),
+    );
+    const imageModel = normalizeImageModelKey(node.data.modelKey as string | undefined);
+    await get().dispatchGeneration(rfId, {
+      prompt,
+      kind: "image",
+      aspectRatio: IMAGE_NODE_ASPECT_TO_FLOW[aspectKey] ?? IMAGE_NODE_ASPECT_TO_FLOW["1:1"],
+      variantCount: imageCount,
+      imageModel,
+    });
+    return;
+  }
+
+  if (nodeType === "video") {
+    const prompt = getUpstreamTextPrompt(rfId) || ((node.data.prompt as string | undefined) ?? "").trim();
+    if (!prompt) throw new Error("video_node_missing_prompt");
+
+    const videoModel = ((node.data.videoModel as string | undefined) ?? "veo") as "veo" | "omni_flash";
+    const settings = useSettingsStore.getState();
+    settings.setVideoModel(videoModel);
+    if (videoModel === "veo") {
+      settings.setVideoQuality(((node.data.videoQuality as string | undefined) ?? "fast") as any);
+    } else {
+      settings.setOmniFlashDuration(((node.data.omniFlashDuration as number | undefined) ?? 4) as any);
+    }
+
+    const aspectRatio =
+      ((node.data.aspectRatio as string | undefined) === "VIDEO_ASPECT_RATIO_PORTRAIT"
+        ? VIDEO_NODE_ASPECT_TO_FLOW["9:16"]
+        : VIDEO_NODE_ASPECT_TO_FLOW["16:9"]);
+    const cameraMode = ((node.data.cameraMode as string | undefined) ?? "static") as keyof typeof VIDEO_CAMERA_INSTRUCTIONS;
+    const cameraInstruction = VIDEO_CAMERA_INSTRUCTIONS[cameraMode] ?? "";
+    const promptWithCamera = cameraInstruction ? `${prompt}. ${cameraInstruction}` : prompt;
+
+    await get().dispatchGeneration(rfId, {
+      prompt: promptWithCamera,
+      kind: "video",
+      aspectRatio,
+      variantCount: 1,
+    });
+    return;
+  }
+
+  if (nodeType === "variant") {
+    const config = ((node.data.variant_config as Record<string, unknown> | undefined) ?? {});
+    const mode = (config.mode as string | undefined) ?? "Custom";
+    const instruction = getUpstreamTextPrompt(rfId) || ((config.custom_prompt as string | undefined) ?? "").trim();
+    const aspectRatioKey = (config.aspect_ratio as string | undefined) ?? "16:9";
+    const grid = (config.grid as string | undefined) ?? "3x3";
+    await get().dispatchVariant(rfId, {
+      axisKey: VARIANT_MODE_TO_AXIS_KEY[mode] ?? "custom",
+      instruction,
+      variantCount: gridToVariantCount(grid),
+      aspectRatio:
+        {
+          "1:1": "IMAGE_ASPECT_RATIO_SQUARE",
+          "16:9": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+          "9:16": "IMAGE_ASPECT_RATIO_PORTRAIT",
+          "4:3": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+          "3:4": "IMAGE_ASPECT_RATIO_PORTRAIT",
+          "3:2": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+          "2:3": "IMAGE_ASPECT_RATIO_PORTRAIT",
+          "21:9": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+        }[aspectRatioKey] ?? "IMAGE_ASPECT_RATIO_LANDSCAPE",
+    });
+    return;
+  }
+
+  throw new Error(`node_type_not_auto_runnable:${nodeType ?? "unknown"}`);
+}
+
+async function ensureNodeInputsReady(
+  get: () => GenerationState,
+  rootRfId: string,
+  targetRfId: string,
+  visiting: Set<string>,
+): Promise<void> {
+  if (visiting.has(targetRfId)) {
+    throw new Error("cycle_detected_in_workflow");
+  }
+  visiting.add(targetRfId);
+  try {
+    const board = useBoardStore.getState();
+    const incomingEdges = board.edges.filter((edge) => edge.target === targetRfId && edge.targetHandle !== "target-text");
+
+    for (const edge of incomingEdges) {
+      const sourceNode = board.nodes.find((node) => node.id === edge.source);
+      if (!sourceNode) continue;
+
+      await ensureNodeInputsReady(get, rootRfId, sourceNode.id, visiting);
+
+      const resolved = resolveEdgeMediaSelection(targetRfId, edge.id);
+      if (resolved.mediaId) continue;
+
+      const sourceType = primaryNodeType(sourceNode);
+      const sourceStatus = (sourceNode.data.status as string | undefined) ?? "idle";
+      if (isRunnableNodeType(sourceType)) {
+        if (sourceStatus === "queued" || sourceStatus === "running" || get().active[sourceNode.id]) {
+          const settled = await waitForNodeSettled(get, sourceNode.id);
+          if (settled === "done" && resolveEdgeMediaSelection(targetRfId, edge.id).mediaId) continue;
+        } else if (!hasRenderableMedia(sourceNode)) {
+          await runNodeDirect(get, sourceNode.id);
+          const settled = await waitForNodeSettled(get, sourceNode.id);
+          if (settled === "done" && resolveEdgeMediaSelection(targetRfId, edge.id).mediaId) continue;
+        }
+      }
+
+      if (!resolveEdgeMediaSelection(targetRfId, edge.id).mediaId) {
+        const label = sourceNode.data.title || sourceType || sourceNode.id;
+        throw new Error(`upstream_not_ready:${label}`);
+      }
+    }
+  } finally {
+    visiting.delete(targetRfId);
+  }
 }
 
 function collectUpstreamRefMediaIds(targetRfId: string, allowedTargetHandles?: string[]): string[] {
@@ -1206,6 +1461,29 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         };
       },
     });
+  },
+
+  async runNodeGraph(rfId) {
+    try {
+      await ensureNodeInputsReady(get, rfId, rfId, new Set<string>());
+
+      const node = useBoardStore.getState().nodes.find((entry) => entry.id === rfId);
+      if (!node) throw new Error("node_not_found");
+
+      const status = (node.data.status as string | undefined) ?? "idle";
+      if (status === "queued" || status === "running" || get().active[rfId]) {
+        return;
+      }
+
+      await runNodeDirect(get, rfId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "workflow_run_failed";
+      useBoardStore.getState().updateNodeData(rfId, {
+        status: "error",
+        error: message,
+      });
+      set({ error: message });
+    }
   },
 
   cancelGeneration(rfId) {

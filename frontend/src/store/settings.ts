@@ -18,6 +18,8 @@ import { create } from "zustand";
  *     persisted so the dialog stays sticky across opens.
  */
 export type ImageModelKey = "NANO_BANANA_PRO" | "NANO_BANANA_2" | "NANO_OMNI";
+export type ActiveImageModelKey = Exclude<ImageModelKey, "NANO_OMNI">;
+export const ACTIVE_IMAGE_MODELS: ActiveImageModelKey[] = ["NANO_BANANA_PRO", "NANO_BANANA_2"];
 
 // Veo 3.1 ships in four surfaced flavours:
 //   - Lite (smaller checkpoint, fastest, lower fidelity)
@@ -86,8 +88,13 @@ function persist(state: PersistShape): void {
 const persisted = loadPersisted();
 const VALID_VIDEO_QUALITIES: VideoQuality[] = ["fast", "lite", "quality", "lite_relaxed"];
 
+export function normalizeImageModelKey(model?: string | null): ActiveImageModelKey {
+  if (model === "NANO_BANANA_2") return "NANO_BANANA_2";
+  return "NANO_BANANA_PRO";
+}
+
 export const useSettingsStore = create<SettingsState>((set, get) => ({
-  imageModel: persisted.imageModel ?? "NANO_BANANA_2",
+  imageModel: normalizeImageModelKey(persisted.imageModel),
   videoQuality:
     persisted.videoQuality && VALID_VIDEO_QUALITIES.includes(persisted.videoQuality)
       ? persisted.videoQuality
@@ -95,9 +102,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   videoModel: persisted.videoModel ?? "veo",
   omniFlashDuration: persisted.omniFlashDuration ?? 4,
   setImageModel(model) {
-    set({ imageModel: model });
+    const normalized = normalizeImageModelKey(model);
+    set({ imageModel: normalized });
     persist({
-      imageModel: model,
+      imageModel: normalized,
       videoQuality: get().videoQuality,
       videoModel: get().videoModel,
       omniFlashDuration: get().omniFlashDuration,

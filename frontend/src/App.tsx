@@ -26,6 +26,7 @@ import {
 import { getAuthMe, mediaUrl, type AuthMe } from "./api/client";
 import { Board } from "./canvas/Board";
 import { AddNodePalette } from "./canvas/AddNodePalette";
+import { AppLogo } from "./components/AppLogo";
 import { Toaster } from "./components/Toaster";
 import { GenerationDialog } from "./components/GenerationDialog";
 import { ResultViewerV2 } from "./components/ResultViewerV2";
@@ -270,7 +271,9 @@ function SpacesPage({
     <div className="magnific-shell magnific-spaces">
       <aside className="magnific-rail">
         <div className="magnific-rail__top">
-          <div className="magnific-logo">M</div>
+          <div className="magnific-logo" style={{ background: "transparent" }}>
+            <AppLogo className="size-full" />
+          </div>
           <button type="button" className="magnific-rail__icon magnific-rail__icon--active" aria-label="Spaces">
             <Home size={16} />
           </button>

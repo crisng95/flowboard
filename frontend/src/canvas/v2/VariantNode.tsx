@@ -7,10 +7,10 @@
  * Architecture invariants preserved from V2 bug-fix cycle:
  *   • targetHandleClassName with anyConnectionInProgress → pointer-events-auto
  *   • Handles placed outside the Card body as siblings of the 20px-padded wrapper
- *   • Portal dropdowns with rAF coordinate tracking + capturing pointerdown dismiss
+ *   • Shared floating dropdown behavior aligned with other V2 nodes
  *   • DOM order: target-text before target-image
  */
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback } from "react";
 import { type NodeProps, Handle, Position, useEdges, useConnection } from "@xyflow/react";
 import { Copy, Layers, Palette, Sparkles, Play, Type } from "lucide-react";
 
@@ -54,17 +54,6 @@ const ASPECT_CSS: Record<string, string> = {
   "3:2": "3 / 2",
   "2:3": "2 / 3",
   "21:9": "21 / 9",
-};
-
-const ASPECT_TO_FLOW: Record<string, string> = {
-  "1:1": "IMAGE_ASPECT_RATIO_SQUARE",
-  "16:9": "IMAGE_ASPECT_RATIO_LANDSCAPE",
-  "9:16": "IMAGE_ASPECT_RATIO_PORTRAIT",
-  "4:3": "IMAGE_ASPECT_RATIO_LANDSCAPE",
-  "3:4": "IMAGE_ASPECT_RATIO_PORTRAIT",
-  "3:2": "IMAGE_ASPECT_RATIO_LANDSCAPE",
-  "2:3": "IMAGE_ASPECT_RATIO_PORTRAIT",
-  "21:9": "IMAGE_ASPECT_RATIO_LANDSCAPE",
 };
 
 // C. Resolution (2 options)
@@ -141,8 +130,6 @@ interface PortalDropdownProps {
   options: readonly string[];
   value: string | string[];
   onChange: (val: any) => void;
-  menuPos: { left: number; top: number } | null;
-  menuId: string;
   disabledOptions?: string[];
   disabled?: boolean;
   multiSelect?: boolean;
@@ -156,16 +143,11 @@ function PortalDropdown({
   options,
   value,
   onChange,
-  menuPos,
-  menuId,
   disabledOptions = [],
   disabled = false,
   multiSelect = false,
   label,
 }: PortalDropdownProps) {
-  void menuPos;
-  void menuId;
-
   let displayLabel: string;
   if (multiSelect) {
     const arr = Array.isArray(value) ? value : [];
@@ -181,9 +163,10 @@ function PortalDropdown({
         ref={buttonRef}
         type="button"
         disabled={disabled}
+        onMouseDown={(e) => e.stopPropagation()}
         onClick={() => setOpen(!open)}
         className={cn(
-          "h-7 px-2.5 rounded-full flex items-center justify-between gap-1.5 text-2xs font-medium border border-white/[0.06] transition-all duration-150 cursor-pointer select-none backdrop-blur-md",
+          "nodrag nowheel h-7 px-2.5 rounded-full flex items-center justify-between gap-1.5 text-2xs font-medium border border-white/[0.06] transition-all duration-150 cursor-pointer select-none backdrop-blur-md",
           disabled
             ? "text-white/30 cursor-not-allowed opacity-40"
             : "text-white/78 hover:text-white hover:border-white/14 hover:bg-white/[0.07]",
@@ -274,15 +257,6 @@ export function VariantNode(props: NodeProps<FlowNode>) {
   const [showGender, setShowGender] = useState(false);
   const [showAngles, setShowAngles] = useState(false);
 
-  // Menu positions
-  const [modeMenuPos, setModeMenuPos] = useState<{ left: number; top: number } | null>(null);
-  const [aspectMenuPos, setAspectMenuPos] = useState<{ left: number; top: number } | null>(null);
-  const [resMenuPos, setResMenuPos] = useState<{ left: number; top: number } | null>(null);
-  const [gridMenuPos, setGridMenuPos] = useState<{ left: number; top: number } | null>(null);
-  const [ethnicityMenuPos, setEthnicityMenuPos] = useState<{ left: number; top: number } | null>(null);
-  const [genderMenuPos, setGenderMenuPos] = useState<{ left: number; top: number } | null>(null);
-  const [anglesMenuPos, setAnglesMenuPos] = useState<{ left: number; top: number } | null>(null);
-
   // Trigger button refs
   const modeBtnRef = useRef<HTMLButtonElement>(null);
   const aspectBtnRef = useRef<HTMLButtonElement>(null);
@@ -291,67 +265,6 @@ export function VariantNode(props: NodeProps<FlowNode>) {
   const ethnicityBtnRef = useRef<HTMLButtonElement>(null);
   const genderBtnRef = useRef<HTMLButtonElement>(null);
   const anglesBtnRef = useRef<HTMLButtonElement>(null);
-
-  /* ── rAF coordinate tracking + capturing pointerdown dismiss ──────────── */
-  useEffect(() => {
-    const activePickers = {
-      mode: { open: showMode, btn: modeBtnRef, setPos: setModeMenuPos, menuId: `variant-mode-menu-${rfId}`, close: () => setShowMode(false) },
-      aspect: { open: showAspect, btn: aspectBtnRef, setPos: setAspectMenuPos, menuId: `variant-aspect-menu-${rfId}`, close: () => setShowAspect(false) },
-      res: { open: showRes, btn: resBtnRef, setPos: setResMenuPos, menuId: `variant-res-menu-${rfId}`, close: () => setShowRes(false) },
-      grid: { open: showGrid, btn: gridBtnRef, setPos: setGridMenuPos, menuId: `variant-grid-menu-${rfId}`, close: () => setShowGrid(false) },
-      ethnicity: { open: showEthnicity, btn: ethnicityBtnRef, setPos: setEthnicityMenuPos, menuId: `variant-ethnicity-menu-${rfId}`, close: () => setShowEthnicity(false) },
-      gender: { open: showGender, btn: genderBtnRef, setPos: setGenderMenuPos, menuId: `variant-gender-menu-${rfId}`, close: () => setShowGender(false) },
-      angles: { open: showAngles, btn: anglesBtnRef, setPos: setAnglesMenuPos, menuId: `variant-angles-menu-${rfId}`, close: () => setShowAngles(false) },
-    };
-
-    const hasAnyOpen = showMode || showAspect || showRes || showGrid || showEthnicity || showGender || showAngles;
-    if (!hasAnyOpen) {
-      setModeMenuPos(null);
-      setAspectMenuPos(null);
-      setResMenuPos(null);
-      setGridMenuPos(null);
-      setEthnicityMenuPos(null);
-      setGenderMenuPos(null);
-      setAnglesMenuPos(null);
-      return;
-    }
-
-    let raf = 0;
-    function tick() {
-      Object.values(activePickers).forEach(({ open, btn, setPos }) => {
-        if (open && btn.current) {
-          const rect = btn.current.getBoundingClientRect();
-          setPos({
-            left: rect.left,
-            top: rect.bottom + 4,
-          });
-        } else {
-          setPos(null);
-        }
-      });
-      raf = requestAnimationFrame(tick);
-    }
-    raf = requestAnimationFrame(tick);
-
-    function onDocumentPointerDown(e: PointerEvent) {
-      const target = e.target as Node | null;
-      if (!target) return;
-
-      Object.values(activePickers).forEach(({ open, btn, menuId, close }) => {
-        if (!open) return;
-        if (btn.current && btn.current.contains(target)) return;
-        const menuEl = document.getElementById(menuId);
-        if (menuEl && menuEl.contains(target)) return;
-        close();
-      });
-    }
-
-    document.addEventListener("pointerdown", onDocumentPointerDown, true);
-    return () => {
-      cancelAnimationFrame(raf);
-      document.removeEventListener("pointerdown", onDocumentPointerDown, true);
-    };
-  }, [showMode, showAspect, showRes, showGrid, showEthnicity, showGender, showAngles, rfId]);
 
   /* ── Resize handlers ──────────────────────────────────────────────────── */
   const onResize = useCallback(
@@ -378,15 +291,6 @@ export function VariantNode(props: NodeProps<FlowNode>) {
   };
 
   const variantCount = gridToCount(config.grid);
-
-  const modeToAxisKey: Record<string, string> = {
-    "Age": "age",
-    "Custom": "custom",
-    "Demographics": "demographics",
-    "Expressions": "expressions",
-    "Storyboard": "storyboard",
-    "Reframe": "reframe",
-  };
 
   /* ── Real-time edge state via ReactFlow native hooks (0ms delay) ─────── */
   const edges = useEdges();
@@ -419,13 +323,8 @@ export function VariantNode(props: NodeProps<FlowNode>) {
   const handleRun = async () => {
     if (isProcessing) return;
     try {
-      console.log("Dispatching variant generation with config:", config);
-      await useGenerationStore.getState().dispatchVariant(rfId, {
-        axisKey: modeToAxisKey[config.mode] || "custom",
-        instruction: hasTextConnection ? upstreamText : config.custom_prompt,
-        variantCount,
-        aspectRatio: ASPECT_TO_FLOW[config.aspect_ratio],
-      });
+      console.log("Running variant graph:", config);
+      await useGenerationStore.getState().runNodeGraph(rfId);
     } catch (err) {
       console.error("Failed to run variant generation:", err);
     }
@@ -637,8 +536,6 @@ export function VariantNode(props: NodeProps<FlowNode>) {
                   options={MODE_OPTIONS}
                   value={config.mode}
                   onChange={(val: string) => updateConfig({ mode: val as VariantMode })}
-                  menuPos={modeMenuPos}
-                  menuId={`variant-mode-menu-${rfId}`}
                   disabledOptions={["Age", "Demographics", "Expressions", "Reframe"]}
                 />
                 <PortalDropdown
@@ -648,8 +545,6 @@ export function VariantNode(props: NodeProps<FlowNode>) {
                   options={ASPECT_OPTIONS}
                   value={config.aspect_ratio}
                   onChange={(val: string) => updateConfig({ aspect_ratio: val })}
-                  menuPos={aspectMenuPos}
-                  menuId={`variant-aspect-menu-${rfId}`}
                 />
                 <PortalDropdown
                   buttonRef={resBtnRef}
@@ -658,8 +553,6 @@ export function VariantNode(props: NodeProps<FlowNode>) {
                   options={RESOLUTION_OPTIONS}
                   value={config.resolution}
                   onChange={(val: string) => updateConfig({ resolution: val })}
-                  menuPos={resMenuPos}
-                  menuId={`variant-res-menu-${rfId}`}
                   disabled={true}
                 />
                 <PortalDropdown
@@ -669,8 +562,6 @@ export function VariantNode(props: NodeProps<FlowNode>) {
                   options={GRID_OPTIONS}
                   value={config.grid}
                   onChange={(val: string) => updateConfig({ grid: val })}
-                  menuPos={gridMenuPos}
-                  menuId={`variant-grid-menu-${rfId}`}
                 />
               </div>
 
@@ -686,8 +577,6 @@ export function VariantNode(props: NodeProps<FlowNode>) {
                       options={ETHNICITY_OPTIONS}
                       value={config.ethnicities}
                       onChange={(val: string[]) => updateConfig({ ethnicities: val })}
-                      menuPos={ethnicityMenuPos}
-                      menuId={`variant-ethnicity-menu-${rfId}`}
                       multiSelect
                     />
                     <PortalDropdown
@@ -697,8 +586,6 @@ export function VariantNode(props: NodeProps<FlowNode>) {
                       options={GENDER_OPTIONS}
                       value={config.genders}
                       onChange={(val: string[]) => updateConfig({ genders: val as ("Female" | "Male")[] })}
-                      menuPos={genderMenuPos}
-                      menuId={`variant-gender-menu-${rfId}`}
                       multiSelect
                     />
                   </>
@@ -713,16 +600,15 @@ export function VariantNode(props: NodeProps<FlowNode>) {
                     options={CAMERA_ANGLE_OPTIONS}
                     value={config.reframe_angles}
                     onChange={(val: string[]) => updateConfig({ reframe_angles: val })}
-                    menuPos={anglesMenuPos}
-                    menuId={`variant-angles-menu-${rfId}`}
                     multiSelect
                   />
                 )}
 
                 {/* Split Images Toggle — always visible in Row 2 */}
                 <div
+                  onMouseDown={(e) => e.stopPropagation()}
                   onClick={() => updateConfig({ split_images: !config.split_images })}
-                  className="flex items-center gap-2 cursor-pointer select-none h-7 px-3 rounded-full bg-white/[0.04] border border-white/5 shrink-0"
+                  className="nodrag nowheel flex items-center gap-2 cursor-pointer select-none h-7 px-3 rounded-full bg-white/[0.04] border border-white/5 shrink-0"
                 >
                   <div
                     className={cn(

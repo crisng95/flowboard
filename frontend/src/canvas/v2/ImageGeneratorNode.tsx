@@ -14,6 +14,7 @@ import { HandleBadge } from "./shared/HandleBadge";
 import { DropdownCaret } from "./shared/DropdownCaret";
 import { PickerDropdown } from "./shared/PickerDropdown";
 import { edgeHandleClass, EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET } from "./shared/edgeHandle";
+import { normalizeImageModelKey, type ActiveImageModelKey } from "../../store/settings";
 
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 600;
@@ -30,18 +31,9 @@ const ASPECT_CSS: Record<AspectOption, string> = {
   "16:9": "16 / 9",
   "9:16": "9 / 16",
 };
-const ASPECT_TO_FLOW: Record<AspectOption, string> = {
-  "1:1": "IMAGE_ASPECT_RATIO_SQUARE",
-  "3:4": "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR",
-  "4:3": "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE",
-  "16:9": "IMAGE_ASPECT_RATIO_LANDSCAPE",
-  "9:16": "IMAGE_ASPECT_RATIO_PORTRAIT",
-};
-
 type ModelOption = { key: string; label: string };
 const MODEL_OPTIONS: ModelOption[] = [
   { key: "NANO_BANANA_PRO", label: "Nano Banana Pro" },
-  { key: "NANO_OMNI", label: "Nano Omni" },
   { key: "NANO_BANANA_2", label: "Nano Banana 2" },
 ];
 
@@ -62,7 +54,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     ),
   );
   const aspectKey = (data.aspectKey as AspectOption | undefined) ?? "1:1";
-  const modelKey = (data.modelKey as string | undefined) ?? "NANO_BANANA_PRO";
+  const modelKey = normalizeImageModelKey(data.modelKey as string | undefined);
   const shortId = data.shortId as string | undefined;
   const status = data.status as string | undefined;
 
@@ -130,7 +122,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     persistNodeData(rfId, { aspectKey: value });
     setShowAspectPicker(false);
   }
-  function setModel(key: string) {
+  function setModel(key: ActiveImageModelKey) {
     useBoardStore.getState().updateNodeData(rfId, { modelKey: key });
     persistNodeData(rfId, { modelKey: key });
     setShowModelPicker(false);
@@ -143,13 +135,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
       return src && src.data.type !== "text";
     });
     if (!finalPrompt && !hasImageRefs) return;
-    useGenerationStore.getState().dispatchGeneration(rfId, {
-      prompt: finalPrompt,
-      aspectRatio: ASPECT_TO_FLOW[aspectKey],
-      kind: "image",
-      variantCount: imageCount,
-      imageModel: modelKey as "NANO_BANANA_PRO" | "NANO_OMNI" | "NANO_BANANA_2",
-    });
+    useGenerationStore.getState().runNodeGraph(rfId);
   }
   function onImageLoad(e: React.SyntheticEvent<HTMLImageElement>) {
     const img = e.currentTarget;
@@ -382,7 +368,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
                   onClose={() => setShowModelPicker(false)}
                   items={MODEL_OPTIONS.map((option) => ({ key: option.key, label: option.label }))}
                   activeKey={modelKey}
-                  onPick={setModel}
+                  onPick={(key) => setModel(key as ActiveImageModelKey)}
                   minWidth={156}
                   matchAnchorWidth={false}
                 />

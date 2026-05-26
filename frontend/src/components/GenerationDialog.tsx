@@ -60,7 +60,8 @@ const CAMERA_MOVEMENTS = [
   {
     key: "dynamic",
     label: "Dynamic",
-    instruction: "",
+    instruction:
+      "Camera: subtle dolly or pan is allowed if it fits the scene, but subject motion is the main story.",
   },
 ] as const;
 

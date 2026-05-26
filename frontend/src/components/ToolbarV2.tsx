@@ -16,6 +16,7 @@ import { useState, useRef, type KeyboardEvent } from "react";
 import { useBoardStore } from "../store/board";
 import { ActivityBell } from "./activity/ActivityBell";
 import { AiProviderBadge } from "./AiProviderBadge";
+import { AppLogo } from "./AppLogo";
 
 export function ToolbarV2() {
   const boardName = useBoardStore((s) => s.boardName);
@@ -59,18 +60,21 @@ export function ToolbarV2() {
           "inset 0 1px 0 0 rgba(255,255,255,0.04), 0 1px 0 0 rgba(255,255,255,0.04)",
       }}
     >
-      {/* Wordmark — accent gradient text */}
-      <span
-        className="text-sm font-bold tracking-tight select-none"
-        style={{
-          background: "linear-gradient(135deg, #9d80ff 0%, #7c5cff 100%)",
-          WebkitBackgroundClip: "text",
-          WebkitTextFillColor: "transparent",
-          backgroundClip: "text",
-        }}
-      >
-        Concepta
-      </span>
+      {/* Brand logo & wordmark */}
+      <div className="flex items-center gap-2 select-none">
+        <AppLogo className="size-5 shrink-0" />
+        <span
+          className="text-sm font-bold tracking-tight"
+          style={{
+            background: "linear-gradient(135deg, #9d80ff 0%, #7c5cff 100%)",
+            WebkitBackgroundClip: "text",
+            WebkitTextFillColor: "transparent",
+            backgroundClip: "text",
+          }}
+        >
+          Concepta
+        </span>
+      </div>
 
       {/* Separator */}
       <span className="text-ink-placeholder text-sm select-none">/</span>

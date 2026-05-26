@@ -19,7 +19,6 @@ import {
   type OmniFlashDuration,
   type VideoModelFamily,
   type VideoQuality,
-  useSettingsStore,
 } from "../../store/settings";
 import { persistNodeData } from "./shared/persistNodeData";
 import { ResizeHandle } from "./shared/ResizeHandle";
@@ -76,7 +75,8 @@ const CAMERA_OPTIONS = [
   {
     key: "dynamic",
     label: "Dynamic",
-    instruction: "",
+    instruction:
+      "Camera: subtle dolly or pan is allowed if it fits the scene, but subject motion is the main story.",
   },
 ] as const;
 type CameraMode = (typeof CAMERA_OPTIONS)[number]["key"];
@@ -213,23 +213,7 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
   function handleGenerate() {
     const finalPrompt = (hasTextConnection ? upstreamText : prompt).trim();
     if (!finalPrompt || isRunning) return;
-
-    useSettingsStore.getState().setVideoModel(videoModel);
-    if (videoModel === "veo") {
-      useSettingsStore.getState().setVideoQuality(videoQuality);
-    } else {
-      useSettingsStore.getState().setOmniFlashDuration(omniFlashDuration);
-    }
-
-    const cameraInstruction = CAMERA_OPTIONS.find((option) => option.key === cameraMode)?.instruction ?? "";
-    const promptWithCamera = cameraInstruction ? `${finalPrompt}. ${cameraInstruction}` : finalPrompt;
-
-    useGenerationStore.getState().dispatchGeneration(rfId, {
-      prompt: promptWithCamera,
-      aspectRatio: ASPECT_TO_FLOW[aspectRatio],
-      kind: "video",
-      variantCount: 1,
-    });
+    useGenerationStore.getState().runNodeGraph(rfId);
   }
 
   function handleClass(role: "source" | "target", active: boolean) {

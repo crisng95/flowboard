@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useGenerationStore } from "../store/generation";
 import {
   useSettingsStore,
+  normalizeImageModelKey,
   type ImageModelKey,
   type VideoQuality,
 } from "../store/settings";
@@ -30,11 +31,6 @@ const IMAGE_MODELS: { key: ImageModelKey; label: string; hint: string }[] = [
     key: "NANO_BANANA_PRO",
     label: "Nano Banana Pro",
     hint: "GEM_PIX_2 - premium, higher fidelity, slightly slower",
-  },
-  {
-    key: "NANO_OMNI",
-    label: "Nano Omni",
-    hint: "OMNI - Google's latest next-gen unified model, ultra-high fidelity and context awareness.",
   },
   {
     key: "NANO_BANANA_2",
@@ -94,7 +90,7 @@ interface SettingsPanelProps {
 
 export function SettingsPanel({ open, onClose, onLogout, logoutPending }: SettingsPanelProps) {
   const tier = useGenerationStore((s) => s.paygateTier);
-  const imageModel = useSettingsStore((s) => s.imageModel);
+  const imageModel = normalizeImageModelKey(useSettingsStore((s) => s.imageModel));
   const setImageModel = useSettingsStore((s) => s.setImageModel);
   const videoQuality = useSettingsStore((s) => s.videoQuality);
   const setVideoQuality = useSettingsStore((s) => s.setVideoQuality);
