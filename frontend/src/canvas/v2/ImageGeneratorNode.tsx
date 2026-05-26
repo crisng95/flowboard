@@ -148,6 +148,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
       aspectRatio: ASPECT_TO_FLOW[aspectKey],
       kind: "image",
       variantCount: imageCount,
+      imageModel: modelKey as "NANO_BANANA_PRO" | "NANO_OMNI" | "NANO_BANANA_2",
     });
   }
   function onImageLoad(e: React.SyntheticEvent<HTMLImageElement>) {

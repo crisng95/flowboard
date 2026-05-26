@@ -7,7 +7,7 @@ import {
   patchNode,
 } from "../api/client";
 import { useBoardStore } from "./board";
-import { useSettingsStore } from "./settings";
+import { useSettingsStore, type ImageModelKey } from "./settings";
 
 type PollEntry = { requestId: number; timerId: ReturnType<typeof setTimeout> | null };
 
@@ -42,6 +42,7 @@ interface GenerationState {
       // batchAsyncGenerate body so all are dispatched together.
       sourceMediaIds?: string[];
       variantCount?: number;
+      imageModel?: ImageModelKey;
       // Per-variant prompts. When provided, each variant uses its own
       // prompt — required for batch auto-prompt to keep poses distinct
       // across the 4 generated images.
@@ -577,6 +578,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     sourceMediaId?: string;
     sourceMediaIds?: string[];
     variantCount?: number;
+    imageModel?: ImageModelKey;
     prompts?: string[];
   }) {
     const projectId = await get().ensureProjectId();
@@ -742,7 +744,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           variant_count: variantCount,
           // User's image model preference from the Settings panel.
           // Backend resolves the nickname → real Flow model identifier.
-          image_model: useSettingsStore.getState().imageModel,
+          image_model: opts.imageModel ?? useSettingsStore.getState().imageModel,
         };
         if (refMediaIds.length > 0) {
           params.ref_media_ids = refMediaIds;
