@@ -15,6 +15,7 @@ Architecture:
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import logging
 from typing import Any, Dict, List, Optional
@@ -23,7 +24,7 @@ import httpx
 
 from flowboard.extension_worker.flow_executor import FlowDriver
 from flowboard.services.flow_client import FlowClient
-from flowboard.services.flow_sdk import FlowSDK, extract_media_entries
+from flowboard.services.flow_sdk import FlowSDK, extract_media_entries, is_valid_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,7 @@ class FlowAPIDriver(FlowDriver):
         user_id: str,
         request_id: str,
         timeout: float = 120.0,
+        input_data: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Generate one image via the Flow extension bridge.
 
@@ -139,31 +141,41 @@ class FlowAPIDriver(FlowDriver):
                 "Flow extension is not connected — cannot make authenticated API calls"
             )
 
+        input_data = input_data if isinstance(input_data, dict) else {}
         sdk = FlowSDK(client=self._client)
         tier = self._resolve_tier()
 
         # 2. Create project (TRPC — fast, no captcha)
-        project_title = f"flowboard-{request_id[:8]}"
-        try:
-            proj_result = await asyncio.wait_for(
-                sdk.create_project(title=project_title),
-                timeout=30.0,
-            )
-        except asyncio.TimeoutError:
-            raise FlowAPIDriverError("create_project timed out after 30s")
-        except Exception as exc:
-            raise FlowAPIDriverError(f"create_project failed: {exc}") from exc
+        project_id = input_data.get("project_id")
+        if not isinstance(project_id, str) or not is_valid_project_id(project_id) or project_id == "cloud-worker":
+            raw_title = input_data.get("project_title") or input_data.get("board_name")
+            project_title = str(raw_title).strip() if isinstance(raw_title, str) and raw_title.strip() else f"flowboard-{request_id[:8]}"
+            try:
+                proj_result = await asyncio.wait_for(
+                    sdk.create_project(title=project_title[:80]),
+                    timeout=30.0,
+                )
+            except asyncio.TimeoutError:
+                raise FlowAPIDriverError("create_project timed out after 30s")
+            except Exception as exc:
+                raise FlowAPIDriverError(f"create_project failed: {exc}") from exc
 
-        if proj_result.get("error"):
-            raise FlowAPIDriverError(
-                f"create_project returned error: {proj_result['error']}"
-            )
-        project_id = proj_result.get("project_id")
-        if not project_id:
-            raise FlowAPIDriverError(
-                "create_project returned no project_id"
-            )
+            if proj_result.get("error"):
+                raise FlowAPIDriverError(
+                    f"create_project returned error: {proj_result['error']}"
+                )
+            project_id = proj_result.get("project_id")
+            if not project_id:
+                raise FlowAPIDriverError(
+                    "create_project returned no project_id"
+                )
         logger.info("[flow-api-driver] project_id=%s...", str(project_id)[:12])
+
+        aspect_ratio = input_data.get("aspect_ratio") if isinstance(input_data.get("aspect_ratio"), str) else "IMAGE_ASPECT_RATIO_LANDSCAPE"
+        image_model = input_data.get("image_model") if isinstance(input_data.get("image_model"), str) else self._image_model
+        variant_count = self._resolve_variant_count(input_data.get("variant_count"))
+        prompts = input_data.get("prompts") if isinstance(input_data.get("prompts"), list) else None
+        ref_media_ids = await self._resolve_ref_media_ids(sdk, input_data.get("ref_media_ids"), str(project_id))
 
         # 3. Generate image (batchGenerateImages + reCAPTCHA)
         gen_timeout = max(30.0, timeout - 30.0)
@@ -172,9 +184,12 @@ class FlowAPIDriver(FlowDriver):
                 sdk.gen_image(
                     prompt=prompt,
                     project_id=project_id,
+                    aspect_ratio=aspect_ratio,
                     paygate_tier=tier,
-                    variant_count=1,
-                    image_model=self._image_model,
+                    ref_media_ids=ref_media_ids,
+                    variant_count=variant_count,
+                    prompts=prompts,
+                    image_model=image_model,
                 ),
                 timeout=gen_timeout,
             )
@@ -274,5 +289,56 @@ class FlowAPIDriver(FlowDriver):
                 "checksum": checksum,
                 "prompt_snapshot": prompt,
                 "content_bytes": content_bytes,
+                "media_id": media_id,
+                "project_id": project_id,
             }
         ]
+
+    def _resolve_variant_count(self, value: Any) -> int:
+        try:
+            return max(1, min(int(value or 1), 4))
+        except Exception:
+            return 1
+
+    async def _resolve_ref_media_ids(self, sdk: FlowSDK, value: Any, project_id: str) -> Optional[List[str]]:
+        if not isinstance(value, list):
+            return None
+        resolved: List[str] = []
+        for index, item in enumerate(value):
+            if not isinstance(item, str) or not item.strip():
+                continue
+            ref = item.strip()
+            if ref.startswith("http://") or ref.startswith("https://"):
+                resolved.append(await self._upload_url_reference(sdk, ref, project_id, index))
+            else:
+                resolved.append(ref)
+        return resolved or None
+
+    async def _upload_url_reference(self, sdk: FlowSDK, url: str, project_id: str, index: int) -> str:
+        try:
+            async with httpx.AsyncClient(timeout=self._download_timeout, follow_redirects=True) as client:
+                resp = await client.get(url)
+        except Exception as exc:
+            raise FlowAPIDriverError(f"reference download failed: {exc}") from exc
+        if resp.status_code != 200:
+            raise FlowAPIDriverError(f"reference download HTTP {resp.status_code}")
+        content_bytes = resp.content
+        if len(content_bytes) > _MAX_ASSET_BYTES:
+            raise FlowAPIDriverError(f"reference exceeds 25 MB limit ({len(content_bytes)} bytes)")
+        reported_mime = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+        mime_type = self._sniff_mime(content_bytes) or reported_mime
+        if mime_type not in {"image/png", "image/jpeg"}:
+            raise FlowAPIDriverError(f"unsupported reference MIME type: {mime_type}")
+        ext = "png" if mime_type == "image/png" else "jpg"
+        upload = await sdk.upload_image(
+            image_base64=base64.b64encode(content_bytes).decode("ascii"),
+            mime_type=mime_type,
+            project_id=project_id,
+            file_name=f"reference-{index + 1}.{ext}",
+        )
+        if upload.get("error"):
+            raise FlowAPIDriverError(f"reference upload failed: {upload['error']}")
+        media_id = upload.get("media_id")
+        if not isinstance(media_id, str) or not media_id:
+            raise FlowAPIDriverError("reference upload returned no media_id")
+        return media_id

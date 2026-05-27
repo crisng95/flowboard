@@ -4,6 +4,8 @@ import {
   listBoards,
   createBoard,
   getBoard,
+  registerIdMapping,
+  uuidToNumericId,
   patchBoard as apiPatchBoard,
   deleteBoard as apiDeleteBoard,
   createNode,
@@ -61,6 +63,8 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   // keeping the slot preserves alignment with the upstream image's
   // variants for poster/edge-pin lookups.
   mediaIds?: (string | null)[];
+  flowMediaId?: string;
+  flowMediaIds?: (string | null)[];
   // Per-slot error code, aligned to `mediaIds` indexing. `null` for
   // succeeded slots, an error string (e.g. "PUBLIC_ERROR_UNSAFE_GENERATION")
   // for blocked ones. ResultViewer reads this to render the exact
@@ -605,7 +609,30 @@ function sortNodesParentFirst(nodes: FlowNode[]): FlowNode[] {
 // back to project #1. localStorage is fine here ï¿½ single-user, single-host.
 const ACTIVE_BOARD_KEY = "flowboard.activeBoardId";
 
+function projectIdFromLocation(): number | null {
+  if (typeof window === "undefined") return null;
+  const match = window.location.pathname.match(/^\/project\/([^/]+)(?:\/)?$/);
+  if (!match) return null;
+  const raw = decodeURIComponent(match[1]);
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) {
+    const mapped = uuidToNumericId(raw);
+    registerIdMapping(mapped, raw);
+    return mapped;
+  }
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function setProjectLocation(id: number | null): void {
+  if (typeof window === "undefined") return;
+  const nextPath = id === null ? "/" : `/project/${id}`;
+  if (window.location.pathname === nextPath) return;
+  window.history.pushState({}, "", nextPath);
+}
+
 function loadPersistedBoardId(): number | null {
+  const routeId = projectIdFromLocation();
+  if (routeId !== null) return routeId;
   try {
     const raw = localStorage.getItem(ACTIVE_BOARD_KEY);
     if (raw === null) return null;
@@ -642,6 +669,10 @@ interface BoardState {
   historyFuture: BoardSnapshot[];
   historyPresent: BoardSnapshot | null;
   historySuspend: boolean;
+  showAuthModal: boolean;
+  setShowAuthModal(val: boolean): void;
+  showExtensionModal: boolean;
+  setShowExtensionModal(val: boolean): void;
 
   setView(view: "spaces" | "canvas"): void;
   setToolMode(mode: ToolMode): void;
@@ -738,7 +769,7 @@ interface BoardState {
 }
 
 export const useBoardStore = create<BoardState>((set, get) => ({
-  currentView: "spaces",
+  currentView: projectIdFromLocation() !== null ? "canvas" : "spaces",
   toolMode: "select",
   boardId: null,
   boardName: "",
@@ -751,9 +782,15 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   historyFuture: [],
   historyPresent: null,
   historySuspend: false,
+  showAuthModal: false,
+  setShowAuthModal(val) { set({ showAuthModal: val }); },
+  showExtensionModal: false,
+  setShowExtensionModal(val) { set({ showExtensionModal: val }); },
 
   setView(view) {
     set({ currentView: view });
+    if (view === "spaces") setProjectLocation(null);
+    if (view === "canvas" && get().boardId !== null) setProjectLocation(get().boardId);
   },
 
   setToolMode(mode) {
@@ -763,6 +800,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   async selectProject(id) {
     await get().switchBoard(id);
     set({ currentView: "canvas" });
+    setProjectLocation(id);
   },
 
   commitHistorySnapshot() {
@@ -859,6 +897,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           historyPresent: null,
           historySuspend: false,
         });
+        setProjectLocation(null);
         return;
       }
       const detail = await getBoard(board.id);
@@ -877,6 +916,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         historySuspend: false,
       });
       persistBoardId(detail.board.id);
+      if (projectIdFromLocation() !== null) set({ currentView: "canvas" });
     } catch (err) {
       set({ loading: false, error: err instanceof Error ? err.message : String(err) });
     }
@@ -909,6 +949,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         historySuspend: false,
       });
       persistBoardId(detail.board.id);
+      setProjectLocation(detail.board.id);
     } catch (err) {
       set({ loading: false, error: err instanceof Error ? err.message : String(err) });
     }
@@ -1062,6 +1103,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           historyPresent: null,
           historySuspend: false,
         });
+        setProjectLocation(null);
       }
     }
   },

@@ -9,8 +9,10 @@ import "@xyflow/react/dist/style.css";
 import "./globals.css";
 import "./styles.css";
 
+const isDebugMode = window.location.pathname === "/debug" || import.meta.env.VITE_FLOWBOARD_DEBUG_PORTAL === "1";
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {import.meta.env.VITE_FLOWBOARD_CLOUD_PORTAL === "1" ? <CloudPortal /> : <App />}
+    {isDebugMode ? <CloudPortal /> : <App />}
   </React.StrictMode>,
 );

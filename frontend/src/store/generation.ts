@@ -7,6 +7,7 @@ import {
   patchNode,
 } from "../api/client";
 import { useBoardStore } from "./board";
+import { supabase } from "../cloud/supabase";
 import { normalizeImageModelKey, useSettingsStore, type ImageModelKey } from "./settings";
 
 type PollEntry = { requestId: number; timerId: ReturnType<typeof setTimeout> | null };
@@ -283,17 +284,22 @@ export function resolveEdgeMediaSelection(targetRfId: string, edgeId: string): {
     }
   }
 
-  const variants = (Array.isArray(src.data.mediaIds) ? src.data.mediaIds : [])
+  const flowVariants = (Array.isArray(src.data.flowMediaIds) ? src.data.flowMediaIds : [])
+    .filter((m): m is string => typeof m === "string" && m.length > 0);
+  const variants = (flowVariants.length > 0 ? flowVariants : (Array.isArray(src.data.mediaIds) ? src.data.mediaIds : []))
     .filter((m): m is string => typeof m === "string" && m.length > 0);
   const pin = (edge.data?.sourceVariantIdx ?? null) as number | null;
 
   if (pin !== null && pin >= 0 && pin < variants.length) {
     return { mediaId: variants[pin], variantIdx: pin, allVariants: variants };
   }
-  if (typeof src.data.mediaId === "string" && src.data.mediaId) {
-    const idx = variants.indexOf(src.data.mediaId);
+  const primaryMediaId = (typeof src.data.flowMediaId === "string" && src.data.flowMediaId) ||
+    (typeof src.data.mediaId === "string" && src.data.mediaId) ||
+    null;
+  if (primaryMediaId) {
+    const idx = variants.indexOf(primaryMediaId);
     return {
-      mediaId: src.data.mediaId,
+      mediaId: primaryMediaId,
       variantIdx: idx >= 0 ? idx : null,
       allVariants: variants,
     };
@@ -531,6 +537,17 @@ export function getVideoNodeInputs(targetRfId: string): {
  *      target node + persist it to the DB so reloads keep the state.
  *
  * Without this helper Part + Variant would each duplicate ~120 lines
+/**
+ * Shared dispatch helper for Concepta nodes that derive from an
+ * upstream Concept (or other media-bearing) node via Flow
+ * `edit_image`. Covers Part + Variant dispatch loops which both:
+ *   1. require exactly one upstream edge with a media-bearing source,
+ *   2. send a single Request-row with a node-type-specific extra
+ *      payload (region_key for Part; axis/instruction for Variant),
+ *   3. poll the request until it lands and stamp the result onto the
+ *      target node + persist it to the DB so reloads keep the state.
+ *
+ * Without this helper Part + Variant would each duplicate ~120 lines
  * of poll-loop boilerplate that's already battle-tested in
  * dispatchGeneration / dispatchMultiview.
  *
@@ -575,17 +592,31 @@ async function dispatchEditDerived(
   const projectId = await get().ensureProjectId();
   if (projectId === null) return;
 
-  const knownTier = paygateTier ?? get().paygateTier;
-  if (!knownTier) {
-    set({
-      error:
-        "Open Flow once so the extension can detect your plan, then retry.",
-    });
-    useBoardStore.getState().updateNodeData(rfId, {
-      status: "error",
-      error: "paygate_tier_unknown",
-    });
-    return;
+  const isTauri = typeof window !== "undefined" && 
+    (!!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__);
+
+  let knownTier: string | null = null;
+
+  if (!isTauri && supabase) {
+    const session = (await supabase.auth.getSession()).data.session;
+    if (!session) {
+      useBoardStore.getState().setShowAuthModal(true);
+      return;
+    }
+    knownTier = (paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE") as string;
+  } else {
+    knownTier = (paygateTier ?? get().paygateTier) as string | null;
+    if (!knownTier) {
+      set({
+        error:
+          "Open Flow once so the extension can detect your plan, then retry.",
+      });
+      useBoardStore.getState().updateNodeData(rfId, {
+        status: "error",
+        error: "paygate_tier_unknown",
+      });
+      return;
+    }
   }
 
   // Resolve upstream — Part / Variant need exactly one connected
@@ -810,6 +841,17 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
   async ensureProjectId() {
     const cached = get().projectId;
     if (cached !== null) return cached;
+
+    const isTauri = typeof window !== "undefined" &&
+      (!!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__);
+    if (!isTauri && supabase) {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session) {
+        useBoardStore.getState().setShowAuthModal(true);
+        return null;
+      }
+    }
+
     const boardId = useBoardStore.getState().boardId;
     if (boardId === null) {
       set({ error: "no board loaded" });
@@ -836,29 +878,33 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     imageModel?: ImageModelKey;
     prompts?: string[];
   }) {
+    const isTauri = typeof window !== "undefined" && 
+      (!!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__);
+
+    if (!isTauri && supabase) {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session) {
+        useBoardStore.getState().setShowAuthModal(true);
+        return;
+      }
+    } else {
+      const knownTier = opts.paygateTier ?? get().paygateTier;
+      if (!knownTier) {
+        set({
+          error: "Open Flow once so the extension can detect your plan, then retry. (See the Tier-unknown banner in the bottom-left.)",
+        });
+        useBoardStore.getState().updateNodeData(rfId, {
+          status: "error",
+          error: "paygate_tier_unknown",
+        });
+        return;
+      }
+    }
+
     const projectId = await get().ensureProjectId();
     if (projectId === null) return;
 
-    // Pre-flight: refuse to dispatch if the paygate tier is unknown.
-    // The backend would reject with `paygate_tier_unknown` anyway (since
-    // Phase 1 stopped silently defaulting to Pro), but bailing here gives
-    // the user a clearer hint without spending a captcha round-trip and
-    // without leaving a `failed` request row in the DB. The
-    // AccountPanel's "Tier unknown — Open Flow" banner is the recovery
-    // path.
-    const knownTier = opts.paygateTier ?? get().paygateTier;
-    if (!knownTier) {
-      set({
-        error: "Open Flow once so the extension can detect your plan, then retry. (See the Tier-unknown banner in the bottom-left.)",
-      });
-      useBoardStore.getState().updateNodeData(rfId, {
-        status: "error",
-        error: "paygate_tier_unknown",
-      });
-      return;
-    }
-
-    // Cancel existing poll for this node if any
+    // Cancel existing active node polling
     const existingEntry = get().active[rfId];
     if (existingEntry && existingEntry.timerId !== null) {
       clearTimeout(existingEntry.timerId);
@@ -876,7 +922,6 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       mediaId: undefined,
     });
 
-    // Create request
     const kind = opts.kind ?? "image";
     let reqDto;
     try {
@@ -884,8 +929,6 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       if (kind === "video") {
         const settings = useSettingsStore.getState();
         const isOmni = settings.videoModel === "omni_flash";
-
-        // Omni Flash takes a fundamentally different input shape from
         // Veo i2v. Veo wants ONE source image to use as the literal
         // start frame (multi-source = batch of N parallel i2v calls,
         // one per variant). Omni Flash takes "ingredients" — a list of
@@ -1058,10 +1101,18 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             // can map slot i ↔ upstream variant i, but pick the first
             // non-null entry as the "primary" mediaId for legacy
             // single-tile UI consumers.
-            const mediaIds = (req.result["media_ids"] as (string | null)[] | undefined) ?? [];
+            const flowMediaIds = (req.result["media_ids"] as (string | null)[] | undefined) ?? [];
+            const mediaIds = (req.result["media_urls"] as (string | null)[] | undefined) ?? flowMediaIds;
             const mediaId = mediaIds.find(
               (m): m is string => typeof m === "string" && m.length > 0,
             );
+            const flowMediaId = flowMediaIds.find(
+              (m): m is string => typeof m === "string" && m.length > 0,
+            );
+            const completedProjectId = req.result["project_id"] as string | undefined;
+            if (completedProjectId) {
+              set({ projectId: completedProjectId });
+            }
             // Surface the partial-error summary onto data.error while
             // keeping status="done" — the node still has renderable
             // variants, but the UI can flag that some slots got blocked.
@@ -1095,6 +1146,8 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               status: "done",
               mediaId,
               mediaIds,
+              flowMediaId,
+              flowMediaIds,
               slotErrors: slotErrors ?? undefined,
               aiBrief: undefined,
               aspectRatio: opts.aspectRatio,
@@ -1124,6 +1177,8 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                   prompt: opts.prompt,
                   mediaId,
                   mediaIds,
+                  flowMediaId,
+                  flowMediaIds,
                   slotErrors: slotErrors ?? null,
                   variantCount: d?.variantCount ?? mediaIds.length,
                   aiBrief: null,
@@ -1153,6 +1208,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               if (boardId !== null) {
                 for (let idx = 1; idx < mediaIds.length; idx += 1) {
                   const extraMediaId = mediaIds[idx];
+                  const extraFlowMediaId = flowMediaIds[idx];
                   if (typeof extraMediaId !== "string" || !extraMediaId) continue;
                   try {
                     const extraDto = await createNode({
@@ -1163,6 +1219,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                       data: {
                         title: `${rootTitle} ${idx + 1}`,
                         mediaId: extraMediaId,
+                        flowMediaId: typeof extraFlowMediaId === "string" ? extraFlowMediaId : extraMediaId,
                         aspectRatio: opts.aspectRatio,
                         renderedAt,
                       },
@@ -1181,6 +1238,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                             ?? `${rootTitle} ${idx + 1}`,
                           status: "done",
                           mediaId: extraMediaId,
+                          flowMediaId: typeof extraFlowMediaId === "string" ? extraFlowMediaId : extraMediaId,
                           aspectRatio: opts.aspectRatio,
                           renderedAt,
                         },
@@ -1190,6 +1248,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                       status: "done",
                       data: {
                         mediaId: extraMediaId,
+                        flowMediaId: typeof extraFlowMediaId === "string" ? extraFlowMediaId : extraMediaId,
                         aspectRatio: opts.aspectRatio,
                         renderedAt,
                       },

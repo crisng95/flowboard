@@ -53,7 +53,7 @@ export async function requireClaimedRequest(env: Env, requestId: string, clientI
     id: `eq.${requestId}`,
     claimed_by: `eq.${clientId}`,
     user_id: `eq.${userId}`,
-    select: 'id,user_id,provider,status,claimed_by,lease_expires_at,input_data',
+    select: 'id,user_id,provider,status,claimed_by,lease_expires_at,input_data,output_result',
     limit: 1,
   });
   const req = rows[0];

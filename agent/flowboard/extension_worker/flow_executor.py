@@ -28,7 +28,12 @@ class FlowDriver:
         self.simulate_delay_sec = simulate_delay_sec
 
     async def generate_assets(
-        self, prompt: str, user_id: str, request_id: str, timeout: float = 30.0
+        self,
+        prompt: str,
+        user_id: str,
+        request_id: str,
+        timeout: float = 30.0,
+        input_data: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Mock asset generation yielding standard metadata matching the assets schema.
 
@@ -120,7 +125,13 @@ class FlowExecutor(BaseExecutor):
         try:
             # Enforce timeout guard
             raw_assets = await asyncio.wait_for(
-                self._driver.generate_assets(prompt, user_id, request_id, timeout=self._timeout_sec),
+                self._driver.generate_assets(
+                    prompt,
+                    user_id,
+                    request_id,
+                    timeout=self._timeout_sec,
+                    input_data=input_data,
+                ),
                 timeout=self._timeout_sec
             )
         except asyncio.TimeoutError:
@@ -266,12 +277,18 @@ class FlowExecutor(BaseExecutor):
             # Otherwise yield mock cooperative delay to sustain UX progress
             await asyncio.sleep(0.01)
 
+        media_ids = [a.get("media_id") for a in raw_assets if isinstance(a.get("media_id"), str)]
+        project_ids = [a.get("project_id") for a in raw_assets if isinstance(a.get("project_id"), str)]
         self._output = {
             "provider": "flow",
             "task_type": task_type,
             "asset_count": len(validated_assets),
-            "mock": True,
+            "mock": self._uploader is None,
         }
+        if media_ids:
+            self._output["media_ids"] = media_ids
+        if project_ids:
+            self._output["project_id"] = project_ids[0]
         self._assets = validated_assets
 
         elapsed = time.monotonic() - start_time

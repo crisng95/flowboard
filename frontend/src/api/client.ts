@@ -1,4 +1,127 @@
 import { invoke } from "@tauri-apps/api/core";
+import { supabase, cloudApiBaseUrl } from "../cloud/supabase";
+import * as localDb from "./localStorageDb";
+
+// --- stateless/deterministic 48-bit UUID-to-Numeric ID Mapping Adapter ---
+const numericToUuidMap = new Map<number, string>();
+const ID_MAP_KEY = "flowboard.cloud.idMap.v1";
+
+function loadPersistedIdMap(): Record<string, string> {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(ID_MAP_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistIdMapping(num: number, uuid: string): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    const current = loadPersistedIdMap();
+    current[String(num)] = uuid;
+    localStorage.setItem(ID_MAP_KEY, JSON.stringify(current));
+  } catch {
+    // Non-fatal: in-memory mapping still works for the current session.
+  }
+}
+
+export function registerIdMapping(num: number, uuid: string): void {
+  numericToUuidMap.set(num, uuid);
+  persistIdMapping(num, uuid);
+}
+
+export function getUuidFromNumericId(num: number): string | undefined {
+  return numericToUuidMap.get(num) ?? loadPersistedIdMap()[String(num)];
+}
+
+export function uuidToNumericId(uuid: string): number {
+  if (!uuid) return 0;
+  // Deterministic 48-bit hash of UUID that fits inside Number.MAX_SAFE_INTEGER
+  const clean = uuid.replace(/-/g, "");
+  return parseInt(clean.slice(0, 12), 16);
+}
+
+export function resolveToUuid(id: string | number): string {
+  if (typeof id === "string") {
+    if (id.includes("-")) return id;
+    const num = parseInt(id, 10);
+    if (!isNaN(num)) {
+      return getUuidFromNumericId(num) ?? id;
+    }
+    return id;
+  }
+  return getUuidFromNumericId(id) ?? String(id);
+}
+
+function mapBoardId(uuid: string): number {
+  const num = uuidToNumericId(uuid);
+  registerIdMapping(num, uuid);
+  return num;
+}
+
+function mapBoardFromServer(b: any): Board {
+  return {
+    id: mapBoardId(b.id),
+    name: b.name,
+    created_at: b.created_at,
+  };
+}
+
+function mapNodeFromServer(n: any): NodeDTO {
+  const mappedId = uuidToNumericId(n.id);
+  registerIdMapping(mappedId, n.id);
+  const data = n.data && typeof n.data === "object" ? n.data : {};
+  return {
+    id: mappedId,
+    board_id: uuidToNumericId(n.board_id),
+    short_id: n.short_id ?? data.shortId ?? `n${String(mappedId).slice(-4)}`,
+    type: n.type,
+    x: n.position_x ?? n.x ?? 0,
+    y: n.position_y ?? n.y ?? 0,
+    w: n.w ?? data.w ?? 240,
+    h: n.h ?? data.h ?? 160,
+    data,
+    status: n.status ?? data.status ?? "idle",
+    created_at: n.created_at,
+    parent_id: n.parent_id ? uuidToNumericId(n.parent_id) : (data.parent_id ? uuidToNumericId(data.parent_id) : null),
+  };
+}
+
+function mapEdgeFromServer(e: any): EdgeDTO {
+  const mappedId = uuidToNumericId(e.id);
+  registerIdMapping(mappedId, e.id);
+  return {
+    id: mappedId,
+    board_id: uuidToNumericId(e.board_id),
+    source_id: uuidToNumericId(e.source_node_id ?? e.source_id),
+    target_id: uuidToNumericId(e.target_node_id ?? e.target_id),
+    kind: e.kind ?? "default",
+    source_handle: e.source_handle ?? null,
+    target_handle: e.target_handle ?? null,
+    source_variant_idx: e.source_variant_idx ?? e.data?.source_variant_idx ?? null,
+  };
+}
+
+function mapRequestFromServer(r: any): RequestDTO {
+  const mappedId = uuidToNumericId(r.id);
+  registerIdMapping(mappedId, r.id);
+  const rawStatus = r.status;
+  const status = rawStatus === "completed" ? "done" : rawStatus;
+  const result = r.result ?? r.output_result ?? {};
+  return {
+    id: mappedId,
+    node_id: r.node_id ? uuidToNumericId(r.node_id) : null,
+    type: r.type ?? r.task_type ?? "gen_image",
+    params: r.params ?? r.input_data ?? {},
+    status,
+    result,
+    error: r.error ?? r.error_message ?? null,
+    created_at: r.created_at,
+    finished_at: r.finished_at ?? r.completed_at ?? null,
+  };
+}
 
 export function getBaseUrl(): string {
   const isTauri = typeof window !== "undefined" && 
@@ -7,12 +130,10 @@ export function getBaseUrl(): string {
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  // Check if we are running inside Tauri
   const isTauri = typeof window !== "undefined" && 
     (!!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__);
 
   if (isTauri) {
-    // Intercept paths for upload and media caching to route via loopback HTTP Axum on port 8101
     if (
       path.startsWith("/api/upload") ||
       path.startsWith("/api/upload-url") ||
@@ -33,15 +154,10 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       try {
         if (typeof init.body === "string") {
           body = JSON.parse(init.body);
-        } else if (init.body instanceof FormData) {
-          // Skip parsing for FormData, handled in the upload branch above
         }
-      } catch (e) {
-        // Fallback for raw text bodies
-      }
+      } catch (e) {}
     }
 
-    // 1. Board CRUD
     if (path === "/api/boards") {
       if (method === "GET") {
         return invoke<T>("list_boards");
@@ -50,7 +166,6 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       }
     }
 
-    // boards/:id or boards/:id/project
     if (path.startsWith("/api/boards/")) {
       const parts = path.split("/");
       const id = parseInt(parts[3], 10);
@@ -72,7 +187,6 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       }
     }
 
-    // 2. Node CRUD
     if (path === "/api/nodes") {
       if (method === "POST") {
         return invoke<T>("create_node", { input: body });
@@ -99,7 +213,6 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       }
     }
 
-    // 3. Edge CRUD
     if (path === "/api/edges") {
       if (method === "POST") {
         return invoke<T>("create_edge", { input: body });
@@ -116,7 +229,6 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       }
     }
 
-    // 4. Auth & Extension
     if (path === "/api/auth/me") {
       return invoke<T>("get_auth_me");
     }
@@ -127,7 +239,6 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       return invoke<T>("scan_extension");
     }
 
-    // 5. Requests
     if (path === "/api/requests") {
       if (method === "POST") {
         return invoke<T>("create_request", { input: body });
@@ -141,26 +252,359 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       }
     }
 
-  }
+    const baseUrl = getBaseUrl();
+    const res = await fetch(`${baseUrl}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+    if (!res.ok) {
+      throw new Error(await extractErrorMessage(res));
+    }
+    return res.json() as Promise<T>;
 
-  // Fallback base URL for developer WebView running Vite dev server
-  const baseUrl = getBaseUrl();
-  const res = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers: {
+  } else {
+    const session = supabase ? (await supabase.auth.getSession()).data.session : null;
+    const isLoggedIn = !!session;
+
+    const method = init?.method || "GET";
+    let body: any = {};
+    if (init?.body && typeof init.body === "string") {
+      try {
+        body = JSON.parse(init.body);
+      } catch {}
+    }
+
+    if (!isLoggedIn) {
+      if (path === "/api/boards") {
+        if (method === "GET") {
+          return localDb.mockListBoards() as unknown as T;
+        } else if (method === "POST") {
+          return localDb.mockCreateBoard(body.name) as unknown as T;
+        }
+      }
+      if (path.startsWith("/api/boards/")) {
+        const parts = path.split("/");
+        const id = parseInt(parts[3], 10);
+        if (parts.length === 4) {
+          if (method === "GET") {
+            return localDb.mockGetBoard(id) as unknown as T;
+          } else if (method === "PATCH") {
+            return localDb.mockPatchBoard(id, body.name) as unknown as T;
+          } else if (method === "DELETE") {
+            return localDb.mockDeleteBoard(id) as unknown as T;
+          }
+        }
+      }
+
+      if (path === "/api/nodes") {
+        if (method === "POST") {
+          return localDb.mockCreateNode(body) as unknown as T;
+        }
+      }
+      if (path === "/api/nodes/group") {
+        if (method === "POST") {
+          return localDb.mockGroupNodes(body) as unknown as T;
+        }
+      }
+      if (path.startsWith("/api/nodes/")) {
+        const parts = path.split("/");
+        const id = parseInt(parts[3], 10);
+        if (parts[4] === "ungroup") {
+          return localDb.mockUngroupNodes(id) as unknown as T;
+        } else if (parts.length === 4) {
+          if (method === "PATCH") {
+            return localDb.mockPatchNode(id, body) as unknown as T;
+          } else if (method === "DELETE") {
+            return localDb.mockDeleteNode(id) as unknown as T;
+          }
+        }
+      }
+
+      if (path === "/api/edges") {
+        if (method === "POST") {
+          return localDb.mockCreateEdge(body) as unknown as T;
+        }
+      }
+      if (path.startsWith("/api/edges/")) {
+        const parts = path.split("/");
+        const id = parseInt(parts[3], 10);
+        if (parts.length === 4) {
+          if (method === "DELETE") {
+            return localDb.mockDeleteEdge(id) as unknown as T;
+          }
+        }
+      }
+
+      if (path === "/api/auth/me") {
+        return { email: null, name: null, picture: null, verified_email: null, paygate_tier: null, sku: null, credits: null } as unknown as T;
+      }
+      if (path === "/api/auth/scan") {
+        return { extension_connected: false, has_user_info: false, has_paygate_tier: false, userinfo_nudged: false, tier_fetched: false } as unknown as T;
+      }
+
+      throw new Error(`Endpoint ${path} not supported in Guest Mode`);
+    }
+
+    const token = session.access_token;
+    const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
-  if (!res.ok) {
-    throw new Error(await extractErrorMessage(res));
+      "Authorization": `Bearer ${token}`,
+      ...(init?.headers as Record<string, string> ?? {}),
+    };
+
+    if (path === "/api/auth/me") {
+      const user = session.user;
+      return {
+        email: user.email ?? null,
+        name: (user.user_metadata?.name as string | undefined) ?? null,
+        picture: (user.user_metadata?.avatar_url as string | undefined) ?? null,
+        verified_email: user.email_confirmed_at ? true : null,
+        paygate_tier: null,
+        sku: null,
+        credits: null,
+      } as unknown as T;
+    }
+
+    if (path === "/api/auth/scan") {
+      return {
+        extension_connected: false,
+        has_user_info: Boolean(session.user.email),
+        has_paygate_tier: false,
+        userinfo_nudged: false,
+        tier_fetched: false,
+      } as unknown as T;
+    }
+
+    let mappedPath = path;
+    let mappedInit: RequestInit = { ...init, headers };
+
+    if (path === "/api/boards") {
+    } else if (path.startsWith("/api/boards/")) {
+      const parts = path.split("/");
+      const id = parseInt(parts[3], 10);
+      const uuid = resolveToUuid(id);
+      if (parts[4] === "project") {
+        mappedPath = `/api/boards/${uuid}/project`;
+      }
+      if (parts.length === 4) {
+        mappedPath = `/api/boards/${uuid}`;
+      }
+    }
+
+    if (path === "/api/nodes") {
+      if (method === "POST") {
+        const payload = {
+          board_id: resolveToUuid(body.board_id),
+          type: body.type,
+          position_x: body.x,
+          position_y: body.y,
+          w: body.w,
+          h: body.h,
+          data: body.data,
+          parent_id: body.parent_id ? resolveToUuid(body.parent_id) : null,
+        };
+        mappedInit = { ...mappedInit, body: JSON.stringify(payload) };
+      }
+    } else if (path === "/api/nodes/group") {
+      if (method === "POST") {
+        const payload = {
+          board_id: resolveToUuid(body.board_id),
+          child_ids: body.child_ids.map(resolveToUuid),
+          title: body.title,
+          color: body.color,
+          locked: body.locked,
+          x: body.x,
+          y: body.y,
+          w: body.w,
+          h: body.h,
+        };
+        mappedInit = { ...mappedInit, body: JSON.stringify(payload) };
+      }
+    } else if (path.startsWith("/api/nodes/")) {
+      const parts = path.split("/");
+      const id = parseInt(parts[3], 10);
+      const uuid = resolveToUuid(id);
+      if (parts[4] === "ungroup") {
+        mappedPath = `/api/nodes/${uuid}/ungroup`;
+      } else if (parts.length === 4) {
+        mappedPath = `/api/nodes/${uuid}`;
+        if (method === "PATCH") {
+          const payload: any = {};
+          if (body.x !== undefined) payload.position_x = body.x;
+          if (body.y !== undefined) payload.position_y = body.y;
+          if (body.w !== undefined) payload.w = body.w;
+          if (body.h !== undefined) payload.h = body.h;
+          if (body.status !== undefined) payload.status = body.status;
+          if (body.parent_id !== undefined) payload.parent_id = body.parent_id ? resolveToUuid(body.parent_id) : null;
+          if (body.data !== undefined) payload.data = body.data;
+          mappedInit = { ...mappedInit, body: JSON.stringify(payload) };
+        }
+      }
+    }
+
+    if (path === "/api/edges") {
+      if (method === "POST") {
+        const payload = {
+          board_id: resolveToUuid(body.board_id),
+          source_node_id: resolveToUuid(body.source_id),
+          target_node_id: resolveToUuid(body.target_id),
+          source_handle: body.source_handle ?? "source",
+          target_handle: body.target_handle ?? null,
+          source_variant_idx: body.source_variant_idx ?? null,
+        };
+        mappedInit = { ...mappedInit, body: JSON.stringify(payload) };
+      }
+    } else if (path.startsWith("/api/edges/")) {
+      const parts = path.split("/");
+      const id = parseInt(parts[3], 10);
+      const uuid = resolveToUuid(id);
+      if (parts.length === 4) {
+        mappedPath = `/api/edges/${uuid}`;
+        if (method === "PATCH") {
+          mappedInit = { ...mappedInit, body: JSON.stringify({ source_variant_idx: body.source_variant_idx ?? null }) };
+        }
+      }
+    }
+
+    if (path === "/api/requests") {
+      if (method === "POST") {
+        let boardUuid = "";
+        let boardName = "";
+        try {
+          const boardState = (await import("../store/board")).useBoardStore.getState();
+          if (boardState.boardId) boardUuid = resolveToUuid(boardState.boardId);
+          boardName = boardState.boardName || "";
+        } catch {}
+        const nodeId = body.node_id ? resolveToUuid(body.node_id) : null;
+        const expectedOutput = body.type.includes("video") ? "video" : "image";
+        const taskType = body.type === "gen_video_omni" ? "txt2vid_omni" : (body.type.includes("video") ? "img2vid" : "txt2img");
+        const payload = {
+          board_id: boardUuid,
+          node_id: nodeId,
+          provider: "flow",
+          task_type: taskType,
+          expected_output: expectedOutput,
+          status: "queued",
+          input_data: {
+            prompt: body.params.prompt,
+            project_id: body.params.project_id ?? body.params.projectId,
+            aspect_ratio: body.params.aspect_ratio ?? body.params.aspectRatio,
+            variant_count: body.params.variant_count ?? body.params.variantCount,
+            image_model: body.params.image_model ?? body.params.imageModel,
+            ref_media_ids: body.params.ref_media_ids,
+            start_media_id: body.params.start_media_id,
+            start_media_ids: body.params.start_media_ids,
+            duration_s: body.params.duration_s,
+            project_title: boardName,
+          },
+        };
+        mappedInit = { ...mappedInit, body: JSON.stringify(payload) };
+      }
+    } else if (path.startsWith("/api/requests/")) {
+      const parts = path.split("/");
+      const id = parseInt(parts[3], 10);
+      const uuid = resolveToUuid(id);
+      if (parts.length === 4) {
+        mappedPath = `/api/requests/${uuid}`;
+      }
+    }
+
+    const res = await fetch(`${cloudApiBaseUrl}${mappedPath}`, mappedInit);
+    if (!res.ok) {
+      throw new Error(await extractErrorMessage(res));
+    }
+    const rawData = await res.json();
+
+    if (path === "/api/boards") {
+      if (method === "GET") {
+        return (rawData as any[]).map(mapBoardFromServer) as unknown as T;
+      } else if (method === "POST") {
+        return mapBoardFromServer(rawData) as unknown as T;
+      }
+    }
+    if (path.startsWith("/api/boards/")) {
+      const parts = path.split("/");
+      if (parts.length === 4) {
+        if (method === "GET") {
+          return {
+            board: mapBoardFromServer(rawData.board),
+            nodes: (rawData.nodes as any[]).map(mapNodeFromServer),
+            edges: (rawData.edges as any[]).map(mapEdgeFromServer),
+          } as unknown as T;
+        } else if (method === "PATCH") {
+          return mapBoardFromServer(rawData) as unknown as T;
+        }
+      }
+    }
+    if (path === "/api/nodes") {
+      if (method === "POST") {
+        return mapNodeFromServer(rawData) as unknown as T;
+      }
+    }
+    if (path === "/api/nodes/group") {
+      if (method === "POST") {
+        return {
+          group: mapNodeFromServer(rawData.group),
+          children: (rawData.children as any[]).map(mapNodeFromServer),
+        } as unknown as T;
+      }
+    }
+    if (path.startsWith("/api/nodes/")) {
+      const parts = path.split("/");
+      if (parts[4] === "ungroup") {
+        return {
+          deleted_group_id: uuidToNumericId(rawData.deleted_group_id),
+          children: (rawData.children as any[]).map(mapNodeFromServer),
+        } as unknown as T;
+      } else if (parts.length === 4) {
+        if (method === "PATCH") {
+          return mapNodeFromServer(rawData) as unknown as T;
+        } else if (method === "DELETE") {
+          return {
+            ok: true,
+            deleted_edges: rawData.deleted_edges ? rawData.deleted_edges.map(uuidToNumericId) : [],
+            deleted_child_ids: rawData.deleted_child_ids ? rawData.deleted_child_ids.map(uuidToNumericId) : [],
+          } as unknown as T;
+        }
+      }
+    }
+    if (path === "/api/edges") {
+      if (method === "POST") {
+        return mapEdgeFromServer(rawData) as unknown as T;
+      }
+    }
+    if (path.startsWith("/api/edges/")) {
+      const parts = path.split("/");
+      if (parts.length === 4) {
+        if (method === "PATCH") {
+          return mapEdgeFromServer(rawData) as unknown as T;
+        }
+        if (method === "DELETE") {
+          return { ok: true } as unknown as T;
+        }
+      }
+    }
+    if (path === "/api/requests") {
+      if (method === "POST") {
+        return mapRequestFromServer(rawData) as unknown as T;
+      }
+    }
+    if (path.startsWith("/api/requests/")) {
+      const parts = path.split("/");
+      if (parts.length === 4) {
+        if (method === "GET") {
+          return mapRequestFromServer(rawData) as unknown as T;
+        }
+      }
+    }
+
+    return rawData as T;
   }
-  return res.json() as Promise<T>;
 }
 
-// Map cryptic Flow / pipeline error tokens to a sentence the user can act on.
-// Returns null when the token is unrecognised, so the caller falls through to
-// the raw message.
 function humanizeBackendError(token: string): string | null {
   const t = token.toLowerCase();
   if (t === "paygate_tier_unknown") {
@@ -689,6 +1133,7 @@ export function getMediaStatus(mediaId: string): Promise<MediaStatus> {
 }
 
 export function mediaUrl(mediaId: string): string {
+  if (/^(https?:)?\/\//.test(mediaId) || mediaId.startsWith("data:")) return mediaId;
   const clean = mediaId.replace(/^media\//, "");
   return `${getBaseUrl()}/media/${encodeURIComponent(clean)}`;
 }
@@ -712,10 +1157,27 @@ export async function uploadImage(
   projectId: string,
   nodeId?: number,
 ): Promise<UploadResponse> {
+  const isTauri = typeof window !== "undefined" &&
+    (!!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__);
   const form = new FormData();
   form.append("project_id", projectId);
-  if (nodeId !== undefined) form.append("node_id", String(nodeId));
+  if (nodeId !== undefined) form.append("node_id", isTauri ? String(nodeId) : resolveToUuid(nodeId));
   form.append("file", file);
+
+  if (!isTauri && supabase) {
+    const session = (await supabase.auth.getSession()).data.session;
+    if (session) {
+      const res = await fetch(`${cloudApiBaseUrl}/api/upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        body: form,
+      });
+      if (!res.ok) {
+        throw new Error(await extractErrorMessage(res));
+      }
+      return res.json() as Promise<UploadResponse>;
+    }
+  }
 
   // Don't set Content-Type — the browser sets it with the correct boundary.
   const res = await fetch(`${getBaseUrl()}/api/upload`, { method: "POST", body: form });
@@ -1129,7 +1591,12 @@ export async function patchReference(
 export async function deleteReference(id: number): Promise<void> {
   // Backend returns 204 No Content; api<T>() would choke on the empty
   // body, so we use fetch() directly and skip the JSON parse.
-  const res = await fetch(`/api/references/${id}`, { method: "DELETE" });
+  const session = supabase ? (await supabase.auth.getSession()).data.session : null;
+  const url = session ? `${cloudApiBaseUrl}/api/references/${id}` : `/api/references/${id}`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: session ? { Authorization: `Bearer ${session.access_token}` } : undefined,
+  });
   if (!res.ok) {
     throw new Error(`deleteReference: ${res.status} ${res.statusText}`);
   }

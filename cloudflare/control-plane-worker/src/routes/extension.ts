@@ -33,6 +33,10 @@ const progressSchema = z.object({
   progress_stage: z.string(),
   progress: z.number().int().min(0).max(100),
 });
+const projectSchema = z.object({
+  request_id: z.string().uuid(),
+  project_id: z.string().min(1).max(160),
+});
 const signUploadSchema = z.object({
   storage_key: z.string(),
   content_type: z.string(),
@@ -94,6 +98,23 @@ extensionRoutes.post('/extension/progress', async (c) => {
     p_progress: body.progress,
   });
   return c.json(rows[0] || { ok: true });
+});
+
+extensionRoutes.post('/extension/project', async (c) => {
+  const body = projectSchema.parse(await c.req.json());
+  const userId = c.get('clientUserId');
+  const req = await requireClaimedRequest(c.env, body.request_id, c.get('clientId'), userId);
+  const db = new SupabaseRest(c.env);
+  const output = { ...(req.output_result ?? {}), project_id: body.project_id };
+  const input = { ...(req.input_data ?? {}), project_id: body.project_id };
+  const rows = await db.patch<Record<string, unknown>[]>('/rest/v1/requests', {
+    input_data: input,
+    output_result: output,
+  }, {
+    id: `eq.${body.request_id}`,
+    user_id: `eq.${userId}`,
+  });
+  return c.json(rows[0] || { ok: true, project_id: body.project_id });
 });
 
 extensionRoutes.post('/extension/sign-upload', async (c) => {

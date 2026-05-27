@@ -28,6 +28,7 @@ export type RequestRow = {
   claimed_by?: string | null;
   lease_expires_at?: string | null;
   input_data?: Record<string, unknown>;
+  output_result?: Record<string, unknown> | null;
 };
 
 export type AssetInput = {

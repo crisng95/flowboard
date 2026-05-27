@@ -97,6 +97,13 @@
       });
     }
 
+    bindProject(requestId, projectId) {
+      return this.request('/api/extension/project', {
+        request_id: requestId,
+        project_id: projectId,
+      });
+    }
+
     signUpload(storageKey, contentType, expiresIn) {
       return this.request('/api/extension/sign-upload', {
         storage_key: storageKey,

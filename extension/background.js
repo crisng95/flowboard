@@ -27,6 +27,8 @@ let observedCaptchaActions = {};
 let cloudConfig = null;
 let cloudWorkerBusy = false;
 let cloudWorkerLastPollAt = null;
+const FLOW_PROJECT_MEDIA_CACHE_KEY = 'flowProjectMediaCache';
+const FLOW_PROJECT_MEDIA_CACHE_MAX = 500;
 
 const flowUrls = ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'];
 
@@ -909,7 +911,8 @@ async function solveCaptchaForCloud(action) {
 async function runCloudFlowJob(cloud, job) {
   const requestId = job.id;
   const userId = job.user_id;
-  const prompt = job?.input_data?.prompt;
+  const inputData = job?.input_data && typeof job.input_data === 'object' ? job.input_data : {};
+  const prompt = inputData.prompt;
   if (!userId) throw new Error('Claimed job missing user_id');
   if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('Missing prompt in claimed job');
   if (!flowKey) throw new Error('Missing Google Flow bearer token');
@@ -926,24 +929,39 @@ async function runCloudFlowJob(cloud, job) {
     const flowApi = new FlowboardFlowApi({
       getBearerToken: () => flowKey,
       solveCaptcha: solveCaptchaForCloud,
-      paygateTier: cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
-      imageModel: cloudConfig?.imageModel || null,
+      paygateTier: inputData.paygate_tier || cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
+      imageModel: inputData.image_model || cloudConfig?.imageModel || null,
     });
     try {
       await cloud.progress(requestId, 'submitting', 30);
     } catch (error) {
       throw new Error('progress/submitting failed: ' + formatWorkerError(error));
     }
-    const project = await withStage(
-      'ERR_STAGE_CREATE_PROJECT',
-      () => flowApi.createProject(`flowboard-${String(requestId).slice(0, 8)}`),
-      'Google Flow project creation failed'
+    let project = { projectId: inputData.project_id };
+    if (typeof project.projectId !== 'string' || !project.projectId || project.projectId === 'cloud-worker') {
+      project = await withStage(
+        'ERR_STAGE_CREATE_PROJECT',
+        () => flowApi.createProject(inputData.project_title || `flowboard-${String(requestId).slice(0, 8)}`),
+        'Google Flow project creation failed'
+      );
+    }
+    await cloud.bindProject(requestId, project.projectId).catch((error) => {
+      console.warn('[Flowboard] Failed to persist Flow project id early:', error?.message || error);
+    });
+    const refMediaIds = await withStage(
+      'ERR_STAGE_GENERATE',
+      () => resolveCloudRefMediaIds(flowApi, inputData.ref_media_ids, project.projectId),
+      'Reference preparation failed'
     );
     const generated = await withStage(
       'ERR_STAGE_GENERATE',
       () => flowApi.generateImage(prompt, project.projectId, {
-        paygateTier: cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
-        imageModel: cloudConfig?.imageModel || null,
+        paygateTier: inputData.paygate_tier || cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
+        imageModel: inputData.image_model || cloudConfig?.imageModel || null,
+        aspectRatio: inputData.aspect_ratio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+        variantCount: inputData.variant_count || 1,
+        prompts: Array.isArray(inputData.prompts) ? inputData.prompts : undefined,
+        refMediaIds,
       }),
       'Google Flow generation failed'
     );
@@ -970,7 +988,12 @@ async function runCloudFlowJob(cloud, job) {
     }
     await withStage(
       'ERR_STAGE_COMPLETE',
-      () => cloud.complete(requestId, { provider: 'flow', media_count: assets.length, project_id: project.projectId }, assets),
+      () => cloud.complete(requestId, {
+        provider: 'flow',
+        media_count: assets.length,
+        project_id: project.projectId,
+        media_ids: entries.map((entry) => entry.media_id).filter(Boolean),
+      }, assets),
       'Complete request failed'
     );
     metrics.successCount++;
@@ -983,6 +1006,74 @@ async function runCloudFlowJob(cloud, job) {
     chrome.storage.local.set({ metrics });
   } finally {
     clearInterval(heartbeat);
+  }
+}
+
+async function resolveCloudRefMediaIds(flowApi, refs, projectId) {
+  if (!Array.isArray(refs)) return [];
+  const out = [];
+  for (let i = 0; i < refs.length; i++) {
+    const ref = refs[i];
+    if (typeof ref !== 'string' || !ref) continue;
+    if (!/^https?:\/\//i.test(ref)) {
+      out.push(ref);
+      continue;
+    }
+    const cached = await getCachedProjectMediaId(projectId, ref);
+    if (cached) {
+      out.push(cached);
+      continue;
+    }
+    const asset = await FlowboardAssetUtils.fetchAnyImageBytes(ref);
+    const upload = await flowApi.uploadImage(
+      FlowboardAssetUtils.bytesToBase64(asset.bytes),
+      asset.mimeType,
+      projectId,
+      `reference-${i + 1}.${asset.extension}`,
+    );
+    await setCachedProjectMediaId(projectId, ref, upload.mediaId);
+    out.push(upload.mediaId);
+  }
+  return out;
+}
+
+async function getCachedProjectMediaId(projectId, ref) {
+  try {
+    const key = await FlowboardAssetUtils.referenceCacheKey(projectId, ref);
+    const data = await chrome.storage.local.get([FLOW_PROJECT_MEDIA_CACHE_KEY]);
+    const cache = data?.[FLOW_PROJECT_MEDIA_CACHE_KEY] || {};
+    const entry = cache[key];
+    if (entry && typeof entry.mediaId === 'string' && entry.mediaId) {
+      return entry.mediaId;
+    }
+  } catch (error) {
+    console.warn('[Flowboard] Reference media cache read failed:', error?.message || error);
+  }
+  return null;
+}
+
+async function setCachedProjectMediaId(projectId, ref, mediaId) {
+  if (typeof mediaId !== 'string' || !mediaId) return;
+  try {
+    const key = await FlowboardAssetUtils.referenceCacheKey(projectId, ref);
+    const data = await chrome.storage.local.get([FLOW_PROJECT_MEDIA_CACHE_KEY]);
+    const cache = data?.[FLOW_PROJECT_MEDIA_CACHE_KEY] || {};
+    cache[key] = {
+      mediaId,
+      projectId,
+      ref: FlowboardAssetUtils.canonicalReferenceUrl(ref),
+      updatedAt: Date.now(),
+    };
+    const entries = Object.entries(cache);
+    if (entries.length > FLOW_PROJECT_MEDIA_CACHE_MAX) {
+      entries
+        .sort((a, b) => (b[1]?.updatedAt || 0) - (a[1]?.updatedAt || 0))
+        .slice(FLOW_PROJECT_MEDIA_CACHE_MAX)
+        .forEach(([oldKey]) => delete cache[oldKey]);
+    }
+    await chrome.storage.local.set({ [FLOW_PROJECT_MEDIA_CACHE_KEY]: cache });
+  } catch (error) {
+    console.warn('[Flowboard] Reference media cache write failed:', error?.message || error);
   }
 }
 chrome.runtime.onMessage.addListener((msg, _, reply) => {

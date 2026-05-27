@@ -9,7 +9,7 @@ import {
   Home,
   LayoutGrid,
   List,
-  Map,
+  Map as MapIcon,
   MoreHorizontal,
   Plus,
   Pencil,
@@ -21,9 +21,11 @@ import {
   UserCircle2,
   Upload,
   X,
+  Loader2,
 } from "lucide-react";
 
-import { getAuthMe, mediaUrl, type AuthMe } from "./api/client";
+import { getAuthMe, mediaUrl, type AuthMe, createBoard, createNode, createEdge, patchNode } from "./api/client";
+import * as localDb from "./api/localStorageDb";
 import { Board } from "./canvas/Board";
 import { AddNodePalette } from "./canvas/AddNodePalette";
 import { AppLogo } from "./components/AppLogo";
@@ -31,6 +33,9 @@ import { Toaster } from "./components/Toaster";
 import { GenerationDialog } from "./components/GenerationDialog";
 import { ResultViewerV2 } from "./components/ResultViewerV2";
 import { ForcedSetupGate } from "./components/ForcedSetupGate";
+import { AuthGateModal } from "./components/AuthGateModal";
+import { ExtensionGateModal } from "./components/ExtensionGateModal";
+import { supabase } from "./cloud/supabase";
 import { SPACE_TEMPLATES, type SpaceTemplate } from "./constants/spaceTemplates";
 import { useGenerationStore } from "./store/generation";
 import { useBoardStore, type FlowNode, type FlowboardEdgeData } from "./store/board";
@@ -171,12 +176,16 @@ function SpacesPage({
   onUploadCover,
   onUseSnapshotCover,
   onClearCustomCover,
+  session,
 }: {
   thumbnails: Record<number, string>;
   onUploadCover: (boardId: number, file: File) => Promise<void>;
   onUseSnapshotCover: (boardId: number, sourceBoardId?: number) => void;
   onClearCustomCover: (boardId: number) => void;
+  session: any;
 }) {
+  const isGuest = !session;
+  const setShowAuthModal = useBoardStore((s) => s.setShowAuthModal);
   const boards = useBoardStore((s) => s.boards);
   const loading = useBoardStore((s) => s.loading);
   const createNewBoard = useBoardStore((s) => s.createNewBoard);
@@ -321,6 +330,16 @@ function SpacesPage({
               <Plus size={16} />
               New space
             </button>
+            {isGuest && (
+              <button
+                type="button"
+                className="magnific-secondary-button border border-accent/30 text-accent hover:bg-accent/10 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer"
+                onClick={() => setShowAuthModal(true)}
+              >
+                <Sparkles size={14} />
+                New Cloud Space
+              </button>
+            )}
             <button type="button" className="magnific-icon-button" aria-label="Favorites">
               <Heart size={16} />
             </button>
@@ -388,7 +407,11 @@ function SpacesPage({
                     <button
                       type="button"
                       onClick={() => {
-                        void handleDuplicateBoard(board.id, board.name);
+                        if (isGuest) {
+                          setShowAuthModal(true);
+                        } else {
+                          void handleDuplicateBoard(board.id, board.name);
+                        }
                         setMenuBoardId(null);
                       }}
                     >
@@ -588,7 +611,7 @@ function CanvasStatusBar({
           onClick={onToggleMiniMap}
           aria-label="Toggle navigator"
         >
-          <Map size={15} />
+          <MapIcon size={15} />
         </button>
         <label className="magnific-zoom-select">
           <select
@@ -631,12 +654,12 @@ function CanvasWorkspace() {
   );
 }
 
-function CanvasPage() {
+function CanvasPage({ session }: { session: any }) {
   const boardName = useBoardStore((s) => s.boardName);
   const setView = useBoardStore((s) => s.setView);
+  const setShowAuthModal = useBoardStore((s) => s.setShowAuthModal);
   const setGenerationState = useGenerationStore.setState;
-  const [profile, setProfile] = useState<AuthMe | null>(null);
-  const [pollsWithoutTier, setPollsWithoutTier] = useState(0);
+  const isGuest = !session;
 
   useEffect(() => {
     let alive = true;
@@ -644,19 +667,12 @@ function CanvasPage() {
     const poll = async () => {
       const me = await getAuthMe();
       if (!alive) return;
-      setProfile(me);
       const resolvedTier = resolveAuthTier(me);
       if (resolvedTier) {
         setGenerationState({ paygateTier: resolvedTier });
-        setPollsWithoutTier(0);
         return;
       }
-      if (me?.email) {
-        setGenerationState({ paygateTier: null });
-        setPollsWithoutTier((n) => n + 1);
-      } else {
-        setGenerationState({ paygateTier: null });
-      }
+      setGenerationState({ paygateTier: null });
       timer = setTimeout(poll, 5000);
     };
     void poll();
@@ -681,6 +697,16 @@ function CanvasPage() {
           <strong>{boardName || "Untitled space"}</strong>
         </div>
         <div className="magnific-header-actions">
+          {isGuest && (
+            <button
+              type="button"
+              className="magnific-primary-button bg-accent hover:bg-accent/90 animate-pulse flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-semibold text-white shadow-lg shadow-accent/20 transition-all cursor-pointer mr-2"
+              onClick={() => setShowAuthModal(true)}
+            >
+              <Sparkles size={14} />
+              Save to Cloud
+            </button>
+          )}
           <button type="button" className="magnific-share-button">
             <Share2 size={15} />
             Share
@@ -693,17 +719,6 @@ function CanvasPage() {
       </header>
 
       <div className="magnific-canvas__stage">
-        {profile?.email && !resolveAuthTier(profile) && pollsWithoutTier >= 2 ? (
-          <div className="magnific-tier-warning" role="alert">
-            <div>
-              <strong>Tier unknown</strong>
-              <span>Open Flow once so the extension can detect your plan, then retry generation.</span>
-            </div>
-            <a href="https://labs.google/fx/tools/flow" target="_blank" rel="noreferrer">
-              Open Flow
-            </a>
-          </div>
-        ) : null}
         <ReactFlowProvider>
           <CanvasWorkspace />
         </ReactFlowProvider>
@@ -721,7 +736,18 @@ export function App() {
   const edges = useBoardStore((s) => s.edges);
   const undo = useBoardStore((s) => s.undo);
   const redo = useBoardStore((s) => s.redo);
-  const ran = useRef(false);
+  const showAuthModal = useBoardStore((s) => s.showAuthModal);
+  const setShowAuthModal = useBoardStore((s) => s.setShowAuthModal);
+  const showExtensionModal = useBoardStore((s) => s.showExtensionModal);
+  const setShowExtensionModal = useBoardStore((s) => s.setShowExtensionModal);
+
+  const loadedForRef = useRef<string | null>(null);
+  const [session, setSession] = useState<any>(null);
+  const [authReady, setAuthReady] = useState(!supabase);
+  const [showMigrationPrompt, setShowMigrationPrompt] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationError, setMigrationError] = useState<string | null>(null);
+
   const [spaceSnapshots, setSpaceSnapshots] = useState<Record<number, string>>(() => {
     try {
       const raw = localStorage.getItem(SPACE_SNAPSHOTS_KEY);
@@ -742,11 +768,40 @@ export function App() {
   const spaceThumbnails = useMemo(() => ({ ...spaceSnapshots, ...spaceCoverOverrides }), [spaceSnapshots, spaceCoverOverrides]);
 
   useEffect(() => {
-    if (ran.current) return;
-    ran.current = true;
+    if (!supabase) {
+      setAuthReady(true);
+      return;
+    }
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(s);
+      setAuthReady(true);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s);
+      setAuthReady(true);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (session && !localStorage.getItem("flowboard.migration_dismissed")) {
+      const localBoards = localDb.getGuestBoards();
+      if (localBoards.length > 0) {
+        setShowMigrationPrompt(true);
+      }
+    } else {
+      setShowMigrationPrompt(false);
+    }
+  }, [session]);
+
+  useEffect(() => {
+    if (!authReady) return;
+    const loadKey = session?.user?.id ? `user:${session.user.id}` : "guest";
+    if (loadedForRef.current === loadKey) return;
+    loadedForRef.current = loadKey;
     void loadInitialBoard();
     void loadReferences();
-  }, [loadInitialBoard, loadReferences]);
+  }, [authReady, session?.user?.id, loadInitialBoard, loadReferences]);
 
   useEffect(() => {
     const handleContextMenu = (e: MouseEvent) => {
@@ -847,6 +902,91 @@ export function App() {
     });
   }
 
+  async function migrateGuestDraftsToCloud() {
+    setIsMigrating(true);
+    setMigrationError(null);
+    try {
+      const localBoards = localDb.getGuestBoards();
+      for (const localBoard of localBoards) {
+        const localDetail = localDb.mockGetBoard(localBoard.id);
+        const cloudBoard = await createBoard(localBoard.name || "Migrated Draft");
+        
+        // Map localNodeId -> remoteNodeId (we need this to hook up parent_id and edges!)
+        const nodeMap = new Map<number, number>();
+        
+        // Sort nodes parent first
+        const localNodes = localDetail.nodes;
+        const roots = localNodes.filter(n => !n.parent_id);
+        const children = localNodes.filter(n => !!n.parent_id);
+        const sortedNodes = [...roots, ...children];
+        
+        for (const n of sortedNodes) {
+          const payload = {
+            board_id: cloudBoard.id,
+            type: n.type,
+            x: n.x,
+            y: n.y,
+            w: n.w,
+            h: n.h,
+            data: n.data,
+            parent_id: n.parent_id ? nodeMap.get(n.parent_id) : null
+          };
+          const createdNode = await createNode(payload);
+          nodeMap.set(n.id, createdNode.id);
+          
+          if (n.status && n.status !== "idle") {
+            await patchNode(createdNode.id, { status: n.status });
+          }
+        }
+        
+        // Replicate edges
+        for (const e of localDetail.edges) {
+          const remoteSourceId = nodeMap.get(e.source_id);
+          const remoteTargetId = nodeMap.get(e.target_id);
+          if (!remoteSourceId || !remoteTargetId) continue;
+          
+          await createEdge({
+            board_id: cloudBoard.id,
+            source_id: remoteSourceId,
+            target_id: remoteTargetId,
+            source_handle: e.source_handle,
+            target_handle: e.target_handle,
+            source_variant_idx: e.source_variant_idx
+          });
+        }
+      }
+      
+      // Clear local storage guest drafts
+      localStorage.removeItem("flowboard.guest.boards.v2");
+      for (const localBoard of localBoards) {
+        localStorage.removeItem(`flowboard.guest.nodes.v2.${localBoard.id}`);
+        localStorage.removeItem(`flowboard.guest.edges.v2.${localBoard.id}`);
+      }
+      
+      // Refresh board list
+      await useBoardStore.getState().refreshBoardList();
+      
+      // Load first board or spaces
+      const boards = useBoardStore.getState().boards;
+      if (boards.length > 0) {
+        await useBoardStore.getState().switchBoard(boards[0].id);
+      } else {
+        useBoardStore.getState().setView("spaces");
+      }
+      
+      setShowMigrationPrompt(false);
+    } catch (err: any) {
+      setMigrationError(err?.message || "Migration failed");
+    } finally {
+      setIsMigrating(false);
+    }
+  }
+
+  function handleKeepLocal() {
+    localStorage.setItem("flowboard.migration_dismissed", "true");
+    setShowMigrationPrompt(false);
+  }
+
   return (
     <>
       {currentView === "spaces" ? (
@@ -855,12 +995,78 @@ export function App() {
           onUploadCover={handleUploadCover}
           onUseSnapshotCover={handleUseSnapshotCover}
           onClearCustomCover={handleClearCustomCover}
+          session={session}
         />
-      ) : <CanvasPage />}
+      ) : (
+        <CanvasPage session={session} />
+      )}
       <Toaster />
       <GenerationDialog />
       <ResultViewerV2 />
       <ForcedSetupGate />
+      
+      <AuthGateModal 
+        isOpen={showAuthModal} 
+        onClose={() => setShowAuthModal(false)} 
+        onSuccess={() => {
+          // Reload boards on success
+          useBoardStore.getState().refreshBoardList();
+        }}
+      />
+      <ExtensionGateModal 
+        isOpen={showExtensionModal} 
+        onClose={() => setShowExtensionModal(false)} 
+      />
+
+      {showMigrationPrompt && (
+        <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-white/[0.08] bg-[#16161a] p-8 shadow-2xl transition-all duration-300">
+            <div className="absolute -left-20 -top-20 h-40 w-40 rounded-full bg-accent/20 blur-3xl pointer-events-none" />
+            <div className="relative mb-6">
+              <h3 className="text-lg font-bold text-white">Save Draft to Cloud?</h3>
+              <p className="text-sm text-white/50 mt-2">
+                We detected local board drafts on your browser. Would you like to sync them to your secure cloud workspace so you can access them from any device?
+              </p>
+            </div>
+            
+            {migrationError && (
+              <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-400">
+                {migrationError}
+              </div>
+            )}
+            
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-white/70 hover:text-white border border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.06] transition-all cursor-pointer"
+                onClick={handleKeepLocal}
+                disabled={isMigrating}
+              >
+                Keep local
+              </button>
+              <button
+                type="button"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-accent hover:bg-accent/90 transition-all cursor-pointer flex items-center gap-1.5 shadow-lg shadow-accent/20"
+                onClick={() => void migrateGuestDraftsToCloud()}
+                disabled={isMigrating}
+              >
+                {isMigrating ? (
+                  <>
+                    <Loader2 className="animate-spin" size={13} />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={13} />
+                    Save draft
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

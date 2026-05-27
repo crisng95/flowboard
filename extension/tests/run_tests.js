@@ -358,6 +358,26 @@ testAsync('FlowboardAssetUtils sha256Hex', async () => {
   assertEquals(hash, '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824');
 });
 
+testAsync('FlowboardAssetUtils reference cache key ignores signed URL query params', async () => {
+  const utils = global.FlowboardAssetUtils;
+  const urlA = 'https://example.r2.cloudflarestorage.com/bucket/path/image.png?X-Amz-Date=1&X-Amz-Signature=aaa';
+  const urlB = 'https://example.r2.cloudflarestorage.com/bucket/path/image.png?X-Amz-Date=2&X-Amz-Signature=bbb';
+
+  assertEquals(
+    utils.canonicalReferenceUrl(urlA),
+    'https://example.r2.cloudflarestorage.com/bucket/path/image.png',
+  );
+  assertEquals(
+    await utils.referenceCacheKey('project-1', urlA),
+    await utils.referenceCacheKey('project-1', urlB),
+  );
+  assert(
+    (await utils.referenceCacheKey('project-1', urlA)) !==
+      (await utils.referenceCacheKey('project-2', urlA)),
+    'Different Flow projects must not share uploaded media cache entries',
+  );
+});
+
 testAsync('FlowboardAssetUtils fetchMediaBytes validations', async () => {
   const utils = global.FlowboardAssetUtils;
 

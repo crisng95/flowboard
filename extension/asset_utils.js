@@ -45,6 +45,24 @@
     throw new Error(`Unsupported MIME type: ${mime}`);
   }
 
+  function canonicalReferenceUrl(url) {
+    if (typeof url !== 'string' || !url.trim()) return '';
+    try {
+      const parsed = new URL(url);
+      parsed.hash = '';
+      parsed.search = '';
+      return `${parsed.origin}${parsed.pathname}`;
+    } catch (_) {
+      return url.trim();
+    }
+  }
+
+  async function referenceCacheKey(projectId, ref) {
+    const canonical = `${projectId || ''}\n${canonicalReferenceUrl(ref)}`;
+    const bytes = new TextEncoder().encode(canonical);
+    return `v1:${await sha256Hex(bytes)}`;
+  }
+
   async function sha256Hex(bytes) {
     const buffer = bytes instanceof ArrayBuffer ? bytes : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
     const digest = await crypto.subtle.digest('SHA-256', buffer);
@@ -53,6 +71,10 @@
 
   async function fetchMediaBytes(url) {
     assertAllowedMediaUrl(url);
+    return fetchImageBytesUnchecked(url);
+  }
+
+  async function fetchImageBytesUnchecked(url) {
     const resp = await fetch(url, { credentials: 'omit' });
     if (!resp.ok) {
       throw new Error(`Media download HTTP ${resp.status}`);
@@ -74,6 +96,16 @@
       checksum,
       extension: extensionForMime(mimeType),
     };
+  }
+
+  function bytesToBase64(bytes) {
+    const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < view.length; i += chunk) {
+      binary += String.fromCharCode(...view.subarray(i, i + chunk));
+    }
+    return btoa(binary);
   }
 
   async function uploadGeneratedAsset(cloudClient, asset, userId, requestId, index, promptSnapshot) {
@@ -116,8 +148,12 @@
     MAX_ASSET_BYTES,
     ALLOWED_MIMES,
     fetchMediaBytes,
+    fetchAnyImageBytes: fetchImageBytesUnchecked,
+    bytesToBase64,
     sniffMime,
     sha256Hex,
+    canonicalReferenceUrl,
+    referenceCacheKey,
     extensionForMime,
     uploadGeneratedAsset,
     FlowboardAssetError,

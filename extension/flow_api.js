@@ -3,6 +3,7 @@
 
   const FLOW_API_BASE = 'https://aisandbox-pa.googleapis.com';
   const TRPC_CREATE_PROJECT = 'https://labs.google/fx/api/trpc/project.createProject';
+  const UPLOAD_IMAGE_URL = `${FLOW_API_BASE}/v1/flow/uploadImage`;
   const CAPTCHA_IMAGE = 'IMAGE_GENERATION';
   const VALID_TIERS = new Set(['PAYGATE_TIER_ONE', 'PAYGATE_TIER_TWO']);
   const IMAGE_MODELS = {
@@ -89,6 +90,25 @@
     return out;
   }
 
+  function findUploadedMediaId(value, depth = 0) {
+    if (!value || typeof value !== 'object' || depth > 8) return null;
+    if (typeof value.name === 'string' && value.name) return value.name;
+    if (typeof value.mediaId === 'string' && value.mediaId) return value.mediaId;
+    if (typeof value.media_id === 'string' && value.media_id) return value.media_id;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = findUploadedMediaId(item, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+    for (const child of Object.values(value)) {
+      const found = findUploadedMediaId(child, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
   class FlowboardFlowApi {
     constructor(options) {
       const opts = options || {};
@@ -131,17 +151,29 @@
       ctx.recaptchaContext.token = captchaToken;
 
       const now = Date.now();
+      const variantCount = Math.max(1, Math.min(Number(opts.variantCount || 1), 4));
+      const refMediaIds = Array.isArray(opts.refMediaIds) ? opts.refMediaIds.filter((m) => typeof m === 'string' && m) : [];
+      const imageInputs = refMediaIds.length
+        ? refMediaIds.map((mediaId) => ({ name: mediaId, imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE' }))
+        : null;
+      const prompts = Array.isArray(opts.prompts) ? opts.prompts : [];
+      const requests = [];
+      for (let i = 0; i < variantCount; i++) {
+        const item = {
+          clientContext: { ...ctx, sessionId: `;${now + i}` },
+          seed: (now + i * 9973) % 1000000,
+          structuredPrompt: { parts: [{ text: typeof prompts[i] === 'string' && prompts[i] ? prompts[i] : prompt }] },
+          imageAspectRatio: opts.aspectRatio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+          imageModelName: resolveImageModel(opts.imageModel || this.imageModel),
+        };
+        if (imageInputs) item.imageInputs = imageInputs.slice();
+        requests.push(item);
+      }
       const body = {
         clientContext: ctx,
         mediaGenerationContext: { batchId: crypto.randomUUID() },
         useNewMedia: true,
-        requests: [{
-          clientContext: { ...ctx, sessionId: `;${now}` },
-          seed: now % 1000000,
-          structuredPrompt: { parts: [{ text: prompt }] },
-          imageAspectRatio: opts.aspectRatio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
-          imageModelName: resolveImageModel(opts.imageModel || this.imageModel),
-        }],
+        requests,
       };
 
       const resp = await fetch(`${FLOW_API_BASE}/v1/projects/${projectId}/flowMedia:batchGenerateImages`, {
@@ -162,6 +194,33 @@
         raw: data,
         mediaEntries: extractMediaEntries(data),
       };
+    }
+
+    async uploadImage(imageBytesBase64, mimeType, projectId, fileName) {
+      const resp = await fetch(UPLOAD_IMAGE_URL, {
+        method: 'POST',
+        headers: {
+          'content-type': 'text/plain;charset=UTF-8',
+          'accept': '*/*',
+          'origin': 'https://labs.google',
+          'referer': 'https://labs.google/',
+          'authorization': this.bearerHeader(),
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          clientContext: { projectId: String(projectId), tool: 'PINHOLE' },
+          fileName: fileName || 'reference.png',
+          imageBytes: imageBytesBase64,
+          isHidden: false,
+          isUserUploaded: true,
+          mimeType,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(`uploadImage HTTP ${resp.status}`);
+      const mediaId = data?.data?.media?.name || findUploadedMediaId(data);
+      if (typeof mediaId !== 'string' || !mediaId) throw new Error('uploadImage returned no media id');
+      return { mediaId, raw: data };
     }
   }
 

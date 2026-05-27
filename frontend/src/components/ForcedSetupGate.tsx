@@ -23,6 +23,11 @@ import { AiProviderDialog } from "./AiProviderDialog";
 const POLL_INTERVAL_MS = 30_000;
 
 export function ForcedSetupGate() {
+  const isTauri = typeof window !== "undefined" && 
+    (!!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__);
+    
+  if (!isTauri) return null;
+
   // null = haven't checked yet (don't render anything to avoid a flash
   // of forced-open dialog before the real state lands).
   const [configured, setConfigured] = useState<boolean | null>(null);
