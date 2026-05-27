@@ -1,0 +1,23 @@
+{
+  "name": "flowboard-control-plane-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "aws4fetch": "^1.0.20",
+    "hono": "^4.7.11",
+    "zod": "^3.25.48"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260524.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4",
+    "wrangler": "^4.18.0"
+  }
+}

@@ -1,0 +1,23 @@
+name = "flowboard-control-plane"
+main = "src/index.ts"
+compatibility_date = "2026-05-27"
+
+routes = [
+  { pattern = "api.flowboard.bond/*", custom_domain = true }
+]
+
+[vars]
+ENVIRONMENT = "production"
+R2_BUCKET_NAME = "flowboard-prod-assets"
+ALLOWED_ORIGINS = "https://app.flowboard.bond,chrome-extension://*"
+
+[[r2_buckets]]
+binding = "ASSETS_BUCKET"
+bucket_name = "flowboard-prod-assets"
+
+# Set secrets with wrangler:
+#   wrangler secret put SUPABASE_URL
+#   wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+#   wrangler secret put R2_ENDPOINT
+#   wrangler secret put R2_ACCESS_KEY_ID
+#   wrangler secret put R2_SECRET_ACCESS_KEY
