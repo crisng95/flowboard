@@ -89,6 +89,35 @@ flowboard.bond     -> landing or redirect
 
 Keep DNSSEC off until DNS, Pages, Worker, and smoke tests are stable.
 
+## Cloudflare Pages Beta Portal
+
+The existing canvas app still depends on the local/FastAPI API surface. For the
+zero-cost beta, deploy the lightweight Cloud Portal mode first. It provides:
+
+- Supabase sign up / sign in.
+- Pairing token generation for the Chrome extension.
+- A beta smoke request button that calls `/api/beta/smoke-request` on the Worker.
+
+Cloudflare Pages build settings:
+
+```text
+Root directory: frontend
+Build command: npm run build
+Build output directory: dist
+```
+
+Set Pages environment variables:
+
+```text
+VITE_FLOWBOARD_CLOUD_PORTAL=1
+VITE_CONTROL_PLANE_URL=https://api.flowboard.bond
+VITE_SUPABASE_URL=<your Supabase project URL>
+VITE_SUPABASE_ANON_KEY=<your Supabase anon public key>
+```
+
+Do not use `SUPABASE_SERVICE_ROLE_KEY` in Pages. The portal only uses the anon
+key and calls Worker endpoints with the user's Supabase access token.
+
 ## Quota Policy For Beta
 
 - Heartbeat: 60-120 seconds.

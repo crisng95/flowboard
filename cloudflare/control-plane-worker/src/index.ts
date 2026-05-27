@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import { isAllowedOrigin, validateEnv } from './lib/env';
 import { ApiError, jsonError } from './lib/errors';
 import { assetRoutes } from './routes/assets';
+import { betaRoutes } from './routes/beta';
 import { extensionRoutes } from './routes/extension';
 import { healthRoutes } from './routes/health';
 import { pairingRoutes } from './routes/pairing';
@@ -35,6 +36,7 @@ app.notFound((c) => c.json({ error: 'NOT_FOUND', detail: 'Route not found' }, 40
 
 app.route('/api', healthRoutes);
 app.route('/api', assetRoutes);
+app.route('/api', betaRoutes);
 app.route('/api', pairingRoutes);
 app.route('/api', extensionRoutes);
 
