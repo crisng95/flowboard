@@ -1,14 +1,21 @@
 {
   "manifest_version": 3,
   "name": "Flowboard Bridge",
-  "version": "0.0.5",
-  "description": "Local bridge that proxies Flowboard agent requests to authenticated labs.google sessions.",
+  "version": "0.0.6",
+  "description": "Flowboard extension worker for authenticated Google Flow sessions.",
   "permissions": ["storage", "alarms", "tabs", "webRequest", "scripting", "declarativeNetRequest"],
   "host_permissions": [
     "https://aisandbox-pa.googleapis.com/*",
     "https://labs.google/*",
+    "https://flow-content.google/*",
+    "https://lh3.googleusercontent.com/*",
+    "https://*.r2.cloudflarestorage.com/*",
     "http://127.0.0.1:8101/*",
     "http://localhost:8101/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
   ],
   "background": {
     "service_worker": "background.js"

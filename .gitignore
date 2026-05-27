@@ -25,6 +25,12 @@ dist-ssr/
 .env
 .env.local
 .env.*.local
+.env.staging
+.env.production
+.env.development
+.env.test
+!.env.example
+!*.env.example
 
 # Data
 storage/

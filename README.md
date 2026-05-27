@@ -347,19 +347,11 @@ matching vocab from the system prompt.
 - **Frontend** — Vite + React 18 + ReactFlow 12 + Zustand 5 + TypeScript
   strict. Renders the infinite canvas, dialogs, sidebars. No direct
   calls to Google Flow.
-- **Agent** — FastAPI + SQLModel + SQLite. Owns the board state, runs
-  an in-process worker queue that proxies all generation requests
-  through the extension, and shells out to the configured LLM CLI
-  (Claude / Gemini / Codex — see *AI Providers* below) for vision +
-  auto-prompt + planner synthesis.
-- **Extension** — Chrome MV3. Lives on `labs.google/fx/tools/flow`,
-  intercepts Flow's API calls (multimodal-fetch in MAIN world for the
-  reCAPTCHA token), proxies them over a localhost WebSocket so the
-  agent never has to touch the browser cookie jar directly.
-- **Storage** — local-only. SQLite for graph + history, a
-  `storage/media/` folder for cached image / video bytes (lazy-fetched
-  from Flow's signed CDN URLs and re-served from the agent so they
-  outlive the 1-hour signed URL TTL).
+- **Agent / Control Plane** — FastAPI + SQLModel + SQLite/Supabase. Operates either as a central Cloud Control Plane or a local dev agent.
+- **Extension** — Chrome MV3. Lives on `labs.google/fx/tools/flow`, intercepts Flow's API calls (multimodal-fetch in MAIN world for the reCAPTCHA token). It supports two modes:
+  - **Cloud Worker Mode (Production — Recommended)**: The extension directly polls a central Control Plane via secure HTTP APIs. It claims jobs, calls Google Flow APIs using browser session headers, downloads generated fifeUrl media, obtains R2 presigned URLs, PUTs assets to Cloudflare R2, and reports completion to the cloud. **No local Python runtime, Chrome CDP port 9222, or WebSocket bridge is required for customers.**
+  - **Local Bridge Mode (Development Only)**: Connects to a local running Python agent over loopback WebSocket (`ws://127.0.0.1:9223`). Gated to local diagnostic/regression comparisons.
+- **Storage** — Cloudflare R2 object storage (production) or local cache + SQLite/Supabase. Used for board configurations, requests queues, and assets storage.
 
 ---
 

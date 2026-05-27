@@ -3,136 +3,563 @@
 <head>
   <meta charset="utf-8">
   <title>Flowboard Bridge</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      width: 260px;
-      background: #14161c;
-      color: #e6e8ec;
-      font-family: system-ui, sans-serif;
-      font-size: 12px;
-      line-height: 1.5;
+      width: 280px;
+      background: linear-gradient(135deg, #0f1115 0%, #151821 100%);
+      color: #e2e8f0;
+      font-family: 'Outfit', system-ui, sans-serif;
+      font-size: 13px;
+      line-height: 1.6;
       margin: 0;
       padding: 0;
+      overflow-x: hidden;
+    }
+
+    /* Premium Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(167, 139, 250, 0.4);
     }
 
     header {
       display: flex;
-      align-items: baseline;
-      gap: 6px;
-      padding: 12px 12px 8px;
-      border-bottom: 1px solid #23263a;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      background: rgba(15, 17, 21, 0.5);
+      backdrop-filter: blur(10px);
+    }
+
+    .header-left {
+      display: flex;
+      flex-direction: column;
     }
 
     .header-title {
-      font-size: 14px;
+      font-size: 15px;
       font-weight: 700;
-      color: #e6e8ec;
+      background: linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: 0.5px;
     }
 
     .header-version {
-      font-size: 11px;
-      color: #6b7280;
+      font-size: 10px;
+      color: #64748b;
+      margin-top: 1px;
     }
 
-    .section {
-      padding: 8px 12px;
-      border-bottom: 1px solid #23263a;
+    .btn-settings {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      cursor: pointer;
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .btn-settings:hover {
+      background: rgba(255, 255, 255, 0.06);
+      color: #f1f5f9;
+    }
+
+    .btn-settings svg {
+      width: 16px;
+      height: 16px;
+      fill: currentColor;
+    }
+
+    /* Views Layout */
+    #onboarding-view {
+      display: block;
+      padding: 16px;
+    }
+
+    #dashboard-view {
+      display: none;
+    }
+
+    .view-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #f1f5f9;
+      margin-bottom: 8px;
       display: flex;
       align-items: center;
       gap: 6px;
     }
 
-    .section-label {
-      color: #6b7280;
-      min-width: 52px;
-      flex-shrink: 0;
+    .view-desc {
+      font-size: 11.5px;
+      color: #94a3b8;
+      margin-bottom: 14px;
+      line-height: 1.4;
     }
 
-    .section-value {
-      color: #e6e8ec;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    /* Onboarding Fields */
+    .token-area-wrapper {
+      margin-bottom: 12px;
     }
 
-    .dot-connected { color: #6ee7b7; }
-    .dot-running   { color: #f5b301; }
-    .dot-offline   { color: #6b7280; }
-
-    .error-value {
-      color: #ef4444;
+    .token-area-wrapper label {
+      display: block;
       font-size: 11px;
+      color: #a78bfa;
+      margin-bottom: 4px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
 
-    .actions {
-      padding: 10px 12px;
+    textarea#cfg-token {
+      width: 100%;
+      height: 84px;
+      background: #1e293b;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      color: #f1f5f9;
+      padding: 8px 10px;
+      font-family: inherit;
+      font-size: 11.5px;
+      resize: none;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    textarea#cfg-token:focus {
+      border-color: #8b5cf6;
+      box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+    }
+
+    .manual-toggle {
+      text-align: center;
+      color: #64748b;
+      font-size: 11.5px;
+      text-decoration: underline;
+      cursor: pointer;
+      margin-top: 12px;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .manual-toggle:hover {
+      color: #a78bfa;
+    }
+
+    #manual-config-fields {
+      display: none;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    /* Form Fields */
+    .form-group {
+      margin-bottom: 10px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 11px;
+      color: #94a3b8;
+      margin-bottom: 4px;
+      font-weight: 500;
+    }
+
+    .form-group input, .form-group select {
+      width: 100%;
+      background: #1e293b;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      color: #f1f5f9;
+      padding: 6px 10px;
+      font-family: inherit;
+      font-size: 12px;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .form-group input:focus, .form-group select:focus {
+      border-color: #8b5cf6;
+      box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+    }
+
+    /* Buttons */
+    .btn-save {
+      background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+      color: white !important;
+      border: none !important;
+      font-weight: 600;
+      text-align: center !important;
+      padding: 8px 12px !important;
+      border-radius: 8px !important;
+      margin-top: 6px;
+      justify-content: center !important;
+    }
+
+    .btn-save:hover {
+      background: linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%) !important;
+    }
+
+    .btn-unpair {
+      background: rgba(239, 68, 68, 0.12) !important;
+      color: #f87171 !important;
+      border: 1px solid rgba(239, 68, 68, 0.2) !important;
+      font-weight: 600;
+      text-align: center !important;
+      padding: 7px 12px !important;
+      border-radius: 8px !important;
+      margin-top: 8px;
+      justify-content: center !important;
+      transition: background 0.2s, border-color 0.2s;
+    }
+
+    .btn-unpair:hover {
+      background: rgba(239, 68, 68, 0.18) !important;
+      border-color: rgba(239, 68, 68, 0.3) !important;
+    }
+
+    /* Dashboard Details */
+    .settings-view {
+      display: none;
+      padding: 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      background: rgba(15, 17, 21, 0.3);
+    }
+
+    .settings-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #a78bfa;
+      margin-bottom: 12px;
       display: flex;
-      flex-direction: column;
+      align-items: center;
       gap: 6px;
     }
 
-    button {
-      width: 100%;
-      padding: 6px 10px;
-      background: #23263a;
-      color: #a0a8c0;
-      border: 1px solid #2e3250;
-      border-radius: 8px;
-      font-family: system-ui, sans-serif;
-      font-size: 12px;
-      cursor: pointer;
-      text-align: left;
-      transition: background 0.12s, color 0.12s;
+    .section {
+      padding: 10px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
     }
 
-    button:hover {
-      background: #2a2e4a;
-      color: #e6e8ec;
+    .section-label {
+      color: #94a3b8;
+      font-weight: 500;
+      font-size: 12px;
+    }
+
+    .section-value {
+      color: #f1f5f9;
+      font-weight: 600;
+      max-width: 160px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: right;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+    }
+
+    .badge-offline   { background: rgba(100, 116, 139, 0.12); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.2); }
+    .badge-running   { background: rgba(245, 158, 11, 0.12); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.25); animation: pulse 2s infinite; }
+    .badge-connected { background: rgba(16, 185, 129, 0.12); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    .error-section {
+      background: rgba(239, 68, 68, 0.06);
+      border-bottom: 1px solid rgba(239, 68, 68, 0.15);
+      padding: 10px 16px;
+    }
+
+    .error-title {
+      font-size: 11px;
+      color: #f87171;
+      font-weight: 600;
+      margin-bottom: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .error-value {
+      color: #fca5a5;
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .onboarding-error {
+      background: rgba(239, 68, 68, 0.08);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: #f87171;
+      font-size: 12px;
+      margin-bottom: 12px;
+      display: none;
+    }
+
+    .actions {
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    button.ui-btn {
+      width: 100%;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.04);
+      color: #cbd5e1;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 12.5px;
+      font-weight: 500;
+      cursor: pointer;
+      text-align: left;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
+    }
+
+    button.ui-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #f8fafc;
+      border-color: rgba(255, 255, 255, 0.1);
+    }
+
+    button.ui-btn svg {
+      width: 14px;
+      height: 14px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
     }
 
     button#btn-toggle.reconnect {
-      color: #6ee7b7;
-      border-color: #1e3a32;
+      color: #34d399;
+      border-color: rgba(16, 185, 129, 0.2);
+      background: rgba(16, 185, 129, 0.05);
+    }
+
+    button#btn-toggle.reconnect:hover {
+      background: rgba(16, 185, 129, 0.08);
+      border-color: rgba(16, 185, 129, 0.3);
     }
 
     button#btn-toggle.disconnect {
-      color: #ef4444;
-      border-color: #3a1e1e;
+      color: #f87171;
+      border-color: rgba(239, 68, 68, 0.2);
+      background: rgba(239, 68, 68, 0.04);
+    }
+
+    button#btn-toggle.disconnect:hover {
+      background: rgba(239, 68, 68, 0.08);
+      border-color: rgba(239, 68, 68, 0.3);
     }
   </style>
 </head>
 <body>
   <header>
-    <span class="header-title">Flowboard Bridge</span>
-    <span class="header-version">v0.0.2</span>
+    <div class="header-left">
+      <span class="header-title">Flowboard Bridge</span>
+      <span class="header-version">v0.0.6</span>
+    </div>
+    <button class="btn-settings" id="btn-settings-toggle" title="Cloud Settings" style="display:none">
+      <svg viewBox="0 0 24 24">
+        <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
+      </svg>
+    </button>
   </header>
 
-  <div class="section">
-    <span class="section-label">Status</span>
-    <span class="section-value" id="status-dot">○ offline</span>
+  <!-- 1. ONBOARDING / PAIRING VIEW -->
+  <div id="onboarding-view">
+    <div class="view-title">Setup Flowboard ✨</div>
+    <div class="view-desc">Connect this extension to your cloud Control Plane to execute generation jobs seamlessly.</div>
+    
+    <div class="onboarding-error" id="onboarding-error-box"></div>
+
+    <div class="token-area-wrapper">
+      <label for="cfg-token">Paste Pairing Token</label>
+      <textarea id="cfg-token" placeholder="Paste the secure Pairing Token generated by your Flowboard Web App..."></textarea>
+    </div>
+
+    <button class="ui-btn btn-save" id="btn-pair">
+      Pair & Connect
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+    </button>
+
+    <div class="manual-toggle" id="btn-manual-toggle">Advanced Manual Setup</div>
+
+    <!-- Collapsible Advanced Manual Form -->
+    <div id="manual-config-fields">
+      <div class="form-group">
+        <label for="cfg-mode">Execution Mode</label>
+        <select id="cfg-mode">
+          <option value="cloud-worker">Cloud Worker (Production)</option>
+          <option value="local-bridge">Local Bridge (Dev/Staging)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="cfg-url">Control Plane URL</label>
+        <input type="text" id="cfg-url" placeholder="https://api.flowboard.app">
+      </div>
+
+      <div class="form-group">
+        <label for="cfg-client-id">Client ID</label>
+        <input type="text" id="cfg-client-id" placeholder="Extension pairing client UUID">
+      </div>
+
+      <div class="form-group">
+        <label for="cfg-secret">Pairing Secret</label>
+        <input type="password" id="cfg-secret" placeholder="Secure pairing secret">
+      </div>
+
+      <button class="ui-btn btn-save" id="btn-save-manual">
+        Save Manual Config
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+      </button>
+    </div>
   </div>
 
-  <div class="section">
-    <span class="section-label">Token</span>
-    <span class="section-value" id="token-row">none</span>
-  </div>
+  <!-- 2. DASHBOARD VIEW (FULLY PAIRED) -->
+  <div id="dashboard-view">
+    <!-- Collapsible Settings Panel Inside Dashboard -->
+    <div class="settings-view" id="settings-view">
+      <div class="settings-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+          <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+          <line x1="6" y1="6" x2="6.01" y2="6"></line>
+          <line x1="6" y1="18" x2="6.01" y2="18"></line>
+        </svg>
+        Cloud Control Plane Config
+      </div>
+      
+      <div class="form-group">
+        <label for="dash-mode">Execution Mode</label>
+        <select id="dash-mode">
+          <option value="cloud-worker">Cloud Worker (Production)</option>
+          <option value="local-bridge">Local Bridge (Dev/Staging)</option>
+        </select>
+      </div>
 
-  <div class="section">
-    <span class="section-label">Requests</span>
-    <span class="section-value" id="stats-row">0 · ✓ 0 · ✗ 0</span>
-  </div>
+      <div class="form-group">
+        <label for="dash-url">Control Plane URL</label>
+        <input type="text" id="dash-url" placeholder="https://api.flowboard.app">
+      </div>
 
-  <div class="section" id="error-section" style="display:none">
-    <span class="section-label">Error</span>
-    <span class="section-value error-value" id="error-row"></span>
-  </div>
+      <div class="form-group">
+        <label for="dash-client-id">Client ID</label>
+        <input type="text" id="dash-client-id" placeholder="Extension pairing client UUID" disabled>
+      </div>
 
-  <div class="actions">
-    <button id="btn-flow-tab">Open Flow tab</button>
-    <button id="btn-refresh">Refresh token</button>
-    <button id="btn-toggle" class="disconnect">Disconnect</button>
+      <div class="form-group">
+        <label for="dash-secret">Pairing Secret</label>
+        <input type="password" id="dash-secret" placeholder="••••••••••••••••" disabled>
+      </div>
+
+      <button class="ui-btn btn-save" id="btn-save-dash-settings">
+        Save Config
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+      </button>
+
+      <button class="ui-btn btn-unpair" id="btn-unpair-device">
+        Unpair & Disconnect Device
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg>
+      </button>
+    </div>
+
+    <!-- Active Dashboard UI -->
+    <div class="section">
+      <span class="section-label">Status</span>
+      <span class="status-badge badge-offline" id="status-badge">offline</span>
+    </div>
+
+    <div class="section">
+      <span class="section-label">Active Mode</span>
+      <span class="section-value" id="mode-row">local-bridge</span>
+    </div>
+
+    <div class="section">
+      <span class="section-label">Bearer Token</span>
+      <span class="section-value" id="token-row">none</span>
+    </div>
+
+    <div class="section">
+      <span class="section-label">Stats (Total·✓·✗)</span>
+      <span class="section-value" id="stats-row">0 · 0 · 0</span>
+    </div>
+
+    <div class="error-section" id="error-section" style="display:none">
+      <div class="error-title">Last Worker Error</div>
+      <div class="error-value" id="error-row"></div>
+    </div>
+
+    <!-- Diagnostics Results Area -->
+    <div id="diagnostics-results-view" style="display:none; padding: 10px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.03); background: rgba(167, 139, 250, 0.02);">
+      <div style="font-size: 11px; color: #a78bfa; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Diagnostics Status</div>
+      <div id="diagnostics-log" style="font-size: 11.5px; line-height: 1.5; color: #cbd5e1; font-family: monospace; white-space: pre-wrap;"></div>
+    </div>
+
+    <div class="actions">
+      <button class="ui-btn" id="btn-flow-tab">
+        Open Google Flow Tab
+        <svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+      </button>
+      <button class="ui-btn" id="btn-refresh">
+        Refresh Google Session
+        <svg viewBox="0 0 24 24"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path></svg>
+      </button>
+      <button class="ui-btn" id="btn-diagnostics" style="border-color: rgba(167, 139, 250, 0.2); background: rgba(167, 139, 250, 0.02); color: #c084fc;">
+        <span>Run Diagnostics</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+      </button>
+      <button class="ui-btn disconnect" id="btn-toggle">
+        <span>Disconnect</span>
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="9" x2="15" y2="15"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>
+      </button>
+    </div>
   </div>
 
   <script src="popup.js"></script>

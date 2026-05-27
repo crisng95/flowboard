@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from flowboard.config import WS_HOST
 from flowboard.db import get_session, init_db
 from flowboard.db.models import Request
-from flowboard.routes import activity, auth, boards, chat, edges, llm, media, nodes, plans, projects, prompt, upload, vision
+from flowboard.routes import activity, auth, boards, chat, edges, llm, media, nodes, plans, projects, prompt, upload, vision, control_plane
 from flowboard.routes import concepta
 from flowboard.routes import references as references_route
 from flowboard.routes import requests as requests_route
@@ -101,6 +101,7 @@ app.include_router(auth.router)
 app.include_router(llm.router)
 app.include_router(activity.router)
 app.include_router(concepta.router)
+app.include_router(control_plane.router)
 
 
 @app.get("/api/health")
@@ -110,6 +111,11 @@ def health() -> dict:
         "extension_connected": flow_client.connected,
         "ws_stats": flow_client.ws_stats,
     }
+
+
+@app.get("/health")
+def root_health() -> dict:
+    return {"ok": True}
 
 
 @app.post("/api/ext/callback")

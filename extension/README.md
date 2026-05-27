@@ -1,33 +1,42 @@
-# Flowboard Bridge (Chrome MV3)
+# Flowboard Bridge (Chrome Extension MV3)
 
-Local extension that proxies Flowboard agent requests to authenticated labs.google sessions.
+Flowboard Bridge is a Google Chrome extension serving as the core execution worker for Google Flow image and video generation tasks. It leverages the user's active browser session on `labs.google/fx/tools/flow` to generate assets, bypass complex Google UI layers, handle reCAPTCHA Enterprise challenges natively, download secure GCS assets, and upload them back to Flowboard Control Plane.
 
-## Install
+## Key Features
 
-1. Open `chrome://extensions`.
-2. Enable **Developer mode** (top-right toggle).
-3. Click **Load unpacked** and select this folder.
+- **Dual Modes**: Supports both `Cloud Worker` (production cloud deployment) and `Local Bridge` (local FastAPI agent development).
+- **Session Capture**: Automatically intercepts active `ya29.*` Bearer credentials from `labs.google`.
+- **Captcha Solver**: Passes CAPTCHA Enterprise challenges natively via mainstream-world javascript injection (`injected.js`).
+- **Asset Processing**: Validates sizes (up to 25MB), checks whitelisted MIME types (`image/png`, `image/jpeg`, `video/mp4`), calculates Web Crypto SHA-256 hashes, and uploads chunks directly to Cloudflare R2 via presigned URLs.
+- **Fail-Safe Loops**: Built-in empty queue backoff, automatic keepalives, and recurring background leases.
 
-## How it works
+## Installation
 
-- The service worker connects to `ws://127.0.0.1:9223` automatically when the agent is running.
-- On first sign-in at `labs.google/fx/tools/flow` the `Authorization: Bearer ya29.*` token is captured automatically from outgoing request headers.
-- Responses to agent `api_request` commands are sent via HTTP POST to `http://127.0.0.1:8101/api/ext/callback` with an `X-Callback-Secret` header (secret supplied by the agent on connect). WS fallback is used if HTTP fails.
-- A keepalive `ping` is sent every ~24 s; disconnections trigger an automatic reconnect in ~5 s.
-- When an `api_request` includes `captchaAction`, the extension solves a reCAPTCHA Enterprise challenge via the injected MAIN-world script (`injected.js`) running on the Flow tab, then patches the token into the request body before forwarding.
-- `trpc_request` commands are proxied directly to `https://labs.google/` with the captured Bearer token and browser credentials.
+1. Open `chrome://extensions` in Google Chrome.
+2. Enable **Developer mode** via the toggle in the top-right corner.
+3. Click **Load unpacked** in the top-left and select this `./extension` directory.
 
-## Content script + injected script
+## Configuration & Usage
 
-`content.js` runs at `document_start` on `labs.google/fx/tools/flow*` pages. It injects `injected.js` into the MAIN world so it can reach `window.grecaptcha.enterprise`. The two scripts communicate via `CustomEvent` (`GET_CAPTCHA` / `CAPTCHA_RESULT`).
+Click the extension icon to view the status, check captured token health, review total stats, and manage modes.
 
-## Popup
+### 1. Cloud Worker Mode (Production - Recommended)
+- Click the **Gear (⚙)** icon in the header to open settings.
+- Select **Cloud Worker (Production)** mode.
+- Enter your deployed **Control Plane URL** (e.g., `https://api.yourflowboard.com`).
+- Input your unique **Client ID** and **Pairing Secret** generated from your Flowboard Cloud Dashboard.
+- Click **Save Config**. The service worker will immediately begin polling the cloud queue and processing generation tasks asynchronously.
 
-Click the extension icon to see connection status, token age, request counters, and buttons to open the Flow tab or force a token refresh.
+### 2. Local Bridge Mode (Development Only)
+- Select **Local Bridge (Dev/Staging)** mode in settings.
+- The extension will automatically connect to `ws://127.0.0.1:9223` and receive commands from your local running Python agent.
 
-## Out of scope (this version)
+## Unit Testing
 
-- Side panel
-- Agent-side TRPC media URL forwarding listener
+A lightweight, robust unit test suite is included in `extension/tests/run_tests.js`. It runs natively on Node.js without heavy browser overhead by mocking the browser API layer and Web Crypto APIs.
 
-See `docs/PLAN.md` for planned additions.
+To execute the tests, run:
+```bash
+node extension/tests/run_tests.js
+```
+This tests core request routing, client credentials, Flow project IDs, image and video payload structures, magic byte sniffing, size limits, and R2 signed upload flows.
