@@ -10,13 +10,11 @@
     "https://flow-content.google/*",
     "https://lh3.googleusercontent.com/*",
     "https://*.r2.cloudflarestorage.com/*",
+    "https://api.flowboard.bond/*",
     "http://127.0.0.1:8101/*",
     "http://localhost:8101/*"
   ],
-  "optional_host_permissions": [
-    "https://*/*",
-    "http://*/*"
-  ],
+  "optional_host_permissions": [],
   "background": {
     "service_worker": "background.js"
   },

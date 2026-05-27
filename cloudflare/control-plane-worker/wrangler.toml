@@ -3,7 +3,7 @@ main = "src/index.ts"
 compatibility_date = "2026-05-27"
 
 routes = [
-  { pattern = "api.flowboard.bond/*", custom_domain = true }
+  { pattern = "api.flowboard.bond", custom_domain = true }
 ]
 
 [vars]

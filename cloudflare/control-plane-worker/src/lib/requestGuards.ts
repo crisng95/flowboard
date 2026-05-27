@@ -58,7 +58,9 @@ export async function requireClaimedRequest(env: Env, requestId: string, clientI
   });
   const req = rows[0];
   if (!req) throw new ApiError(403, 'REQUEST_NOT_CLAIMED_BY_CLIENT', 'Request is not claimed by this extension client');
-  if (req.status !== 'running') throw new ApiError(409, 'REQUEST_NOT_RUNNING', `Request status is ${req.status}`);
+  if (req.status !== 'claimed' && req.status !== 'running') {
+    throw new ApiError(409, 'REQUEST_NOT_RUNNING', `Request status is ${req.status}`);
+  }
   const expiry = req.lease_expires_at ? Date.parse(req.lease_expires_at) : 0;
   if (!expiry || expiry <= Date.now()) throw new ApiError(409, 'LEASE_EXPIRED', 'Request lease expired');
   return req;
