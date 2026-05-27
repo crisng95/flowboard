@@ -830,9 +830,36 @@ function broadcastStatus() {
 // --- Cloud Worker Mode -----------------------------------------------------
 
 function formatWorkerError(error, fallback) {
+  const stage = error?.stage ? `[${error.stage}] ` : '';
   const detail = error?.detail ? `: ${String(error.detail).slice(0, 220)}` : '';
   const message = error?.message || fallback || 'WORKER_ERROR';
-  return `${message}${detail}`.slice(0, 300);
+  return `${stage}${sanitizeWorkerError(`${message}${detail}`)}`.slice(0, 300);
+}
+
+function sanitizeWorkerError(value) {
+  return String(value || '')
+    .replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
+    .replace(/ya29\.[A-Za-z0-9._-]+/g, 'ya29.[redacted]')
+    .replace(/([?&](?:X-Amz-|GoogleAccessId|Expires|Signature|Policy|Key-Pair-Id)[^\s]*)/gi, '?[signed-url-redacted]')
+    .replace(/https:\/\/[^\s]+\?(?:X-Amz-|GoogleAccessId|Expires|Signature|Policy|Key-Pair-Id)[^\s]*/gi, '[signed-url-redacted]');
+}
+
+function stageError(stage, error, fallback) {
+  if (error?.stage) return error;
+  const wrapped = new Error(sanitizeWorkerError(error?.message || fallback || 'Stage failed'));
+  wrapped.name = 'FlowboardStageError';
+  wrapped.stage = stage;
+  wrapped.cause = error || null;
+  if (error?.detail) wrapped.detail = sanitizeWorkerError(error.detail);
+  return wrapped;
+}
+
+async function withStage(stage, work, fallback) {
+  try {
+    return await work();
+  } catch (error) {
+    throw stageError(stage, error, fallback);
+  }
 }
 function startCloudWorkerLoop() {
   if (cloudConfig?.mode !== 'cloud-worker') return;
@@ -853,7 +880,11 @@ async function pollCloudWorkerOnce() {
     });
     let job = null;
     try {
-      job = await cloud.claim(cloudConfig.provider || 'flow', cloudConfig.leaseDurationSec || 60);
+      job = await withStage(
+        'ERR_STAGE_CLAIM',
+        () => cloud.claim(cloudConfig.provider || 'flow', cloudConfig.leaseDurationSec || 60),
+        'Claim request failed'
+      );
     } catch (error) {
       if (error?.name === 'FlowboardNoJobError') return;
       throw error;
@@ -903,13 +934,21 @@ async function runCloudFlowJob(cloud, job) {
     } catch (error) {
       throw new Error('progress/submitting failed: ' + formatWorkerError(error));
     }
-    const project = await flowApi.createProject(`flowboard-${String(requestId).slice(0, 8)}`);
-    const generated = await flowApi.generateImage(prompt, project.projectId, {
-      paygateTier: cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
-      imageModel: cloudConfig?.imageModel || null,
-    });
+    const project = await withStage(
+      'ERR_STAGE_CREATE_PROJECT',
+      () => flowApi.createProject(`flowboard-${String(requestId).slice(0, 8)}`),
+      'Google Flow project creation failed'
+    );
+    const generated = await withStage(
+      'ERR_STAGE_GENERATE',
+      () => flowApi.generateImage(prompt, project.projectId, {
+        paygateTier: cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
+        imageModel: cloudConfig?.imageModel || null,
+      }),
+      'Google Flow generation failed'
+    );
     const entries = generated.mediaEntries || [];
-    if (!entries.length) throw new Error('Flow API returned no media entries');
+    if (!entries.length) throw stageError('ERR_STAGE_GENERATE', new Error('Flow API returned no media entries'));
     try {
       await cloud.progress(requestId, 'uploading', 80);
     } catch (error) {
@@ -917,11 +956,23 @@ async function runCloudFlowJob(cloud, job) {
     }
     const assets = [];
     for (let i = 0; i < entries.length; i++) {
-      if (!entries[i]?.url) throw new Error(`Media entry ${i} has no fifeUrl`);
-      const mediaAsset = await FlowboardAssetUtils.fetchMediaBytes(entries[i].url);
-      assets.push(await FlowboardAssetUtils.uploadGeneratedAsset(cloud, mediaAsset, userId, requestId, i, prompt));
+      if (!entries[i]?.url) throw stageError('ERR_STAGE_DOWNLOAD', new Error(`Media entry ${i} has no fifeUrl`));
+      const mediaAsset = await withStage(
+        'ERR_STAGE_DOWNLOAD',
+        () => FlowboardAssetUtils.fetchMediaBytes(entries[i].url),
+        'Media download failed'
+      );
+      assets.push(await withStage(
+        'ERR_STAGE_R2_PUT',
+        () => FlowboardAssetUtils.uploadGeneratedAsset(cloud, mediaAsset, userId, requestId, i, prompt),
+        'Asset upload failed'
+      ));
     }
-    await cloud.complete(requestId, { provider: 'flow', media_count: assets.length, project_id: project.projectId }, assets);
+    await withStage(
+      'ERR_STAGE_COMPLETE',
+      () => cloud.complete(requestId, { provider: 'flow', media_count: assets.length, project_id: project.projectId }, assets),
+      'Complete request failed'
+    );
     metrics.successCount++;
     metrics.lastError = null;
     chrome.storage.local.set({ metrics });

@@ -8,6 +8,15 @@
     'https://lh3.googleusercontent.com/',
   ];
 
+  class FlowboardAssetError extends Error {
+    constructor(stage, message, cause) {
+      super(message || 'Asset pipeline failed');
+      this.name = 'FlowboardAssetError';
+      this.stage = stage;
+      this.cause = cause || null;
+    }
+  }
+
   function assertAllowedMediaUrl(url) {
     if (typeof url !== 'string' || !ALLOWED_MEDIA_PREFIXES.some((prefix) => url.startsWith(prefix))) {
       throw new Error('Disallowed media URL');
@@ -70,17 +79,27 @@
   async function uploadGeneratedAsset(cloudClient, asset, userId, requestId, index, promptSnapshot) {
     const ext = asset.extension || extensionForMime(asset.mimeType);
     const storageKey = `users/${userId}/flow/${requestId}/output-${index}.${ext}`;
-    const signed = await cloudClient.signUpload(storageKey, asset.mimeType, 900);
-    if (!signed?.url) {
-      throw new Error('Control Plane did not return signed upload URL');
+    let signed = null;
+    try {
+      signed = await cloudClient.signUpload(storageKey, asset.mimeType, 900);
+    } catch (error) {
+      throw new FlowboardAssetError('ERR_STAGE_SIGN_UPLOAD', error?.message || 'Failed to sign upload URL', error);
     }
-    const putResp = await fetch(signed.url, {
-      method: 'PUT',
-      headers: { 'Content-Type': asset.mimeType },
-      body: asset.bytes,
-    });
+    if (!signed?.url) {
+      throw new FlowboardAssetError('ERR_STAGE_SIGN_UPLOAD', 'Control Plane did not return signed upload URL');
+    }
+    let putResp = null;
+    try {
+      putResp = await fetch(signed.url, {
+        method: 'PUT',
+        headers: { 'Content-Type': asset.mimeType },
+        body: asset.bytes,
+      });
+    } catch (error) {
+      throw new FlowboardAssetError('ERR_STAGE_R2_PUT', error?.message || 'R2 upload failed', error);
+    }
     if (!putResp.ok) {
-      throw new Error(`R2 upload HTTP ${putResp.status}`);
+      throw new FlowboardAssetError('ERR_STAGE_R2_PUT', `R2 upload HTTP ${putResp.status}`);
     }
     return {
       source_provider: 'flow',
@@ -101,5 +120,6 @@
     sha256Hex,
     extensionForMime,
     uploadGeneratedAsset,
+    FlowboardAssetError,
   };
 })(self);

@@ -58,6 +58,7 @@ loadModule('asset_utils.js');
 // --- Simple Test Framework ---
 let testsRun = 0;
 let testsFailed = 0;
+let asyncChain = Promise.resolve();
 
 function test(name, fn) {
   testsRun++;
@@ -74,15 +75,17 @@ function test(name, fn) {
 
 async function testAsync(name, fn) {
   testsRun++;
-  try {
-    mockFetchHandler = null;
-    await fn();
-    console.log(`[PASS] ${name}`);
-  } catch (err) {
-    testsFailed++;
-    console.error(`[FAIL] ${name}`);
-    console.error(err);
-  }
+  asyncChain = asyncChain.then(async () => {
+    try {
+      mockFetchHandler = null;
+      await fn();
+      console.log(`[PASS] ${name}`);
+    } catch (err) {
+      testsFailed++;
+      console.error(`[FAIL] ${name}`);
+      console.error(err);
+    }
+  });
 }
 
 function assert(condition, msg) {
@@ -433,19 +436,71 @@ testAsync('FlowboardAssetUtils uploadGeneratedAsset flow', async () => {
   assertEquals(assetRow.prompt_snapshot, 'a test prompt');
 });
 
+testAsync('FlowboardAssetUtils uploadGeneratedAsset sign-upload stage errors', async () => {
+  const utils = global.FlowboardAssetUtils;
+  const mockClient = {
+    signUpload: async () => {
+      throw new Error('/api/extension/sign-upload failed');
+    },
+  };
+  const dummyAsset = {
+    bytes: new Uint8Array([1]),
+    mimeType: 'image/png',
+    byteSize: 1,
+    checksum: 'checksum',
+    extension: 'png',
+  };
+
+  try {
+    await utils.uploadGeneratedAsset(mockClient, dummyAsset, 'user-1', 'job-1', 0, 'prompt');
+  } catch (err) {
+    assertEquals(err.name, 'FlowboardAssetError');
+    assertEquals(err.stage, 'ERR_STAGE_SIGN_UPLOAD');
+    return;
+  }
+  throw new Error('Expected sign-upload stage error');
+});
+
+testAsync('FlowboardAssetUtils uploadGeneratedAsset R2 PUT stage errors', async () => {
+  const utils = global.FlowboardAssetUtils;
+  const mockClient = {
+    signUpload: async () => ({ url: 'https://r2.cloudflarestorage.com/signed-put-url' }),
+  };
+  mockFetchHandler = async () => new MockResponse(403, 'Forbidden');
+  const dummyAsset = {
+    bytes: new Uint8Array([1]),
+    mimeType: 'image/png',
+    byteSize: 1,
+    checksum: 'checksum',
+    extension: 'png',
+  };
+
+  try {
+    await utils.uploadGeneratedAsset(mockClient, dummyAsset, 'user-1', 'job-1', 0, 'prompt');
+  } catch (err) {
+    assertEquals(err.name, 'FlowboardAssetError');
+    assertEquals(err.stage, 'ERR_STAGE_R2_PUT');
+    assert(err.message.includes('403'), 'R2 status should be preserved');
+    return;
+  }
+  throw new Error('Expected R2 PUT stage error');
+});
+
 // ============================================================================
 // RUN RESULTS SUMMARY
 // ============================================================================
 
-console.log('\n======================================');
-console.log(`Tests Run: ${testsRun}`);
-console.log(`Tests Passed: ${testsRun - testsFailed}`);
-console.log(`Tests Failed: ${testsFailed}`);
-console.log('======================================');
+asyncChain.then(() => {
+  console.log('\n======================================');
+  console.log(`Tests Run: ${testsRun}`);
+  console.log(`Tests Passed: ${testsRun - testsFailed}`);
+  console.log(`Tests Failed: ${testsFailed}`);
+  console.log('======================================');
 
-if (testsFailed > 0) {
-  process.exit(1);
-} else {
-  console.log('All extension tests passed successfully!');
-  process.exit(0);
-}
+  if (testsFailed > 0) {
+    process.exit(1);
+  } else {
+    console.log('All extension tests passed successfully!');
+    process.exit(0);
+  }
+});
