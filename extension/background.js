@@ -8,7 +8,7 @@ importScripts('cloud_client.js', 'asset_utils.js', 'flow_api.js');
  */
 
 const AGENT_WS_URL  = 'ws://127.0.0.1:9223';
-const CALLBACK_URL  = 'https://api.flowboard.bond/api/ext/callback';
+const CALLBACK_URL  = 'http://127.0.0.1:8101/api/ext/callback';
 const FALLBACK_SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
 
 let ws               = null;
