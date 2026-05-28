@@ -69,9 +69,11 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  function persistMedia(newMediaId: string, aspectRatio?: string) {
+  function persistMedia(newMediaId: string, aspectRatio?: string, assetId?: string, storageKey?: string) {
     useBoardStore.getState().updateNodeData(rfId, {
       mediaId: newMediaId,
+      assetId,
+      storageKey,
       status: "done",
       aiBrief: undefined,
       aspectRatio,
@@ -86,6 +88,8 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
         status: "done",
         data: {
           mediaId: newMediaId,
+          assetId: assetId ?? null,
+          storageKey: storageKey ?? null,
           aiBrief: null,
           aspectRatio,
           renderedAt: new Date().toISOString(),
@@ -108,7 +112,7 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
       }
       const dbId = parseInt(rfId, 10);
       const resp = await uploadImage(file, projectId, isNaN(dbId) ? undefined : dbId);
-      persistMedia(resp.media_id, resp.aspect_ratio);
+      persistMedia(resp.media_id, resp.aspect_ratio, resp.asset_id, resp.storage_key);
     } catch (err) {
       setError(err instanceof Error ? err.message : "upload failed");
     } finally {
@@ -573,10 +577,14 @@ function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
   const [picker, setPicker] = useState<VariantPickerState | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  function persistMedia(newMediaId: string, aspectRatio?: string) {
+  function persistMedia(newMediaId: string, aspectRatio?: string, assetId?: string, storageKey?: string) {
     useBoardStore.getState().updateNodeData(rfId, {
       mediaId: newMediaId,
       mediaIds: undefined,
+      assetId,
+      storageKey,
+      assetIds: undefined,
+      storageKeys: undefined,
       variantCount: 1,
       status: "done",
       aiBrief: undefined,
@@ -592,6 +600,10 @@ function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
         data: {
           mediaId: newMediaId,
           mediaIds: null,
+          assetId: assetId ?? null,
+          storageKey: storageKey ?? null,
+          assetIds: null,
+          storageKeys: null,
           variantCount: 1,
           aiBrief: null,
           aspectRatio,
@@ -613,7 +625,7 @@ function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
       }
       const dbId = parseInt(rfId, 10);
       const resp = await uploadImage(file, projectId, isNaN(dbId) ? undefined : dbId);
-      persistMedia(resp.media_id, resp.aspect_ratio);
+      persistMedia(resp.media_id, resp.aspect_ratio, resp.asset_id, resp.storage_key);
     } catch (err) {
       setError(err instanceof Error ? err.message : "upload failed");
     } finally {
@@ -1045,10 +1057,14 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
   const fileInputRef = useRef<HTMLInputElement>(null);
   const refInputRef = useRef<HTMLInputElement>(null);
 
-  function persistMedia(newMediaId: string, aspectRatio?: string) {
+  function persistMedia(newMediaId: string, aspectRatio?: string, assetId?: string, storageKey?: string) {
     useBoardStore.getState().updateNodeData(rfId, {
       mediaId: newMediaId,
       mediaIds: [newMediaId],
+      assetId,
+      storageKey,
+      assetIds: assetId ? [assetId] : undefined,
+      storageKeys: storageKey ? [storageKey] : undefined,
       variantCount: 1,
       status: "done",
       aiBrief: undefined,
@@ -1064,6 +1080,10 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
         data: {
           mediaId: newMediaId,
           mediaIds: [newMediaId],
+          assetId: assetId ?? null,
+          storageKey: storageKey ?? null,
+          assetIds: assetId ? [assetId] : null,
+          storageKeys: storageKey ? [storageKey] : null,
           variantCount: 1,
           aiBrief: null,
           aspectRatio,
@@ -1085,7 +1105,7 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
       }
       const dbId = parseInt(rfId, 10);
       const resp = await uploadImage(file, projectId, isNaN(dbId) ? undefined : dbId);
-      persistMedia(resp.media_id, resp.aspect_ratio);
+      persistMedia(resp.media_id, resp.aspect_ratio, resp.asset_id, resp.storage_key);
     } catch (err) {
       setError(err instanceof Error ? err.message : "upload failed");
     } finally {
@@ -1110,7 +1130,7 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
         projectId,
         isNaN(dbId) ? undefined : dbId,
       );
-      persistMedia(resp.media_id, resp.aspect_ratio);
+      persistMedia(resp.media_id, resp.aspect_ratio, resp.asset_id, resp.storage_key);
       setLinkMode(false);
       setLinkValue("");
     } catch (err) {

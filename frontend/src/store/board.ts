@@ -43,6 +43,8 @@ export interface StoryboardShot {
   prompt: string;
   parentShotIdx: number | null;
   mediaId?: string;
+  assetId?: string;
+  storageKey?: string;
   status: ShotStatus;
   error?: string;
 }
@@ -63,6 +65,8 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   // keeping the slot preserves alignment with the upstream image's
   // variants for poster/edge-pin lookups.
   mediaIds?: (string | null)[];
+  assetIds?: (string | null)[];
+  storageKeys?: (string | null)[];
   flowMediaId?: string;
   flowMediaIds?: (string | null)[];
   // Per-slot error code, aligned to `mediaIds` indexing. `null` for
@@ -1459,6 +1463,9 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       response = await apiGroupNodes({
         board_id: boardId,
         child_ids: selected.map((n) => parseInt(n.id, 10)).filter((n) => !isNaN(n)),
+        child_positions: selected
+          .map((n) => ({ id: parseInt(n.id, 10), x: Math.round(n.position.x), y: Math.round(n.position.y) }))
+          .filter((p) => !isNaN(p.id)),
         title: "Group",
         x: groupX,
         y: groupY,

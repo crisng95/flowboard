@@ -413,6 +413,13 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
         const payload = {
           board_id: resolveToUuid(body.board_id),
           child_ids: body.child_ids.map(resolveToUuid),
+          child_positions: Array.isArray(body.child_positions)
+            ? body.child_positions.map((p: { id: number; x: number; y: number }) => ({
+                id: resolveToUuid(p.id),
+                x: p.x,
+                y: p.y,
+              }))
+            : undefined,
           title: body.title,
           color: body.color,
           locked: body.locked,
@@ -863,6 +870,7 @@ export function deleteNode(id: number): Promise<{ ok: true; deleted_edges: numbe
 export interface GroupCreateInput {
   board_id: number;
   child_ids: number[];
+  child_positions?: Array<{ id: number; x: number; y: number }>;
   title?: string;
   color?: string;
   locked?: boolean;
@@ -1142,6 +1150,8 @@ export function mediaUrl(mediaId: string): string {
 
 export interface UploadResponse {
   media_id: string;
+  asset_id?: string;
+  storage_key?: string;
   mime: string;
   size: number;
   // Detected by the agent from the image bytes; one of

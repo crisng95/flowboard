@@ -1103,6 +1103,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             // single-tile UI consumers.
             const flowMediaIds = (req.result["media_ids"] as (string | null)[] | undefined) ?? [];
             const mediaIds = (req.result["media_urls"] as (string | null)[] | undefined) ?? flowMediaIds;
+            const assetIds = (req.result["asset_ids"] as (string | null)[] | undefined) ?? [];
             const mediaId = mediaIds.find(
               (m): m is string => typeof m === "string" && m.length > 0,
             );
@@ -1146,6 +1147,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               status: "done",
               mediaId,
               mediaIds,
+              assetIds,
               flowMediaId,
               flowMediaIds,
               slotErrors: slotErrors ?? undefined,
@@ -1177,6 +1179,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                   prompt: opts.prompt,
                   mediaId,
                   mediaIds,
+                  assetIds,
                   flowMediaId,
                   flowMediaIds,
                   slotErrors: slotErrors ?? null,
@@ -1209,6 +1212,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                 for (let idx = 1; idx < mediaIds.length; idx += 1) {
                   const extraMediaId = mediaIds[idx];
                   const extraFlowMediaId = flowMediaIds[idx];
+                  const extraAssetId = assetIds[idx];
                   if (typeof extraMediaId !== "string" || !extraMediaId) continue;
                   try {
                     const extraDto = await createNode({
@@ -1219,6 +1223,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                       data: {
                         title: `${rootTitle} ${idx + 1}`,
                         mediaId: extraMediaId,
+                        assetId: typeof extraAssetId === "string" ? extraAssetId : undefined,
                         flowMediaId: typeof extraFlowMediaId === "string" ? extraFlowMediaId : extraMediaId,
                         aspectRatio: opts.aspectRatio,
                         renderedAt,
@@ -1238,6 +1243,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                             ?? `${rootTitle} ${idx + 1}`,
                           status: "done",
                           mediaId: extraMediaId,
+                          assetId: typeof extraAssetId === "string" ? extraAssetId : undefined,
                           flowMediaId: typeof extraFlowMediaId === "string" ? extraFlowMediaId : extraMediaId,
                           aspectRatio: opts.aspectRatio,
                           renderedAt,
@@ -1248,6 +1254,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                       status: "done",
                       data: {
                         mediaId: extraMediaId,
+                        assetId: typeof extraAssetId === "string" ? extraAssetId : null,
                         flowMediaId: typeof extraFlowMediaId === "string" ? extraFlowMediaId : extraMediaId,
                         aspectRatio: opts.aspectRatio,
                         renderedAt,

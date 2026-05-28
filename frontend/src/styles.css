@@ -5817,6 +5817,275 @@ button:disabled {
   border: 1px solid rgba(255,255,255,0.08);
 }
 
+.flowboard-account-menu {
+  position: relative;
+}
+
+.flowboard-account-menu__trigger {
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.flowboard-account-menu__trigger.is-open {
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+}
+
+.flowboard-account-menu__trigger img,
+.flowboard-account-menu__trigger span {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+}
+
+.flowboard-account-menu__trigger img {
+  object-fit: cover;
+}
+
+.flowboard-account-menu__trigger span {
+  background: #f3f5ef;
+  color: #151515;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.flowboard-account-popover {
+  position: absolute;
+  top: calc(100% + 14px);
+  right: 0;
+  width: min(400px, calc(100vw - 28px));
+  z-index: 80;
+  color: #f4f4f4;
+}
+
+.flowboard-account-popover__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  padding: 0 6px 14px;
+}
+
+.flowboard-account-popover__pricing {
+  color: #ff4fb0;
+  font-weight: 800;
+  font-size: 18px;
+}
+
+.flowboard-account-popover__mini-logo,
+.flowboard-account-popover__avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #f3f5ef;
+  overflow: hidden;
+}
+
+.flowboard-account-popover__mini-logo {
+  width: 30px;
+  height: 30px;
+}
+
+.flowboard-account-popover__card {
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 18px;
+  background: #151515;
+  box-shadow: 0 22px 70px rgba(0,0,0,0.52);
+}
+
+.flowboard-account-popover__identity {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 30px 18px;
+}
+
+.flowboard-account-popover__avatar {
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+}
+
+.flowboard-account-popover__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.flowboard-account-popover__identity-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.flowboard-account-popover__identity-text strong,
+.flowboard-account-popover__identity-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flowboard-account-popover__identity-text strong {
+  font-size: 15px;
+  font-weight: 800;
+  color: #fff;
+}
+
+.flowboard-account-popover__identity-text span {
+  font-size: 15px;
+  color: rgba(255,255,255,0.68);
+}
+
+.flowboard-account-popover__primary,
+.flowboard-account-popover__secondary {
+  width: calc(100% - 60px);
+  height: 40px;
+  margin: 0 30px;
+  border-radius: 9px;
+  font-weight: 800;
+}
+
+.flowboard-account-popover__primary {
+  background: #5368f1;
+  color: #fff;
+}
+
+.flowboard-account-popover__primary:hover {
+  background: #6276ff;
+}
+
+.flowboard-account-popover__secondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: transparent;
+  color: rgba(255,255,255,0.88);
+}
+
+.flowboard-account-popover__items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 16px;
+  padding: 16px 30px 18px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.flowboard-account-popover__item,
+.flowboard-account-popover__logout {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 50px;
+  border-radius: 10px;
+  color: rgba(255,255,255,0.88);
+  text-align: left;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.flowboard-account-popover__item:hover,
+.flowboard-account-popover__logout:hover:not(:disabled) {
+  background: rgba(255,255,255,0.06);
+  color: #fff;
+}
+
+.flowboard-account-popover__item svg,
+.flowboard-account-popover__logout svg {
+  justify-self: center;
+}
+
+.flowboard-account-popover__item em {
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(83,104,241,0.18);
+  color: #aebaff;
+  font-style: normal;
+  font-size: 12px;
+}
+
+.flowboard-account-popover__item--select strong {
+  min-width: 120px;
+  padding: 10px 16px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 7px 0 0 7px;
+  border-right: 0;
+  color: #fff;
+}
+
+.flowboard-account-popover__item--select > svg:last-child {
+  width: 42px;
+  height: 42px;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 0 7px 7px 0;
+}
+
+.flowboard-account-popover__logout {
+  width: 100%;
+  padding: 17px 30px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  border-radius: 0;
+}
+
+.flowboard-account-popover__logout:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+@media (max-width: 560px) {
+  .flowboard-account-popover {
+    position: fixed;
+    top: 72px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+  }
+
+  .flowboard-account-popover__topbar {
+    padding-right: 4px;
+  }
+
+  .flowboard-account-popover__identity,
+  .flowboard-account-popover__items,
+  .flowboard-account-popover__logout {
+    padding-left: 22px;
+    padding-right: 22px;
+  }
+
+  .flowboard-account-popover__primary,
+  .flowboard-account-popover__secondary {
+    width: calc(100% - 44px);
+    margin-left: 22px;
+    margin-right: 22px;
+  }
+
+  .flowboard-account-popover__item {
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    gap: 12px;
+  }
+
+  .flowboard-account-popover__item--select {
+    grid-template-columns: 24px minmax(78px, 1fr) minmax(96px, auto) 38px;
+  }
+
+  .flowboard-account-popover__item--select strong {
+    min-width: 0;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+}
+
 .magnific-spaces__content {
   margin-left: 64px;
   padding: 104px 32px 32px;

@@ -250,6 +250,7 @@ export function mockDeleteEdge(edgeId: number): { ok: true } {
 export function mockGroupNodes(input: {
   board_id: number;
   child_ids: number[];
+  child_positions?: Array<{ id: number; x: number; y: number }>;
   title?: string;
   color?: string;
   locked?: boolean;
@@ -273,8 +274,15 @@ export function mockGroupNodes(input: {
   });
 
   const children: NodeDTO[] = [];
+  const livePositions = new Map((input.child_positions ?? []).map((p) => [p.id, p]));
   for (const childId of input.child_ids) {
-    const updated = mockPatchNode(childId, { parent_id: group.id });
+    const child = getGuestNodes(input.board_id).find((n) => n.id === childId);
+    const live = livePositions.get(childId);
+    const updated = mockPatchNode(childId, {
+      x: Math.round((live?.x ?? child?.x ?? 0) - input.x),
+      y: Math.round((live?.y ?? child?.y ?? 0) - input.y),
+      parent_id: group.id,
+    });
     children.push(updated);
   }
 
@@ -286,11 +294,16 @@ export function mockUngroupNodes(groupId: number): { deleted_group_id: number; c
   if (boardId === null) throw new Error("group not found");
 
   const nodes = getGuestNodes(boardId);
+  const group = nodes.find((n) => n.id === groupId);
   const children = nodes.filter((n) => n.parent_id === groupId);
 
   const updatedChildren: NodeDTO[] = [];
   for (const child of children) {
-    const updated = mockPatchNode(child.id, { parent_id: null });
+    const updated = mockPatchNode(child.id, {
+      x: Math.round((group?.x ?? 0) + child.x),
+      y: Math.round((group?.y ?? 0) + child.y),
+      parent_id: null,
+    });
     updatedChildren.push(updated);
   }
 

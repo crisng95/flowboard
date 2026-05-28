@@ -5,23 +5,32 @@ import {
   Check,
   ChevronDown,
   CircleHelp,
+  Code2,
+  CreditCard,
   Heart,
   Home,
+  Languages,
   LayoutGrid,
   List,
+  LogOut,
   Map as MapIcon,
   MoreHorizontal,
+  Palette,
   Plus,
   Pencil,
   Search,
   Settings,
   Share2,
+  ShieldCheck,
   Sparkles,
   Trash2,
   UserCircle2,
   Upload,
   X,
   Loader2,
+  Globe2,
+  Images,
+  Users,
 } from "lucide-react";
 
 import { getAuthMe, mediaUrl, type AuthMe, createBoard, createNode, createEdge, patchNode } from "./api/client";
@@ -171,6 +180,176 @@ function createBoardThumbnail(nodes: FlowNode[], edges: Edge<FlowboardEdgeData>[
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
+function userDisplayName(session: any): string {
+  const meta = session?.user?.user_metadata ?? {};
+  const name = meta.full_name || meta.name || meta.display_name;
+  if (typeof name === "string" && name.trim()) return name.trim();
+  const email = session?.user?.email;
+  if (typeof email === "string" && email.includes("@")) return email.split("@")[0];
+  return "Flowboard user";
+}
+
+function userAvatarUrl(session: any): string | null {
+  const meta = session?.user?.user_metadata ?? {};
+  const picture = meta.avatar_url || meta.picture;
+  return typeof picture === "string" && picture.trim() ? picture.trim() : null;
+}
+
+function AccountMenu({ session }: { session: any }) {
+  const [open, setOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const setShowAuthModal = useBoardStore((s) => s.setShowAuthModal);
+  const setShowExtensionModal = useBoardStore((s) => s.setShowExtensionModal);
+  const isLoggedIn = Boolean(session?.user);
+  const displayName = isLoggedIn ? userDisplayName(session) : "Guest";
+  const email = session?.user?.email ?? "Sign in to sync your workspace";
+  const avatar = userAvatarUrl(session);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (rootRef.current?.contains(event.target as Node)) return;
+      setOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  async function handleTrigger() {
+    if (!isLoggedIn) {
+      setShowAuthModal(true);
+      return;
+    }
+    setOpen((value) => !value);
+  }
+
+  async function handleSignOut() {
+    if (!supabase || signingOut) return;
+    setSigningOut(true);
+    try {
+      await supabase.auth.signOut();
+      useGenerationStore.setState({ paygateTier: null, projectId: null });
+      setOpen(false);
+    } finally {
+      setSigningOut(false);
+    }
+  }
+
+  return (
+    <div className="flowboard-account-menu" ref={rootRef}>
+      <button
+        type="button"
+        className={`magnific-avatar flowboard-account-menu__trigger${open ? " is-open" : ""}`}
+        aria-label={isLoggedIn ? "Open account menu" : "Sign in"}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => void handleTrigger()}
+      >
+        {avatar ? (
+          <img src={avatar} alt="" referrerPolicy="no-referrer" />
+        ) : isLoggedIn ? (
+          <span>{displayName.slice(0, 1).toUpperCase()}</span>
+        ) : (
+          <UserCircle2 size={19} />
+        )}
+      </button>
+
+      {open && isLoggedIn && (
+        <div className="flowboard-account-popover" role="menu">
+          <div className="flowboard-account-popover__topbar">
+            <button type="button" className="flowboard-account-popover__pricing">Pricing</button>
+            <div className="flowboard-account-popover__mini-logo"><AppLogo className="size-full" /></div>
+          </div>
+
+          <div className="flowboard-account-popover__card">
+            <div className="flowboard-account-popover__identity">
+              <div className="flowboard-account-popover__avatar">
+                {avatar ? <img src={avatar} alt="" referrerPolicy="no-referrer" /> : <AppLogo className="size-full" />}
+              </div>
+              <div className="flowboard-account-popover__identity-text">
+                <strong title={displayName}>{displayName}</strong>
+                <span title={email}>{email}</span>
+              </div>
+            </div>
+
+            <button type="button" className="flowboard-account-popover__primary">Get a plan</button>
+            <button type="button" className="flowboard-account-popover__secondary"><Users size={16} /> Create your team</button>
+
+            <div className="flowboard-account-popover__items">
+              <button type="button" className="flowboard-account-popover__item">
+                <CreditCard size={20} />
+                <span>Plan & billing</span>
+                <em>Free</em>
+              </button>
+              <button
+                type="button"
+                className="flowboard-account-popover__item"
+                onClick={() => {
+                  setOpen(false);
+                  setShowExtensionModal(true);
+                }}
+              >
+                <ShieldCheck size={20} />
+                <span>Connect extension</span>
+              </button>
+              <button type="button" className="flowboard-account-popover__item">
+                <Settings size={20} />
+                <span>Settings</span>
+              </button>
+              <button type="button" className="flowboard-account-popover__item">
+                <Globe2 size={20} />
+                <span>Creator profile</span>
+              </button>
+              <button type="button" className="flowboard-account-popover__item">
+                <Images size={20} />
+                <span>My collections</span>
+              </button>
+              <button type="button" className="flowboard-account-popover__item flowboard-account-popover__item--select">
+                <Languages size={20} />
+                <span>Language</span>
+                <strong>English</strong>
+                <ChevronDown size={16} />
+              </button>
+              <button type="button" className="flowboard-account-popover__item flowboard-account-popover__item--select">
+                <Palette size={20} />
+                <span>Theme</span>
+                <strong>Dark</strong>
+                <ChevronDown size={16} />
+              </button>
+              <button type="button" className="flowboard-account-popover__item">
+                <Code2 size={20} />
+                <span>Use AI code</span>
+              </button>
+              <button type="button" className="flowboard-account-popover__item">
+                <CircleHelp size={20} />
+                <span>Help center</span>
+              </button>
+            </div>
+
+            <button
+              type="button"
+              className="flowboard-account-popover__logout"
+              onClick={() => void handleSignOut()}
+              disabled={signingOut}
+            >
+              <LogOut size={20} />
+              {signingOut ? "Logging out..." : "Log out"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SpacesPage({
   thumbnails,
   onUploadCover,
@@ -305,9 +484,7 @@ function SpacesPage({
         </button>
         <div className="magnific-header-actions">
           <button type="button" className="magnific-pricing-link">Pricing</button>
-          <button type="button" className="magnific-avatar" aria-label="Profile">
-            <UserCircle2 size={19} />
-          </button>
+          <AccountMenu session={session} />
         </div>
       </header>
 
@@ -712,9 +889,7 @@ function CanvasPage({ session }: { session: any }) {
             Share
           </button>
           <button type="button" className="magnific-pricing-link">Pricing</button>
-          <button type="button" className="magnific-avatar" aria-label="Profile">
-            <UserCircle2 size={19} />
-          </button>
+          <AccountMenu session={session} />
         </div>
       </header>
 

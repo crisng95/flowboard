@@ -90,6 +90,7 @@ function GroupCornerHandle({
     startH: number;
     startNodeX: number;
     startNodeY: number;
+    childStarts: Array<{ id: string; x: number; y: number }>;
     zoom: number;
   } | null>(null);
 
@@ -99,6 +100,11 @@ function GroupCornerHandle({
     e.stopPropagation();
     const node = getNode(nodeId);
     if (!node) return;
+    const childStarts = useBoardStore
+      .getState()
+      .nodes
+      .filter((n) => n.parentId === nodeId)
+      .map((n) => ({ id: n.id, x: n.position.x, y: n.position.y }));
 
     dragRef.current = {
       startX: e.clientX,
@@ -107,6 +113,7 @@ function GroupCornerHandle({
       startH: node.measured?.height ?? (node.height as number) ?? 300,
       startNodeX: node.position.x,
       startNodeY: node.position.y,
+      childStarts,
       zoom: getZoom(),
     };
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -142,19 +149,29 @@ function GroupCornerHandle({
     let newY = s.startNodeY;
     if (corner === "bl" || corner === "tl") newX = s.startNodeX + (s.startW - newW);
     if (corner === "tr" || corner === "tl") newY = s.startNodeY + (s.startH - newH);
+    const originDx = newX - s.startNodeX;
+    const originDy = newY - s.startNodeY;
 
     setLiveSize({ w: Math.round(newW), h: Math.round(newH) });
 
     setNodes((nodes) =>
-      nodes.map((n) =>
-        n.id === nodeId
-          ? {
-              ...n,
-              position: { x: newX, y: newY },
-              style: { ...(n.style ?? {}), width: newW, height: newH },
-            }
-          : n,
-      ),
+      nodes.map((n) => {
+        if (n.id === nodeId) {
+          return {
+            ...n,
+            position: { x: newX, y: newY },
+            style: { ...(n.style ?? {}), width: newW, height: newH },
+          };
+        }
+        const childStart = s.childStarts.find((child) => child.id === n.id);
+        if (childStart) {
+          return {
+            ...n,
+            position: { x: childStart.x - originDx, y: childStart.y - originDy },
+          };
+        }
+        return n;
+      }),
     );
   }
 
@@ -180,6 +197,13 @@ function GroupCornerHandle({
     let finalY = s.startNodeY;
     if (corner === "bl" || corner === "tl") finalX = s.startNodeX + (s.startW - finalW);
     if (corner === "tr" || corner === "tl") finalY = s.startNodeY + (s.startH - finalH);
+    const originDx = finalX - s.startNodeX;
+    const originDy = finalY - s.startNodeY;
+    const childPatches = s.childStarts.map((child) => ({
+      id: child.id,
+      x: Math.round(child.x - originDx),
+      y: Math.round(child.y - originDy),
+    }));
 
     dragRef.current = null;
     setIsDragging(false);
@@ -196,6 +220,12 @@ function GroupCornerHandle({
       const dbId = parseInt(nodeId, 10);
       if (!isNaN(dbId)) {
         patchNode(dbId, { x: Math.round(finalX), y: Math.round(finalY) }).catch(() => {});
+      }
+      for (const child of childPatches) {
+        const childDbId = parseInt(child.id, 10);
+        if (!isNaN(childDbId)) {
+          patchNode(childDbId, { x: child.x, y: child.y }).catch(() => {});
+        }
       }
     }
   }
@@ -416,12 +446,13 @@ export function GroupNodeShell({ id, data, selected, width, height }: NodeProps<
         />
       </div>
 
-      {/* 3-corner resize handles (arc style matching TextNode, omitting tl to avoid title occlusion) */}
+      {/* Resize handles preserve every child node's absolute canvas position. */}
       {!locked && (
         <>
           <GroupCornerHandle corner="br" nodeId={id} locked={locked} forceVisible={showHandles} />
           <GroupCornerHandle corner="bl" nodeId={id} locked={locked} forceVisible={showHandles} />
           <GroupCornerHandle corner="tr" nodeId={id} locked={locked} forceVisible={showHandles} />
+          <GroupCornerHandle corner="tl" nodeId={id} locked={locked} forceVisible={showHandles} />
         </>
       )}
 

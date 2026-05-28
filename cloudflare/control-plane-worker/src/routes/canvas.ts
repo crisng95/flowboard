@@ -85,6 +85,58 @@ function shouldHydrateProjectId(inputData: Record<string, unknown>): boolean {
   return typeof value !== 'string' || !value.trim() || value === 'cloud-worker';
 }
 
+function storageKeyFromSignedUrl(value: string, bucketName: string): string | null {
+  if (!/^https?:\/\//i.test(value)) return null;
+  try {
+    const url = new URL(value);
+    const marker = `/${bucketName}/`;
+    const idx = url.pathname.indexOf(marker);
+    if (idx === -1) return null;
+    return decodeURIComponent(url.pathname.slice(idx + marker.length));
+  } catch {
+    return null;
+  }
+}
+
+function userStorageKey(value: unknown, userId: string, bucketName: string): string | null {
+  if (typeof value !== 'string' || !value) return null;
+  if (value.startsWith(`users/${userId}/`)) return value;
+  const fromUrl = storageKeyFromSignedUrl(value, bucketName);
+  return fromUrl?.startsWith(`users/${userId}/`) ? fromUrl : null;
+}
+
+async function hydrateNodeMediaUrls(env: AppBindings['Bindings'], userId: string, nodes: any[]): Promise<any[]> {
+  const bucketName = env.R2_BUCKET_NAME || 'flowboard-prod-assets';
+  return Promise.all(nodes.map(async (node) => {
+    const data = objectData(node.data);
+    const sign = async (value: unknown): Promise<unknown> => {
+      const key = userStorageKey(value, userId, bucketName);
+      return key ? presignGet(env, key, 3600) : value;
+    };
+
+    if (typeof data.mediaId === 'string') {
+      data.storageKey = data.storageKey || userStorageKey(data.mediaId, userId, bucketName) || undefined;
+      data.mediaId = await sign(data.storageKey || data.mediaId);
+    }
+    if (Array.isArray(data.mediaIds)) {
+      const storageKeys = Array.isArray(data.storageKeys) ? data.storageKeys : [];
+      const nextStorageKeys = data.mediaIds.map((value, index) => {
+        if (typeof storageKeys[index] === 'string') return storageKeys[index];
+        return userStorageKey(value, userId, bucketName);
+      });
+      data.storageKeys = nextStorageKeys;
+      data.mediaIds = await Promise.all(data.mediaIds.map((value, index) => sign(nextStorageKeys[index] || value)));
+    }
+
+    return { ...node, data };
+  }));
+}
+
+async function hydrateNodeMediaUrl(env: AppBindings['Bindings'], userId: string, node: any): Promise<any> {
+  const nodes = await hydrateNodeMediaUrls(env, userId, node ? [node] : []);
+  return nodes[0] || null;
+}
+
 // --- Boards ---
 
 canvasRoutes.get('/references', async (c) => {
@@ -190,9 +242,11 @@ canvasRoutes.get('/boards/:id', async (c) => {
     select: '*',
   });
   
+  const hydratedNodes = await hydrateNodeMediaUrls(c.env, userId, nodes);
+
   return c.json({
     board,
-    nodes,
+    nodes: hydratedNodes,
     edges,
   });
 });
@@ -303,7 +357,8 @@ canvasRoutes.post('/nodes', async (c) => {
   };
   
   const nodes = await db.post<any[]>('/rest/v1/nodes', payload);
-  return c.json(nodes[0] || null);
+  const hydrated = await hydrateNodeMediaUrl(c.env, userId, nodes[0]);
+  return c.json(hydrated);
 });
 
 canvasRoutes.patch('/nodes/:id', async (c) => {
@@ -333,7 +388,8 @@ canvasRoutes.patch('/nodes/:id', async (c) => {
   const nodes = await db.patch<any[]>('/rest/v1/nodes', payload, {
     id: `eq.${nodeId}`,
   });
-  return c.json(nodes[0] || null);
+  const hydrated = await hydrateNodeMediaUrl(c.env, userId, nodes[0]);
+  return c.json(hydrated);
 });
 
 canvasRoutes.delete('/nodes/:id', async (c) => {
@@ -404,6 +460,15 @@ canvasRoutes.post('/nodes/group', async (c) => {
   
   // 2. Reparent child nodes
   const childIds = Array.isArray(body.child_ids) ? body.child_ids : [];
+  const livePositions = new Map<string, { x: number; y: number }>();
+  if (Array.isArray(body.child_positions)) {
+    for (const item of body.child_positions) {
+      if (!item || typeof item.id !== 'string') continue;
+      const x = Number(item.x);
+      const y = Number(item.y);
+      if (Number.isFinite(x) && Number.isFinite(y)) livePositions.set(item.id, { x, y });
+    }
+  }
   let updatedChildren: any[] = [];
   if (childIds.length > 0) {
     const childRows = await db.get<any[]>('/rest/v1/nodes', {
@@ -414,12 +479,22 @@ canvasRoutes.post('/nodes/group', async (c) => {
     for (const child of childRows) {
       const childData = objectData(child.data);
       childData.parent_id = group.id;
-      const rows = await db.patch<any[]>('/rest/v1/nodes', { data: childData }, { id: `eq.${child.id}` });
+      const live = livePositions.get(child.id);
+      const persistedX = Number(child.position_x);
+      const persistedY = Number(child.position_y);
+      const absoluteX = live?.x ?? (Number.isFinite(persistedX) ? persistedX : 0);
+      const absoluteY = live?.y ?? (Number.isFinite(persistedY) ? persistedY : 0);
+      const rows = await db.patch<any[]>('/rest/v1/nodes', {
+        position_x: Math.round(absoluteX - group.position_x),
+        position_y: Math.round(absoluteY - group.position_y),
+        data: childData,
+      }, { id: `eq.${child.id}` });
       if (rows[0]) updatedChildren.push(rows[0]);
     }
   }
   
-  return c.json({ group, children: updatedChildren });
+  const hydratedChildren = await hydrateNodeMediaUrls(c.env, userId, updatedChildren);
+  return c.json({ group, children: hydratedChildren });
 });
 
 canvasRoutes.post('/nodes/:id/ungroup', async (c) => {
@@ -428,6 +503,14 @@ canvasRoutes.post('/nodes/:id/ungroup', async (c) => {
   const db = new SupabaseRest(c.env);
   
   const boardId = await ensureNodeOwner(db, userId, groupId);
+  const groupRows = await db.get<any[]>('/rest/v1/nodes', {
+    id: `eq.${groupId}`,
+    board_id: `eq.${boardId}`,
+    select: 'id,position_x,position_y',
+    limit: 1,
+  });
+  const group = groupRows[0];
+  if (!group) throw new ApiError(404, 'GROUP_NOT_FOUND', 'Group not found or access denied');
   
   // Get children
   const children = await db.get<any[]>('/rest/v1/nodes', {
@@ -443,7 +526,11 @@ canvasRoutes.post('/nodes/:id/ungroup', async (c) => {
     for (const child of groupChildren) {
       const childData = objectData(child.data);
       childData.parent_id = null;
-      const rows = await db.patch<any[]>('/rest/v1/nodes', { data: childData }, { id: `eq.${child.id}` });
+      const rows = await db.patch<any[]>('/rest/v1/nodes', {
+        position_x: Math.round((Number(group.position_x) || 0) + (Number(child.position_x) || 0)),
+        position_y: Math.round((Number(group.position_y) || 0) + (Number(child.position_y) || 0)),
+        data: childData,
+      }, { id: `eq.${child.id}` });
       if (rows[0]) updatedChildren.push(rows[0]);
     }
   }
@@ -455,7 +542,8 @@ canvasRoutes.post('/nodes/:id/ungroup', async (c) => {
     id: `eq.${groupId}`,
   });
   
-  return c.json({ deleted_group_id: groupId, children: updatedChildren });
+  const hydratedChildren = await hydrateNodeMediaUrls(c.env, userId, updatedChildren);
+  return c.json({ deleted_group_id: groupId, children: hydratedChildren });
 });
 
 // --- Edges ---

@@ -93,9 +93,13 @@ export function useUploadFlow(
     fileName?: string,
     imageWidth?: number,
     imageHeight?: number,
+    assetId?: string,
+    storageKey?: string,
   ) {
     useBoardStore.getState().updateNodeData(rfId, {
       mediaId: newMediaId,
+      assetId,
+      storageKey,
       status: "done",
       aiBrief: undefined,
       aspectRatio,
@@ -109,6 +113,8 @@ export function useUploadFlow(
         status: "done",
         data: {
           mediaId: newMediaId,
+          assetId: assetId ?? null,
+          storageKey: storageKey ?? null,
           aiBrief: null,
           aspectRatio,
           fileName: fileName ?? null,
@@ -155,6 +161,8 @@ export function useUploadFlow(
         file.name,
         resp.width,
         resp.height,
+        resp.asset_id,
+        resp.storage_key,
       );
       setUploadJustFinished(true);
     } catch (err) {
