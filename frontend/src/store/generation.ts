@@ -38,9 +38,12 @@ interface GenerationState {
       paygateTier?: string;
       kind?: "image" | "video";
       sourceMediaId?: string;
-      // Multi-source-image i2v: when the upstream image has N variants
-      // we generate one video per variant. Backend sends N items in the
-      // batchAsyncGenerate body so all are dispatched together.
+      // Multi-source overrides:
+      //   - i2v batch: upstream image has N variants → generate one video per variant.
+      //     Backend sends N items in batchAsyncGenerate so all are dispatched together.
+      //   - Paired dispatch (Mode A): explicit ref_media_ids for one slot in a
+      //     prompt-image zip — bypasses collectUpstreamRefMediaIds so each new
+      //     node uses exactly its assigned image rather than all upstream images.
       sourceMediaIds?: string[];
       variantCount?: number;
       imageModel?: ImageModelKey;
@@ -127,21 +130,132 @@ function hasRenderableMedia(node: { data: Record<string, unknown> }): boolean {
   return false;
 }
 
+function cleanText(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normalizeListItemRecord(raw: Record<string, unknown>, index: number): Record<string, unknown> {
+  const kind = raw.kind === "video" || raw.kind === "text" || raw.kind === "image"
+    ? raw.kind
+    : cleanText(raw.text) && !cleanText(raw.mediaId) && !cleanText(raw.mediaUrl) && !cleanText(raw.imageUrl)
+      ? "text"
+      : cleanText(raw.mime)?.startsWith("video/")
+        ? "video"
+        : "image";
+
+  return {
+    ...raw,
+    id: cleanText(raw.id) ?? cleanText(raw.mediaId) ?? cleanText(raw.mediaUrl) ?? `list-item-${index + 1}`,
+    kind,
+    title:
+      cleanText(raw.title)
+      ?? (kind === "text" ? `Text ${index + 1}` : kind === "video" ? `Video ${index + 1}` : `Image ${index + 1}`),
+    text: cleanText(raw.text) ?? null,
+    mediaId: cleanText(raw.mediaId) ?? null,
+    flowMediaId: cleanText(raw.flowMediaId) ?? cleanText(raw.mediaId) ?? null,
+    mediaUrl: cleanText(raw.mediaUrl) ?? cleanText(raw.imageUrl) ?? null,
+    imageUrl: cleanText(raw.imageUrl) ?? null,
+    mime: cleanText(raw.mime) ?? null,
+    width: typeof raw.width === "number" ? raw.width : null,
+    height: typeof raw.height === "number" ? raw.height : null,
+    duration: typeof raw.duration === "number" ? raw.duration : null,
+  };
+}
+
+function listItemSignature(item: Record<string, unknown>): string {
+  const kind = cleanText(item.kind) ?? "image";
+  if (kind === "text") {
+    return `text:${cleanText(item.text) ?? cleanText(item.title) ?? cleanText(item.id) ?? ""}`;
+  }
+  const ref = cleanText(item.flowMediaId) ?? cleanText(item.mediaId) ?? cleanText(item.mediaUrl) ?? cleanText(item.imageUrl) ?? cleanText(item.id) ?? "";
+  return `${kind}:${ref}`;
+}
+
+function dedupeListItems(items: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const seen = new Set<string>();
+  const next: Array<Record<string, unknown>> = [];
+  for (const item of items) {
+    const signature = listItemSignature(item);
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    next.push(item);
+  }
+  return next;
+}
+
+function collectListItemsFromNode(node: { id: string; data: Record<string, unknown> }): Array<Record<string, unknown>> {
+  const rawItems = Array.isArray(node.data.listItems) ? node.data.listItems : [];
+  if (rawItems.length > 0) {
+    return dedupeListItems(rawItems
+      .filter((item): item is Record<string, unknown> => item !== null && typeof item === "object")
+      .map((item, index) => normalizeListItemRecord(item, index)));
+  }
+
+  const mediaIds = Array.isArray(node.data.mediaIds)
+    ? node.data.mediaIds.filter((m): m is string => typeof m === "string" && m.length > 0)
+    : cleanText(node.data.mediaId)
+      ? [String(node.data.mediaId)]
+      : [];
+  const flowMediaIds = Array.isArray(node.data.flowMediaIds)
+    ? node.data.flowMediaIds.filter((m): m is string => typeof m === "string" && m.length > 0)
+    : cleanText(node.data.flowMediaId)
+      ? [String(node.data.flowMediaId)]
+      : [];
+  const sourceType = primaryNodeType(node);
+
+  return mediaIds.map((mediaId, index) => ({
+    id: mediaId,
+    kind: sourceType === "video" ? "video" : "image",
+    title: cleanText(node.data.title) ?? `${sourceType === "video" ? "Video" : "Image"} ${index + 1}`,
+    mediaId,
+    flowMediaId: flowMediaIds[index] ?? mediaId,
+    mime: cleanText(node.data.mime),
+    width: typeof node.data.imageWidth === "number" ? node.data.imageWidth : undefined,
+    height: typeof node.data.imageHeight === "number" ? node.data.imageHeight : undefined,
+  }));
+}
+
+function isMediaSourceType(type: string | undefined): boolean {
+  return type === "reference" || type === "variant" || type === "video" || type === "upload" || type === "list" || type === "add_reference";
+}
+
 function isRunnableNodeType(type: string | undefined): boolean {
-  return type === "reference" || type === "variant" || type === "video";
+  return type === "reference" || type === "variant" || type === "video" || type === "list";
+}
+
+function isTextEdge(edge: { targetHandle?: string | null; source: string; target: string }, board: { nodes: any[]; edges: any[] }): boolean {
+  if (edge.targetHandle === "target-text") return true;
+  const srcNode = board.nodes.find((n) => n.id === edge.source);
+  if (!srcNode) return false;
+  const srcType = srcNode.data?.type ?? srcNode.type;
+  if (srcType === "text") return true;
+  if (srcType === "list") {
+    const listItems = Array.isArray(srcNode.data?.listItems) ? srcNode.data.listItems : [];
+    const isTextList = listItems.length > 0 && listItems[0]?.kind === "text";
+    const hasTextIncoming = board.edges.some((e) => e.target === srcNode.id && e.targetHandle === "target-text");
+    if (isTextList || hasTextIncoming) return true;
+  }
+  return false;
 }
 
 function getUpstreamTextPrompt(targetRfId: string): string {
-  const { nodes, edges } = useBoardStore.getState();
-  const textEdge = edges.find((edge) => {
+  const board = useBoardStore.getState();
+  const textEdge = board.edges.find((edge) => {
     if (edge.target !== targetRfId) return false;
-    if (edge.targetHandle === "target-text") return true;
-    const src = nodes.find((node) => node.id === edge.source);
-    return primaryNodeType(src ?? {}) === "text";
+    return isTextEdge(edge as any, board);
   });
   if (!textEdge) return "";
-  const sourceNode = nodes.find((node) => node.id === textEdge.source);
-  return ((sourceNode?.data.prompt as string | undefined) ?? "").trim();
+  const sourceNode = board.nodes.find((node) => node.id === textEdge.source);
+  if (!sourceNode) return "";
+  if (sourceNode.data.type === "list") {
+    const listItems = collectListItemsFromNode(sourceNode as any);
+    return listItems
+      .filter((item) => item.kind === "text")
+      .map((item) => String(item.text || item.title || "").trim())
+      .filter(Boolean)
+      .join("\n");
+  }
+  return ((sourceNode.data.prompt as string | undefined) ?? "").trim();
 }
 
 async function waitForNodeSettled(
@@ -201,6 +315,7 @@ export const REF_DISPATCH_TYPES = new Set([
   "upload",
   "reference",
   "add_reference",
+  "list",
 ]);
 const REF_SOURCE_TYPES = REF_DISPATCH_TYPES;
 
@@ -261,6 +376,9 @@ export function resolveEdgeMediaSelection(targetRfId: string, edgeId: string): {
   if (!edge) return { mediaId: null, variantIdx: null, allVariants: [] };
   const src = nodes.find((n) => n.id === edge.source);
   if (!src) return { mediaId: null, variantIdx: null, allVariants: [] };
+  if (edge.sourceHandle === "source-text") {
+    return { mediaId: null, variantIdx: null, allVariants: [] };
+  }
   if (src.data.type === "video") {
     if (edge.sourceHandle === "source-start-image") {
       const directStart = typeof src.data.startImageMediaId === "string" ? src.data.startImageMediaId : null;
@@ -284,18 +402,41 @@ export function resolveEdgeMediaSelection(targetRfId: string, edgeId: string): {
     }
   }
 
-  const flowVariants = (Array.isArray(src.data.flowMediaIds) ? src.data.flowMediaIds : [])
+  let flowVariants = (Array.isArray(src.data.flowMediaIds) ? src.data.flowMediaIds : [])
     .filter((m): m is string => typeof m === "string" && m.length > 0);
-  const variants = (flowVariants.length > 0 ? flowVariants : (Array.isArray(src.data.mediaIds) ? src.data.mediaIds : []))
+  let mediaIds = (Array.isArray(src.data.mediaIds) ? src.data.mediaIds : [])
+    .filter((m): m is string => typeof m === "string" && m.length > 0);
+
+  if (src.data.type === "list") {
+    const listSelectedIndexes = Array.isArray(src.data.listSelectedIndexes) 
+      ? src.data.listSelectedIndexes.map(Number)
+      : [];
+    if (listSelectedIndexes.length > 0) {
+      const listItems = Array.isArray(src.data.listItems) ? src.data.listItems : [];
+      const selectedItems = listItems.filter((_, idx) => listSelectedIndexes.includes(idx));
+      const selectedMediaItems = selectedItems.filter((item) => item.kind === "image" || item.kind === "video");
+      
+      flowVariants = selectedMediaItems
+        .map((item) => (item.flowMediaId ?? item.mediaId) as string)
+        .filter((m) => typeof m === "string" && m.length > 0);
+      mediaIds = selectedMediaItems
+        .map((item) => item.mediaId as string)
+        .filter((m) => typeof m === "string" && m.length > 0);
+    }
+  }
+
+  const variants = (flowVariants.length > 0 ? flowVariants : mediaIds)
     .filter((m): m is string => typeof m === "string" && m.length > 0);
   const pin = (edge.data?.sourceVariantIdx ?? null) as number | null;
 
   if (pin !== null && pin >= 0 && pin < variants.length) {
     return { mediaId: variants[pin], variantIdx: pin, allVariants: variants };
   }
-  const primaryMediaId = (typeof src.data.flowMediaId === "string" && src.data.flowMediaId) ||
+  const primaryMediaId = src.data.type === "list" ? null : (
+    (typeof src.data.flowMediaId === "string" && src.data.flowMediaId) ||
     (typeof src.data.mediaId === "string" && src.data.mediaId) ||
-    null;
+    null
+  );
   if (primaryMediaId) {
     const idx = variants.indexOf(primaryMediaId);
     return {
@@ -319,17 +460,236 @@ async function runNodeDirect(
   if (!node) throw new Error("node_not_found");
 
   const nodeType = primaryNodeType(node);
-  if (nodeType === "reference") {
-    const prompt = getUpstreamTextPrompt(rfId) || ((node.data.prompt as string | undefined) ?? "").trim();
-    const hasImageRefs = board.edges.some((edge) => {
-      if (edge.target !== rfId) return false;
+  if (nodeType === "list") {
+    const intakeMode = (node.data.listIntakeMode as string | undefined) === "keep" ? "keep" : "replace";
+    const incomingEdges = board.edges.filter((edge) => edge.target === rfId);
+    const currentItems = intakeMode === "keep"
+      ? dedupeListItems(collectListItemsFromNode(node as { id: string; data: Record<string, unknown> }))
+      : [];
+    const items: Array<Record<string, unknown>> = [];
+
+    for (const edge of incomingEdges) {
       const sourceNode = board.nodes.find((entry) => entry.id === edge.source);
-      return primaryNodeType(sourceNode ?? {}) !== "text";
+      if (!sourceNode) continue;
+      const sourceType = primaryNodeType(sourceNode);
+      const targetHandle = edge.targetHandle ?? "target-image";
+      const wantsText = targetHandle === "target-text" || targetHandle === "target";
+      const wantsMedia = targetHandle === "target-image" || targetHandle === "target" || targetHandle === "target-video";
+
+      if (sourceType === "text") {
+        if (!wantsText) continue;
+        const text = cleanText(sourceNode.data.prompt);
+        if (!text) continue;
+        items.push({
+          id: `${sourceNode.id}-text-${items.length + 1}`,
+          kind: "text",
+          title: cleanText(sourceNode.data.title) ?? `Text ${items.length + 1}`,
+          text,
+        });
+        continue;
+      }
+
+      const listItems = collectListItemsFromNode(sourceNode as { id: string; data: Record<string, unknown> });
+      if (!isMediaSourceType(sourceType) && sourceType !== "list") continue;
+      if (sourceType === "list") {
+        const selectedIndexes = Array.isArray(sourceNode.data.listSelectedIndexes)
+          ? new Set(
+              sourceNode.data.listSelectedIndexes
+                .map((value) => Number(value))
+                .filter((value) => Number.isInteger(value) && value >= 0 && value < listItems.length),
+            )
+          : undefined;
+        const selectedItems = selectedIndexes && selectedIndexes.size > 0
+          ? listItems.filter((_, index) => selectedIndexes.has(index))
+          : listItems;
+        const sourceHandle = edge.sourceHandle ?? "source-image";
+        const typedItems = sourceHandle === "source-text" || targetHandle === "target-text"
+          ? selectedItems.filter((item) => item.kind === "text")
+          : sourceHandle === "source-video" || targetHandle === "target-video"
+            ? selectedItems.filter((item) => item.kind === "video")
+            : sourceHandle === "source-image" || targetHandle === "target-image"
+              ? selectedItems.filter((item) => item.kind === "image" || item.kind === "video")
+              : selectedItems;
+        items.push(...typedItems);
+        continue;
+      }
+
+      if (!wantsMedia) continue;
+      items.push(...listItems);
+    }
+
+    const nextItems = dedupeListItems(intakeMode === "replace" ? items : [...currentItems, ...items]);
+    const mediaItems = nextItems.filter((item) => item.kind === "image" || item.kind === "video");
+    const mediaIds = mediaItems
+      .map((item) => item.mediaId)
+      .filter((value): value is string => typeof value === "string" && value.length > 0);
+    const flowMediaIds = mediaItems
+      .map((item) => item.flowMediaId ?? item.mediaId)
+      .filter((value): value is string => typeof value === "string" && value.length > 0);
+
+    useBoardStore.getState().updateNodeData(rfId, {
+      status: "done",
+      listItems: nextItems,
+      listSelectedIndexes: [],
+      mediaIds,
+      mediaId: mediaIds[0] ?? undefined,
+      flowMediaIds,
+      flowMediaId: flowMediaIds[0] ?? undefined,
+      variantCount: mediaIds.length > 0 ? mediaIds.length : nextItems.length,
+      renderedAt: new Date().toISOString(),
+      error: undefined,
     });
+    const dbId = parseInt(rfId, 10);
+    if (!isNaN(dbId)) {
+      patchNode(dbId, {
+        status: "done",
+        data: {
+          listItems: nextItems,
+          listSelectedIndexes: [],
+          mediaIds,
+          mediaId: mediaIds[0] ?? null,
+          flowMediaIds,
+          flowMediaId: flowMediaIds[0] ?? null,
+          variantCount: mediaIds.length > 0 ? mediaIds.length : nextItems.length,
+          renderedAt: new Date().toISOString(),
+          error: null,
+        },
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  if (nodeType === "reference") {
+    const textEdge = board.edges.find((e) => e.target === rfId && e.targetHandle === "target-text");
+    const textSourceNode = textEdge ? board.nodes.find((n) => n.id === textEdge.source) : null;
+    const upstreamPrompts = textSourceNode
+      ? collectListItemsFromNode(textSourceNode as any)
+          .filter((item) => item.kind === "text")
+          .map((item) => String(item.text || item.title || "").trim())
+          .filter(Boolean)
+      : [];
+
+    const prompt = upstreamPrompts[0] || ((node.data.prompt as string | undefined) ?? "").trim();
+    const refMediaIds = collectUpstreamRefMediaIds(rfId);
+    const hasImageRefs = refMediaIds.length > 0;
+
     if (!prompt && !hasImageRefs) {
       throw new Error("image_node_missing_prompt_or_refs");
     }
     const aspectKey = ((node.data.aspectKey as string | undefined) ?? "1:1") as keyof typeof IMAGE_NODE_ASPECT_TO_FLOW;
+    const aspectRatio = IMAGE_NODE_ASPECT_TO_FLOW[aspectKey] ?? IMAGE_NODE_ASPECT_TO_FLOW["1:1"];
+    const imageModel = normalizeImageModelKey(node.data.modelKey as string | undefined);
+
+    // ── Dispatch Mode Detection ─────────────────────────────────────────────
+    //
+    // Mode A — Paired (N prompts = N images, N > 1):
+    //   Each pair (prompt_i, image_i) dispatches as its own generation request.
+    //   Results are laid out as individual nodes to the right of the original.
+    //
+    // Mode B — Multi-image (1 prompt + N images):
+    //   All N images are sent as ref_media_ids in one request so the model
+    //   can use every image as a reference; variantCount = 1 (single output).
+    //
+    // Mode C — Standard:
+    //   Single prompt + ≤1 image → classic single dispatch with imageCount.
+
+    const isPairedMode =
+      upstreamPrompts.length >= 2 &&
+      refMediaIds.length >= 2 &&
+      upstreamPrompts.length === refMediaIds.length;
+
+    const isMultiImageMode =
+      !isPairedMode && refMediaIds.length >= 2 && upstreamPrompts.length <= 1;
+
+    if (isPairedMode) {
+      // ── Mode A: Paired dispatch ────────────────────────────────────────────
+      // Dispatch the first pair onto the original node, then create new
+      // reference nodes for each subsequent pair.
+      const pairCount = upstreamPrompts.length;
+      const baseX = node.position?.x ?? 0;
+      const baseY = node.position?.y ?? 0;
+      const baseTitle = (node.data.title as string | undefined) ?? "Image";
+      const boardId = board.boardId;
+
+      // Pair 0 → dispatch to the existing node (rfId)
+      await get().dispatchGeneration(rfId, {
+        prompt: upstreamPrompts[0],
+        kind: "image",
+        aspectRatio,
+        variantCount: 1,
+        imageModel,
+        prompts: [upstreamPrompts[0]],
+        sourceMediaIds: [refMediaIds[0]],
+      });
+
+      // Pairs 1..N-1 → create new nodes and dispatch to them
+      if (boardId !== null) {
+        for (let i = 1; i < pairCount; i++) {
+          try {
+            const extraDto = await createNode({
+              board_id: boardId,
+              type: "reference",
+              x: Math.round(baseX + i * 380),
+              y: Math.round(baseY),
+              data: {
+                title: `${baseTitle} ${i + 1}`,
+                prompt: upstreamPrompts[i],
+                aspectKey,
+                modelKey: node.data.modelKey ?? undefined,
+              },
+            });
+            const extraRfId = String(extraDto.id);
+            useBoardStore.getState().setNodes([
+              ...useBoardStore.getState().nodes,
+              {
+                id: extraRfId,
+                type: "reference",
+                position: { x: extraDto.x, y: extraDto.y },
+                data: {
+                  type: "reference",
+                  shortId: extraDto.short_id,
+                  title: `${baseTitle} ${i + 1}`,
+                  prompt: upstreamPrompts[i],
+                  status: "queued",
+                  aspectKey,
+                  modelKey: node.data.modelKey ?? undefined,
+                },
+              },
+            ]);
+            // Dispatch pair i to the new node
+            await get().dispatchGeneration(extraRfId, {
+              prompt: upstreamPrompts[i],
+              kind: "image",
+              aspectRatio,
+              variantCount: 1,
+              imageModel,
+              prompts: [upstreamPrompts[i]],
+              sourceMediaIds: [refMediaIds[i]],
+            });
+          } catch {
+            // Non-fatal: remaining pairs still proceed.
+          }
+        }
+      }
+      return;
+    }
+
+    if (isMultiImageMode) {
+      // ── Mode B: Multi-image (all refs in one request) ──────────────────────
+      // Send all N images as ref_media_ids so the model conditions on all of them.
+      await get().dispatchGeneration(rfId, {
+        prompt,
+        kind: "image",
+        aspectRatio,
+        variantCount: 1,
+        imageModel,
+        prompts: upstreamPrompts.length > 0 ? [prompt] : undefined,
+        sourceMediaIds: refMediaIds,
+      });
+      return;
+    }
+
+    // ── Mode C: Standard single dispatch ──────────────────────────────────────
     const imageCount = Math.max(
       1,
       Math.min(
@@ -339,13 +699,14 @@ async function runNodeDirect(
         4,
       ),
     );
-    const imageModel = normalizeImageModelKey(node.data.modelKey as string | undefined);
+
     await get().dispatchGeneration(rfId, {
       prompt,
       kind: "image",
-      aspectRatio: IMAGE_NODE_ASPECT_TO_FLOW[aspectKey] ?? IMAGE_NODE_ASPECT_TO_FLOW["1:1"],
+      aspectRatio,
       variantCount: imageCount,
       imageModel,
+      prompts: upstreamPrompts.length > 0 ? upstreamPrompts.slice(0, imageCount) : undefined,
     });
     return;
   }
@@ -420,7 +781,7 @@ async function ensureNodeInputsReady(
   visiting.add(targetRfId);
   try {
     const board = useBoardStore.getState();
-    const incomingEdges = board.edges.filter((edge) => edge.target === targetRfId && edge.targetHandle !== "target-text");
+    const incomingEdges = board.edges.filter((edge) => edge.target === targetRfId && !isTextEdge(edge as any, board));
 
     for (const edge of incomingEdges) {
       const sourceNode = board.nodes.find((node) => node.id === edge.source);
@@ -464,9 +825,23 @@ function collectUpstreamRefMediaIds(targetRfId: string, allowedTargetHandles?: s
     const src = nodes.find((n) => n.id === e.source);
     if (!src || !REF_SOURCE_TYPES.has(src.data.type)) continue;
 
-    const { mediaId: chosen } = resolveEdgeMediaSelection(targetRfId, e.id);
-
-    if (chosen) ids.push(chosen);
+    if (src.data.type === "list") {
+      const listItems = Array.isArray(src.data.listItems) ? src.data.listItems : [];
+      const listSelectedIndexes = Array.isArray(src.data.listSelectedIndexes) 
+        ? src.data.listSelectedIndexes.map(Number)
+        : [];
+      const selectedItems = listSelectedIndexes.length > 0
+        ? listItems.filter((_, idx) => listSelectedIndexes.includes(idx))
+        : listItems;
+      const mediaItems = selectedItems.filter((item) => item.kind === "image" || item.kind === "video");
+      const mediaIds = mediaItems
+        .map((item) => (item.flowMediaId ?? item.mediaId) as string)
+        .filter((m) => typeof m === "string" && m.length > 0);
+      ids.push(...mediaIds);
+    } else {
+      const { mediaId: chosen } = resolveEdgeMediaSelection(targetRfId, e.id);
+      if (chosen) ids.push(chosen);
+    }
   }
   return ids;
 }
@@ -624,7 +999,7 @@ async function dispatchEditDerived(
   // Part / Variant for chaining). We pull the first incoming edge's
   // source mediaId; if the upstream is multi-variant we pick variant 0.
   const board = useBoardStore.getState();
-  const upstreamEdge = board.edges.find((e) => e.target === rfId && e.targetHandle !== "target-text")
+  const upstreamEdge = board.edges.find((e) => e.target === rfId && !isTextEdge(e as any, board))
     || board.edges.find((e) => e.target === rfId);
   if (!upstreamEdge) {
     const label = requestType === "gen_part" ? "Part" : "Variant";
@@ -1006,7 +1381,13 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           });
         }
       } else {
-        const refMediaIds = collectUpstreamRefMediaIds(rfId);
+        // If the caller explicitly supplies ref media ids (e.g. paired-dispatch
+        // Mode A where the new node has no upstream edges), prefer those over
+        // auto-collecting from the canvas graph.
+        const refMediaIds =
+          Array.isArray(opts.sourceMediaIds) && opts.sourceMediaIds.length > 0
+            ? opts.sourceMediaIds
+            : collectUpstreamRefMediaIds(rfId);
         // Concept-aware aspect default: humanoid / creature / robot /
         // outfit are vertically biased (full-body T-pose), vehicle /
         // building / weapon / prop want square or landscape. The
