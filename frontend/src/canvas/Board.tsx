@@ -32,6 +32,7 @@ import { AddNodePanel } from "./AddNodePalette";
 import { TextNode } from "./v2/TextNode";
 import { NoteNode } from "./v2/NoteNode";
 import { GroupNodeShell } from "./v2/GroupNodeShell";
+import { ListNode } from "./v2/ListNode";
 import { SelectionContextMenu } from "./SelectionContextMenu";
 import { DashedConnectionLine } from "./DashedConnectionLine";
 
@@ -52,6 +53,7 @@ const nodeTypes = useV2
       text: TextNode,
       add_reference: AddReferenceNode,
       group: GroupNodeShell,
+      list: ListNode,
     }
   : {
       note: NodeCard,
@@ -62,6 +64,7 @@ const nodeTypes = useV2
       text: NodeCard,
       add_reference: AddReferenceNode,
       group: GroupNodeShell,
+      list: NodeCard,
     };
 
 // Single edge type used for everything — VariantEdge renders the
@@ -130,14 +133,31 @@ function DropAddPopover({
     onPick(type, flowPos);
   };
 
+  const sourceNode = useBoardStore.getState().nodes.find((n) => n.id === popover.sourceId);
+  const sourceType = sourceNode?.data?.type;
+  const listItems = Array.isArray(sourceNode?.data?.listItems) ? sourceNode.data.listItems : [];
+  const isText = sourceType === "text" || (sourceType === "list" && listItems.length > 0 && listItems[0]?.kind === "text");
+
   return (
     <div
       className="drop-popover"
       style={{ left: popover.clientX + 8, top: popover.clientY + 8 }}
       role="menu"
       aria-label="Add connected node"
-    >`r`n      <button type="button" className="drop-popover__btn" onClick={() => handle("variant")}>
-        <span className="drop-popover__icon">◇</span> Variant
+    >
+      <button type="button" className="drop-popover__btn" onClick={() => handle("reference")}>
+        <span className="drop-popover__icon">▣</span> Image Generator
+      </button>
+      {!isText && (
+        <button type="button" className="drop-popover__btn" onClick={() => handle("variant")}>
+          <span className="drop-popover__icon">◇</span> Variant
+        </button>
+      )}
+      <button type="button" className="drop-popover__btn" onClick={() => handle("video")}>
+        <span className="drop-popover__icon">▶</span> Video Generator
+      </button>
+      <button type="button" className="drop-popover__btn" onClick={() => handle("list")}>
+        <span className="drop-popover__icon">☰</span> List
       </button>
     </div>
   );
@@ -372,9 +392,9 @@ export function Board({
   // Text nodes (type="text") can only connect to "target-text" handles
   // Image nodes (type="upload"/"reference"/etc) can only connect to "target-image" handles
   // If target has no specific handle id (legacy nodes), allow any connection
-  const TEXT_SOURCE_TYPES = new Set(["text"]);
-  const IMAGE_SOURCE_TYPES = new Set(["upload", "reference", "variant", "add_reference"]);
-  const VIDEO_IMAGE_SOURCE_TYPES = new Set(["upload", "reference", "variant", "add_reference", "video"]);
+  const TEXT_SOURCE_TYPES = new Set(["text", "list"]);
+  const IMAGE_SOURCE_TYPES = new Set(["upload", "reference", "variant", "add_reference", "list"]);
+  const VIDEO_IMAGE_SOURCE_TYPES = new Set(["upload", "reference", "variant", "add_reference", "list", "video"]);
 
   const isValidConnection = useCallback(
     (connection: Connection | Edge) => {

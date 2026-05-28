@@ -90,6 +90,7 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   // just need to stamp them here.
   imageWidth?: number;
   imageHeight?: number;
+  nodeHeight?: number;
   // AI-generated factual description of mediaId (set by /api/vision/describe).
   // Spliced into auto-prompts on downstream nodes for richer context.
   // `null` is the explicit "clear this key" sentinel - undefined would
@@ -98,8 +99,8 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   // force a fresh re-describe under the new vision profile.
   aiBrief?: string | null;
   aiBriefStatus?: "pending" | "done" | "failed";
-  // Transient status while the GenerationDialog runs `autoPrompt` /
-  // `autoPromptBatch` against this node ï¿½ set to "pending" while the
+  // Transient status while auto-prompt / auto-prompt-batch runs against
+  // this node - set to "pending" while the
   // backend is composing the prompt, cleared on success/failure. Not
   // persisted to the DB; it's a few-second UX flag so the node can
   // render a visible "busy" treatment that blocks duplicate dispatches.
@@ -123,6 +124,11 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   cameraMode?: string;
   startImageMediaId?: string;
   endImageMediaId?: string;
+  listItems?: Array<Record<string, unknown>>;
+  listViewMode?: "grid" | "list";
+  listIntakeMode?: "keep" | "replace";
+  listSelectionMode?: boolean;
+  listSelectedIndexes?: number[];
   // Character-builder selections ï¿½ persisted on dispatch so the detail
   // panel can show "Country / Vibe / Gender" pills under METADATA. Keys
   // (`vn`, `clean`, `female`) match the constants in
@@ -215,17 +221,29 @@ function edgeFromDto(dto: {
 
 function defaultTargetHandleForConnection(sourceNode?: FlowNode, targetNode?: FlowNode): string | undefined {
   if (!sourceNode || !targetNode) return undefined;
+  const sourceType = sourceNode.type ?? sourceNode.data?.type;
+  const listItems = Array.isArray(sourceNode.data?.listItems) ? sourceNode.data.listItems : [];
+  const isTextSource = sourceType === "text" || (sourceType === "list" && listItems.length > 0 && listItems[0]?.kind === "text");
+
   if (targetNode.data?.type === "video") {
-    const sourceType = sourceNode.type ?? sourceNode.data?.type;
-    return sourceType === "text" ? "target-text" : "target-start-image";
+    return isTextSource ? "target-text" : "target-start-image";
+  }
+  if (targetNode.data?.type === "list") {
+    return isTextSource ? "target-text" : "target-image";
   }
   if (targetNode.data?.type !== "reference" && targetNode.data?.type !== "variant") {
     return "target";
   }
-  const sourceType = sourceNode.type ?? sourceNode.data?.type;
-  return sourceType === "text" ? "target-text" : "target-image";
+  return isTextSource ? "target-text" : "target-image";
 }
 
+function defaultSourceHandleForConnection(sourceNode?: FlowNode, targetNode?: FlowNode, targetHandle?: string): string {
+  const sourceType = sourceNode?.type ?? sourceNode?.data?.type;
+  if (sourceType === "list") {
+    return targetHandle === "target-text" || targetNode?.data?.type === "text" ? "source-text" : "source-image";
+  }
+  return "source";
+}
 function cloneSnapshot(snapshot: BoardSnapshot): BoardSnapshot {
   return {
     nodes: structuredClone(snapshot.nodes),
@@ -415,6 +433,7 @@ const TYPE_TITLE: Partial<Record<NodeType, string>> = {
   variant: "Variant",
   video: "Video Generator",
   upload: "Upload",
+  list: "List",
   text: "Text",
   add_reference: "Add Reference",
   group: "Group",
@@ -1166,7 +1185,9 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   async addNodeOfType(type, position) {
     const { boardId, nodes } = get();
     if (boardId === null) return null;
-    const title = TYPE_TITLE[type];
+    const title = type === "list"
+      ? `List #${nodes.filter((node) => (node.data.type ?? node.type) === "list").length + 1}`
+      : TYPE_TITLE[type];
     // Per-type seed data. `add_reference` MUST land with an explicit
     // `refType` so the auto-brief vision call routes through the
     // material-mode prompt for material tags. Without this, freshly
@@ -1177,6 +1198,13 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     const seedData: Record<string, unknown> = { title };
     if (type === "add_reference") {
       seedData.refType = "texture";
+    }
+    if (type === "list") {
+      seedData.listViewMode = "grid";
+      seedData.listIntakeMode = "replace";
+      seedData.listSelectionMode = false;
+      seedData.listSelectedIndexes = [];
+      seedData.nodeWidth = 580;
     }
     try {
       const dto = await createNode({
@@ -1211,6 +1239,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         "upload",
         "add_reference",
         "variant",
+        "list",
       ]);
       if (DOWNSTREAM_TYPES.has(type)) {
         const selected = nodes.filter((n) => n.selected);
@@ -1325,7 +1354,6 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     const sourceId = parseInt(source, 10);
     const targetId = parseInt(target, 10);
     if (isNaN(sourceId) || isNaN(targetId)) return;
-    const resolvedSourceHandle = sourceHandle || "source";
     const resolvedTargetHandle =
       targetHandle && targetHandle.trim()
         ? targetHandle
@@ -1333,6 +1361,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
             nodes.find((n) => n.id === source),
             nodes.find((n) => n.id === target),
           );
+    const resolvedSourceHandle = sourceHandle || defaultSourceHandleForConnection(
+      nodes.find((n) => n.id === source),
+      nodes.find((n) => n.id === target),
+      resolvedTargetHandle,
+    );
     try {
       const dto = await createEdge({
         board_id: boardId,
@@ -1959,3 +1992,8 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   setEdges: (edges) => set({ edges }),
   clearError: () => set({ error: null }),
 }));
+
+if (typeof window !== "undefined") {
+  (window as any).useBoardStore = useBoardStore;
+}
+
