@@ -16,6 +16,7 @@ import { DropdownCaret } from "./shared/DropdownCaret";
 import { PickerDropdown } from "./shared/PickerDropdown";
 import { edgeHandleClass, EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET } from "./shared/edgeHandle";
 import { normalizeImageModelKey, type ActiveImageModelKey } from "../../store/settings";
+import { FluidGradientStyles } from "./GoogleFlowStudio";
 
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 600;
@@ -189,7 +190,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
           "relative overflow-visible transition-all duration-300 ease-out",
           "border-[3px] border-white/[0.14] shadow-[0_8px_28px_-10px_rgba(0,0,0,0.6)]",
           selected && "ring-2 ring-accent/50",
-          isRunning && "ring-2 ring-accent/30 animate-pulse",
+          isRunning && "ring-2 ring-accent/30",
         )}
         style={{ borderRadius: BORDER_RADIUS, backgroundColor: "#1a1a1a" }}
       >
@@ -285,18 +286,42 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
             </div>
           )}
 
-          {/* ── Running shimmer overlay ───────────────────────────────────────
-               Gradient sweep animation while generation is in progress.
-               Works over both the empty state and any existing image. */}
+          {/* ── Google Flow Shifting Fluid Organic Loading Overlay ───────────────────────────────────────
+               Organic metallic liquid blobs moving dynamically, mix-blended with blur and dither. */}
           {isRunning && !showVariantGrid && (
             <div
-              className="absolute inset-0 z-[4] overflow-hidden flow-generating-sheen"
+              className="absolute inset-0 z-[4] overflow-hidden"
               style={{ borderRadius: BORDER_RADIUS - 3 }}
             >
-              <ImageUp size={16} className="absolute top-3 left-3 text-white/35" />
-              <span className="absolute top-3 right-3 text-2xs font-semibold font-mono text-white/45">
-                {simulatedProgress}%
-              </span>
+              <FluidGradientStyles speedModifier={1} />
+              <div className="absolute inset-0 bg-[#16171a]" />
+              
+              {/* Màng lỏng chuyển động dập dềnh */}
+              <div className="absolute inset-0 filter blur-[60px] mix-blend-screen opacity-[0.95]">
+                <div className="absolute -bottom-[20%] -left-[15%] w-[75%] h-[75%] rounded-full bg-gradient-to-tr from-[#8a8c94] to-[#3a3c40] animate-fluid-1 opacity-80" />
+                <div className="absolute -top-[15%] -right-[10%] w-[65%] h-[65%] rounded-full bg-[#404248] animate-fluid-2 opacity-60" />
+                <div className="absolute top-[25%] left-[20%] w-[55%] h-[55%] rounded-full bg-[#242528] animate-fluid-3 opacity-50" />
+              </div>
+
+              <div className="absolute inset-0 bg-[radial-gradient(#27272a_0.6px,transparent_1px)] bg-[length:2.5px_2.5px] opacity-[0.22] pointer-events-none mix-blend-overlay" />
+              <div className="absolute inset-0 bg-gradient-to-tr from-black/20 via-transparent to-black/10 pointer-events-none" />
+
+              {/* Overlays tối giản góc trên */}
+              <div className="absolute inset-0 flex flex-col justify-between p-4 pointer-events-none">
+                <div className="flex items-start justify-between">
+                  <div className="text-white/60 p-0.5">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-[18px] w-[18px] opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                      <rect x="3" y="3" width="18" height="18" rx="2.5" ry="2.5" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <polyline points="21 15 16 10 5 21" />
+                    </svg>
+                  </div>
+
+                  <div className="text-white/60 font-sans text-xs font-semibold tracking-tight opacity-95">
+                    {Math.floor(simulatedProgress)}%
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 

@@ -564,10 +564,12 @@ async function runNodeDirect(
     const textEdge = board.edges.find((e) => e.target === rfId && e.targetHandle === "target-text");
     const textSourceNode = textEdge ? board.nodes.find((n) => n.id === textEdge.source) : null;
     const upstreamPrompts = textSourceNode
-      ? collectListItemsFromNode(textSourceNode as any)
-          .filter((item) => item.kind === "text")
-          .map((item) => String(item.text || item.title || "").trim())
-          .filter(Boolean)
+      ? (textSourceNode.data.type === "list"
+          ? collectListItemsFromNode(textSourceNode as any)
+              .filter((item) => item.kind === "text")
+              .map((item) => String(item.text || item.title || "").trim())
+              .filter(Boolean)
+          : [((textSourceNode.data.prompt as string | undefined) ?? "").trim()].filter(Boolean))
       : [];
 
     const prompt = upstreamPrompts[0] || ((node.data.prompt as string | undefined) ?? "").trim();
