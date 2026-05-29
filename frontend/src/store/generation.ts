@@ -707,10 +707,19 @@ async function runNodeDirect(
     const startNode = startEdge ? board.nodes.find((n) => n.id === startEdge.source) : undefined;
     const startMediaIds = startNode
       ? (startNode.data.type === "list"
-          ? collectListItemsFromNode(startNode as any)
-              .filter((item) => item.kind === "image" || item.kind === "video")
-              .map((item) => item.mediaId)
-              .filter((m): m is string => typeof m === "string" && m.length > 0)
+          ? (() => {
+              const listItems = Array.isArray(startNode.data.listItems) ? startNode.data.listItems : [];
+              const listSelectedIndexes = Array.isArray(startNode.data.listSelectedIndexes)
+                ? startNode.data.listSelectedIndexes.map(Number)
+                : [];
+              const selectedItems = listSelectedIndexes.length > 0
+                ? listItems.filter((_, idx) => listSelectedIndexes.includes(idx))
+                : listItems;
+              return selectedItems
+                .filter((item) => item.kind === "image" || item.kind === "video")
+                .map((item) => item.mediaId)
+                .filter((m): m is string => typeof m === "string" && m.length > 0);
+            })()
           : (Array.isArray(startNode.data.mediaIds) ? startNode.data.mediaIds : [startNode.data.mediaId]).filter((m): m is string => typeof m === "string" && m.length > 0))
       : [];
 
