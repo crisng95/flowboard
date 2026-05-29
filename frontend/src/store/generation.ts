@@ -603,74 +603,18 @@ async function runNodeDirect(
 
     if (isPairedMode) {
       // ── Mode A: Paired dispatch ────────────────────────────────────────────
-      // Dispatch the first pair onto the original node, then create new
-      // reference nodes for each subsequent pair.
-      const pairCount = upstreamPrompts.length;
-      const baseX = node.position?.x ?? 0;
-      const baseY = node.position?.y ?? 0;
-      const baseTitle = (node.data.title as string | undefined) ?? "Image";
-      const boardId = board.boardId;
-
-      // Pair 0 → dispatch to the existing node (rfId)
+      // Dispatch all N pairs in a single batch request on the original node (rfId).
+      // The backend SDK pairs them 1-to-1. Results are saved in the node's mediaIds,
+      // and only the first image is visually displayed on the card itself.
       await get().dispatchGeneration(rfId, {
         prompt: upstreamPrompts[0],
         kind: "image",
         aspectRatio,
-        variantCount: 1,
+        variantCount: upstreamPrompts.length,
         imageModel,
-        prompts: [upstreamPrompts[0]],
-        sourceMediaIds: [refMediaIds[0]],
+        prompts: upstreamPrompts,
+        sourceMediaIds: refMediaIds,
       });
-
-      // Pairs 1..N-1 → create new nodes and dispatch to them
-      if (boardId !== null) {
-        for (let i = 1; i < pairCount; i++) {
-          try {
-            const extraDto = await createNode({
-              board_id: boardId,
-              type: "reference",
-              x: Math.round(baseX + i * 380),
-              y: Math.round(baseY),
-              data: {
-                title: `${baseTitle} ${i + 1}`,
-                prompt: upstreamPrompts[i],
-                aspectKey,
-                modelKey: node.data.modelKey ?? undefined,
-              },
-            });
-            const extraRfId = String(extraDto.id);
-            useBoardStore.getState().setNodes([
-              ...useBoardStore.getState().nodes,
-              {
-                id: extraRfId,
-                type: "reference",
-                position: { x: extraDto.x, y: extraDto.y },
-                data: {
-                  type: "reference",
-                  shortId: extraDto.short_id,
-                  title: `${baseTitle} ${i + 1}`,
-                  prompt: upstreamPrompts[i],
-                  status: "queued",
-                  aspectKey,
-                  modelKey: node.data.modelKey ?? undefined,
-                },
-              },
-            ]);
-            // Dispatch pair i to the new node
-            await get().dispatchGeneration(extraRfId, {
-              prompt: upstreamPrompts[i],
-              kind: "image",
-              aspectRatio,
-              variantCount: 1,
-              imageModel,
-              prompts: [upstreamPrompts[i]],
-              sourceMediaIds: [refMediaIds[i]],
-            });
-          } catch {
-            // Non-fatal: remaining pairs still proceed.
-          }
-        }
-      }
       return;
     }
 
@@ -1287,7 +1231,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
 
     // Optimistically update node — record variantCount so the placeholder
     // grid matches the eventual variant count even before generation finishes.
-    const variantCount = Math.max(1, Math.min(opts.variantCount ?? 1, 4));
+    const variantCount = Math.max(1, Math.min(opts.variantCount ?? 1, 99));
     useBoardStore.getState().updateNodeData(rfId, {
       status: "queued",
       prompt: opts.prompt,
