@@ -1161,14 +1161,15 @@ async function runCloudFlowJob(cloud, job) {
           for (const wf of workflows) {
             try {
               const pollRes = await flowApi.getMediaWorkflow(wf.primary_media_id);
+              console.log('[Flowboard] getMediaWorkflow raw response:', JSON.stringify(pollRes));
               const wData = pollRes.raw?.data || pollRes.raw;
-              const video = wData.video;
-              if (video && (video.encodedVideo || video.fifeUrl)) {
+              const video = wData?.video || wData?.metadata?.video || wData?.response?.video;
+              if (video && (video.encodedVideo || video.fifeUrl || video.servingBaseUri)) {
                 currentOps.push({
                   name: wf.name,
                   done: true,
                   media_id: wf.primary_media_id,
-                  fifeUrl: video.fifeUrl || null,
+                  fifeUrl: video.fifeUrl || video.servingBaseUri || null,
                   encodedVideo: video.encodedVideo || null,
                 });
               } else {
@@ -1183,6 +1184,7 @@ async function runCloudFlowJob(cloud, job) {
           finishedCount = finalOps.filter(o => o.done).length;
         } else {
           const pollRes = await flowApi.checkVideoOperations(opNames, project.projectId);
+          console.log('[Flowboard] checkVideoOperations raw response:', JSON.stringify(pollRes));
           const pData = pollRes.raw?.data || pollRes.raw;
           const operations = Array.isArray(pData.operations) ? pData.operations : [];
           
@@ -1200,11 +1202,11 @@ async function runCloudFlowJob(cloud, job) {
               }
               
               if (isDone) {
-                const video = inner.metadata?.video || inner.video;
-                const fifeUrl = video?.fifeUrl;
+                const video = inner.metadata?.video || inner.video || inner.response?.video || found.metadata?.video || found.video || found.response?.video;
+                const fifeUrl = video?.fifeUrl || video?.servingBaseUri || video?.url;
                 if (fifeUrl) {
-                  const match = fifeUrl.match(/\/video\/([^?\/]+)/);
-                  const mediaId = match ? match[1] : (video.mediaId || video.mediaGenerationId);
+                  const match = fifeUrl.match(/\/(?:video|image)\/([a-zA-Z0-9\-]+)/);
+                  const mediaId = match ? match[1] : (video.mediaId || video.mediaGenerationId || opReqName);
                   currentOps.push({
                     name: opReqName,
                     done: true,
