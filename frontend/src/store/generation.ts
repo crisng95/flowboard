@@ -717,10 +717,14 @@ async function runNodeDirect(
                 : listItems;
               return selectedItems
                 .filter((item) => item.kind === "image" || item.kind === "video")
-                .map((item) => item.mediaId)
+                .map((item) => item.flowMediaId ?? item.mediaId)
                 .filter((m): m is string => typeof m === "string" && m.length > 0);
             })()
-          : (Array.isArray(startNode.data.mediaIds) ? startNode.data.mediaIds : [startNode.data.mediaId]).filter((m): m is string => typeof m === "string" && m.length > 0))
+          : (Array.isArray(startNode.data.flowMediaIds) && startNode.data.flowMediaIds.length > 0
+              ? startNode.data.flowMediaIds
+              : (Array.isArray(startNode.data.mediaIds) ? startNode.data.mediaIds : [startNode.data.flowMediaId ?? startNode.data.mediaId])
+            ).filter((m): m is string => typeof m === "string" && m.length > 0)
+        )
       : [];
 
     const prompt = upstreamPrompts[0] || ((node.data.prompt as string | undefined) ?? "").trim();

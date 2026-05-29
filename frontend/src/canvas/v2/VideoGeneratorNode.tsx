@@ -154,17 +154,45 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
   const startNode = startEdge ? allNodes.find((n) => n.id === startEdge.source) : undefined;
   const startMediaIds = (Array.isArray(startNode?.data.mediaIds) ? startNode.data.mediaIds : [])
     .filter((m): m is string => typeof m === "string" && m.length > 0);
-  const startMediaId = typeof startNode?.data.mediaId === "string"
-    ? startNode.data.mediaId
-    : (startMediaIds[0] ?? undefined);
+  const startMediaId = (() => {
+    if (!startNode) return undefined;
+    if (startNode.data.type === "list") {
+      const listItems = Array.isArray(startNode.data.listItems) ? startNode.data.listItems : [];
+      const listSelectedIndexes = Array.isArray(startNode.data.listSelectedIndexes)
+        ? startNode.data.listSelectedIndexes.map(Number)
+        : [];
+      const selectedItems = listSelectedIndexes.length > 0
+        ? listItems.filter((_, idx) => listSelectedIndexes.includes(idx))
+        : listItems;
+      const mediaItems = selectedItems.filter((item: any) => item.kind === "image" || item.kind === "video");
+      return mediaItems[0]?.mediaId ?? undefined;
+    }
+    return typeof startNode.data.mediaId === "string"
+      ? startNode.data.mediaId
+      : (startMediaIds[0] ?? undefined);
+  })();
 
   const endEdge = edges.find((e) => e.target === rfId && e.targetHandle === "target-end-image");
   const endNode = endEdge ? allNodes.find((n) => n.id === endEdge.source) : undefined;
   const endMediaIds = (Array.isArray(endNode?.data.mediaIds) ? endNode.data.mediaIds : [])
     .filter((m): m is string => typeof m === "string" && m.length > 0);
-  const endMediaId = typeof endNode?.data.mediaId === "string"
-    ? endNode.data.mediaId
-    : (endMediaIds[0] ?? undefined);
+  const endMediaId = (() => {
+    if (!endNode) return undefined;
+    if (endNode.data.type === "list") {
+      const listItems = Array.isArray(endNode.data.listItems) ? endNode.data.listItems : [];
+      const listSelectedIndexes = Array.isArray(endNode.data.listSelectedIndexes)
+        ? endNode.data.listSelectedIndexes.map(Number)
+        : [];
+      const selectedItems = listSelectedIndexes.length > 0
+        ? listItems.filter((_, idx) => listSelectedIndexes.includes(idx))
+        : listItems;
+      const mediaItems = selectedItems.filter((item: any) => item.kind === "image" || item.kind === "video");
+      return mediaItems[0]?.mediaId ?? undefined;
+    }
+    return typeof endNode.data.mediaId === "string"
+      ? endNode.data.mediaId
+      : (endMediaIds[0] ?? undefined);
+  })();
 
   const hasTextConnection = edges.some((e) => e.target === rfId && e.targetHandle === "target-text");
   const upstreamTextEdge = edges.find((e) => e.target === rfId && e.targetHandle === "target-text");
