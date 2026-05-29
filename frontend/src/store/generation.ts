@@ -39,7 +39,7 @@ interface GenerationState {
       kind?: "image" | "video";
       sourceMediaId?: string;
       // Multi-source overrides:
-      //   - i2v batch: upstream image has N variants → generate one video per variant.
+      //   - i2v batch: upstream image has N variants ? generate one video per variant.
       //     Backend sends N items in batchAsyncGenerate so all are dispatched together.
       //   - Paired dispatch (Mode A): explicit ref_media_ids for one slot in a
       //     prompt-image zip — bypasses collectUpstreamRefMediaIds so each new
@@ -216,6 +216,47 @@ function collectListItemsFromNode(node: { id: string; data: Record<string, unkno
   }));
 }
 
+export function collectSelectedListMediaItems(node: { id: string; data: Record<string, unknown> }): Array<Record<string, unknown>> {
+  const listItems = collectListItemsFromNode(node);
+  const mediaItems = listItems.filter((item) => item.kind === "image" || item.kind === "video");
+  const selectedIndexes = Array.isArray(node.data.listSelectedIndexes)
+    ? node.data.listSelectedIndexes.map(Number).filter((value) => Number.isInteger(value) && value >= 0)
+    : [];
+  if (selectedIndexes.length > 0) {
+    return listItems
+      .filter((_, index) => selectedIndexes.includes(index))
+      .filter((item) => item.kind === "image" || item.kind === "video");
+  }
+
+  const narrowedFlowMediaIds = Array.isArray(node.data.flowMediaIds)
+    ? node.data.flowMediaIds.filter((value): value is string => typeof value === "string" && value.length > 0)
+    : [];
+  const narrowedMediaIds = Array.isArray(node.data.mediaIds)
+    ? node.data.mediaIds.filter((value): value is string => typeof value === "string" && value.length > 0)
+    : [];
+  const looksNarrowed = (
+    (narrowedFlowMediaIds.length > 0 && narrowedFlowMediaIds.length < mediaItems.length)
+    || (narrowedMediaIds.length > 0 && narrowedMediaIds.length < mediaItems.length)
+  );
+
+  if (looksNarrowed) {
+    const narrowedKeys = new Set<string>([
+      ...narrowedFlowMediaIds,
+      ...narrowedMediaIds,
+    ]);
+    const narrowedItems = mediaItems.filter((item) => {
+      const flowId = typeof item.flowMediaId === "string" ? item.flowMediaId : null;
+      const mediaId = typeof item.mediaId === "string" ? item.mediaId : null;
+      return (flowId && narrowedKeys.has(flowId)) || (mediaId && narrowedKeys.has(mediaId));
+    });
+    if (narrowedItems.length > 0) {
+      return narrowedItems;
+    }
+  }
+
+  return mediaItems;
+}
+
 function isMediaSourceType(type: string | undefined): boolean {
   return type === "reference" || type === "variant" || type === "video" || type === "upload" || type === "list" || type === "add_reference";
 }
@@ -295,11 +336,11 @@ async function waitForNodeSettled(
 // remembers exactly WHICH variant feeds the downstream — stored on
 // `edge.data.sourceVariantIdx`. Resolution rules per edge:
 //   1. If the edge has a pinned `sourceVariantIdx` AND the source has
-//      a `mediaIds[idx]` entry there → use it.
-//   2. Else if the source has an active `mediaId` → use it
+//      a `mediaIds[idx]` entry there ? use it.
+//   2. Else if the source has an active `mediaId` ? use it
 //      (single-variant case; or multi-variant where the user hasn't
 //      pinned yet — variant 0 is the natural default).
-//   3. Else if the source has a non-empty `mediaIds[]` → use index 0.
+//   3. Else if the source has a non-empty `mediaIds[]` ? use index 0.
 // One ref per edge means one Flow API call regardless of how many
 // variants the upstream has — the user picks which variant feeds
 // which downstream by clicking the variant tile (Stage 2 UX).
@@ -409,16 +450,10 @@ export function resolveEdgeMediaSelection(targetRfId: string, edgeId: string): {
     .filter((m): m is string => typeof m === "string" && m.length > 0);
 
   if (src.data.type === "list") {
-    const listSelectedIndexes = Array.isArray(src.data.listSelectedIndexes) 
-      ? src.data.listSelectedIndexes.map(Number)
-      : [];
-    if (listSelectedIndexes.length > 0) {
-      const listItems = Array.isArray(src.data.listItems) ? src.data.listItems : [];
-      const selectedItems = listItems.filter((_, idx) => listSelectedIndexes.includes(idx));
-      const selectedMediaItems = selectedItems.filter((item) => item.kind === "image" || item.kind === "video");
-      
+    const selectedMediaItems = collectSelectedListMediaItems(src as { id: string; data: Record<string, unknown> });
+    if (selectedMediaItems.length > 0) {
       flowVariants = selectedMediaItems
-        .map((item) => (item.flowMediaId ?? item.mediaId) as string)
+        .map((item) => (item.mediaUrl ?? item.imageUrl ?? item.mediaId ?? item.flowMediaId) as string)
         .filter((m) => typeof m === "string" && m.length > 0);
       mediaIds = selectedMediaItems
         .map((item) => item.mediaId as string)
@@ -464,8 +499,20 @@ async function runNodeDirect(
   if (nodeType === "list") {
     const intakeMode = (node.data.listIntakeMode as string | undefined) === "keep" ? "keep" : "replace";
     const incomingEdges = board.edges.filter((edge) => edge.target === rfId);
+    const existingItems = dedupeListItems(collectListItemsFromNode(node as { id: string; data: Record<string, unknown> }));
+    const existingSelectedIndexes = Array.isArray(node.data.listSelectedIndexes)
+      ? node.data.listSelectedIndexes
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value >= 0 && value < existingItems.length)
+      : [];
+    const existingSelectedSignatures = new Set(
+      existingSelectedIndexes
+        .map((index) => existingItems[index])
+        .filter((item): item is Record<string, unknown> => !!item)
+        .map((item) => listItemSignature(item)),
+    );
     const currentItems = intakeMode === "keep"
-      ? dedupeListItems(collectListItemsFromNode(node as { id: string; data: Record<string, unknown> }))
+      ? existingItems
       : [];
     const items: Array<Record<string, unknown>> = [];
 
@@ -520,18 +567,24 @@ async function runNodeDirect(
     }
 
     const nextItems = dedupeListItems(intakeMode === "replace" ? items : [...currentItems, ...items]);
-    const mediaItems = nextItems.filter((item) => item.kind === "image" || item.kind === "video");
-    const mediaIds = mediaItems
+    const nextSelectedIndexes = existingSelectedSignatures.size > 0
+      ? nextItems.flatMap((item, index) => existingSelectedSignatures.has(listItemSignature(item)) ? [index] : [])
+      : [];
+    const activeMediaItems = (nextSelectedIndexes.length > 0
+      ? nextItems.filter((_, index) => nextSelectedIndexes.includes(index))
+      : nextItems)
+      .filter((item) => item.kind === "image" || item.kind === "video");
+    const mediaIds = activeMediaItems
       .map((item) => item.mediaId)
       .filter((value): value is string => typeof value === "string" && value.length > 0);
-    const flowMediaIds = mediaItems
+    const flowMediaIds = activeMediaItems
       .map((item) => item.flowMediaId ?? item.mediaId)
       .filter((value): value is string => typeof value === "string" && value.length > 0);
 
     useBoardStore.getState().updateNodeData(rfId, {
       status: "done",
       listItems: nextItems,
-      listSelectedIndexes: [],
+      listSelectedIndexes: nextSelectedIndexes,
       mediaIds,
       mediaId: mediaIds[0] ?? undefined,
       flowMediaIds,
@@ -546,7 +599,7 @@ async function runNodeDirect(
         status: "done",
         data: {
           listItems: nextItems,
-          listSelectedIndexes: [],
+          listSelectedIndexes: nextSelectedIndexes,
           mediaIds,
           mediaId: mediaIds[0] ?? null,
           flowMediaIds,
@@ -637,7 +690,7 @@ async function runNodeDirect(
       !isPairedMode && refMediaIds.length >= 2 && upstreamPrompts.length <= 1;
 
     if (isPairedMode) {
-      // ── Mode A: Paired dispatch ────────────────────────────────────────────
+      // -- Mode A: Paired dispatch --------------------------------------------
       // Dispatch all N pairs in a single batch request on the original node (rfId).
       // The backend SDK pairs them 1-to-1. Results are saved in the node's mediaIds,
       // and only the first image is visually displayed on the card itself.
@@ -655,7 +708,7 @@ async function runNodeDirect(
     }
 
     if (isMultiImageMode) {
-      // ── Mode B: Multi-image (all refs in one request) ──────────────────────
+      // -- Mode B: Multi-image (all refs in one request) ----------------------
       // Send all N images as ref_media_ids so the model conditions on all of them.
       await get().dispatchGeneration(rfId, {
         prompt,
@@ -669,7 +722,7 @@ async function runNodeDirect(
       return;
     }
 
-    // ── Mode C: Standard single dispatch ──────────────────────────────────────
+    // -- Mode C: Standard single dispatch --------------------------------------
     const imageCount = Math.max(
       1,
       Math.min(
@@ -686,7 +739,9 @@ async function runNodeDirect(
       aspectRatio,
       variantCount: imageCount,
       imageModel,
+      sourceMediaId: refMediaIds.length === 1 && imageCount === 1 ? refMediaIds[0] : undefined,
       prompts: upstreamPrompts.length > 0 ? upstreamPrompts.slice(0, imageCount) : undefined,
+      sourceMediaIds: refMediaIds.length > 0 ? refMediaIds : undefined,
     });
     return;
   }
@@ -707,19 +762,9 @@ async function runNodeDirect(
     const startNode = startEdge ? board.nodes.find((n) => n.id === startEdge.source) : undefined;
     const startMediaIds = startNode
       ? (startNode.data.type === "list"
-          ? (() => {
-              const listItems = Array.isArray(startNode.data.listItems) ? startNode.data.listItems : [];
-              const listSelectedIndexes = Array.isArray(startNode.data.listSelectedIndexes)
-                ? startNode.data.listSelectedIndexes.map(Number)
-                : [];
-              const selectedItems = listSelectedIndexes.length > 0
-                ? listItems.filter((_, idx) => listSelectedIndexes.includes(idx))
-                : listItems;
-              return selectedItems
-                .filter((item) => item.kind === "image" || item.kind === "video")
-                .map((item) => item.flowMediaId ?? item.mediaId)
-                .filter((m): m is string => typeof m === "string" && m.length > 0);
-            })()
+          ? collectSelectedListMediaItems(startNode as { id: string; data: Record<string, unknown> })
+              .map((item) => item.mediaUrl ?? item.imageUrl ?? item.mediaId ?? item.flowMediaId)
+              .filter((m): m is string => typeof m === "string" && m.length > 0)
           : (Array.isArray(startNode.data.flowMediaIds) && startNode.data.flowMediaIds.length > 0
               ? startNode.data.flowMediaIds
               : (Array.isArray(startNode.data.mediaIds) ? startNode.data.mediaIds : [startNode.data.flowMediaId ?? startNode.data.mediaId])
@@ -729,6 +774,24 @@ async function runNodeDirect(
 
     const prompt = upstreamPrompts[0] || ((node.data.prompt as string | undefined) ?? "").trim();
     if (!prompt) throw new Error("video_node_missing_prompt");
+
+    console.log("[Flowboard][video-dispatch-ui]", {
+      rfId,
+      startEdgeId: startEdge?.id ?? null,
+      startNodeType: startNode ? primaryNodeType(startNode) : null,
+      startMediaIds,
+      startMediaId: startMediaIds[0] ?? null,
+      selectedIndexes: startNode?.data.type === "list" ? startNode.data.listSelectedIndexes ?? [] : null,
+      selectedListItems: startNode?.data.type === "list"
+        ? collectSelectedListMediaItems(startNode as { id: string; data: Record<string, unknown> }).map((item) => ({
+            id: item.id,
+            kind: item.kind,
+            mediaId: item.mediaId,
+            flowMediaId: item.flowMediaId,
+            title: item.title,
+          }))
+        : null,
+    });
 
     const videoModel = ((node.data.videoModel as string | undefined) ?? "veo") as "veo" | "omni_flash";
     const settings = useSettingsStore.getState();
@@ -747,6 +810,7 @@ async function runNodeDirect(
     const cameraInstruction = VIDEO_CAMERA_INSTRUCTIONS[cameraMode] ?? "";
 
     const hasBatchInputs = upstreamPrompts.length > 1 && startMediaIds.length > 1;
+    const forceArraySource = startNode?.data.type === "list" && startMediaIds.length > 0;
     const batchMode = (node.data.batchMode as "zip" | "cross") || "cross";
 
     if (hasBatchInputs) {
@@ -790,7 +854,8 @@ async function runNodeDirect(
       kind: "video",
       aspectRatio,
       variantCount: 1,
-      sourceMediaId: startMediaId,
+      sourceMediaIds: forceArraySource ? startMediaIds : undefined,
+      sourceMediaId: forceArraySource ? undefined : startMediaId,
     });
     return;
   }
@@ -883,16 +948,8 @@ function collectUpstreamRefMediaIds(targetRfId: string, allowedTargetHandles?: s
     if (!src || !REF_SOURCE_TYPES.has(src.data.type)) continue;
 
     if (src.data.type === "list") {
-      const listItems = Array.isArray(src.data.listItems) ? src.data.listItems : [];
-      const listSelectedIndexes = Array.isArray(src.data.listSelectedIndexes) 
-        ? src.data.listSelectedIndexes.map(Number)
-        : [];
-      const selectedItems = listSelectedIndexes.length > 0
-        ? listItems.filter((_, idx) => listSelectedIndexes.includes(idx))
-        : listItems;
-      const mediaItems = selectedItems.filter((item) => item.kind === "image" || item.kind === "video");
-      const mediaIds = mediaItems
-        .map((item) => (item.flowMediaId ?? item.mediaId) as string)
+      const mediaIds = collectSelectedListMediaItems(src as { id: string; data: Record<string, unknown> })
+        .map((item) => (item.mediaUrl ?? item.imageUrl ?? item.mediaId ?? item.flowMediaId) as string)
         .filter((m) => typeof m === "string" && m.length > 0);
       ids.push(...mediaIds);
     } else {
@@ -1070,28 +1127,8 @@ async function dispatchEditDerived(
     return;
   }
   const upstreamNode = board.nodes.find((n) => n.id === upstreamEdge.source);
-  // Variant pin support — same logic as collectUpstreamRefMediaIds.
-  const variants = Array.isArray(upstreamNode?.data.mediaIds)
-    ? (upstreamNode!.data.mediaIds as (string | null)[])
-    : [];
-  const pinned = (upstreamEdge.data?.sourceVariantIdx ?? null) as number | null;
-  let sourceMediaId: string | undefined;
-  if (
-    pinned !== null
-    && pinned >= 0
-    && pinned < variants.length
-    && typeof variants[pinned] === "string"
-    && variants[pinned]
-  ) {
-    sourceMediaId = variants[pinned] as string;
-  } else if (typeof upstreamNode?.data.mediaId === "string" && upstreamNode.data.mediaId) {
-    sourceMediaId = upstreamNode.data.mediaId;
-  } else if (variants.length > 0) {
-    const fallback = variants.find(
-      (m): m is string => typeof m === "string" && !!m,
-    );
-    if (fallback) sourceMediaId = fallback;
-  }
+  const resolvedSource = resolveEdgeMediaSelection(rfId, upstreamEdge.id);
+  const sourceMediaId = resolvedSource.mediaId ?? undefined;
   if (!sourceMediaId) {
     set({
       error: "Upstream node has no media yet — generate it first.",
@@ -1106,7 +1143,7 @@ async function dispatchEditDerived(
   const node = board.nodes.find((n) => n.id === rfId);
   // Carry the upstream's aspect through if the caller didn't set
   // one — Part / Variant inherits framing intent from the Concept
-  // it's derived from (a portrait Concept → portrait Variant feels
+  // it's derived from (a portrait Concept ? portrait Variant feels
   // right; user can override via the dialog later).
   const aspectRatio =
     (optsAspectRatio as string | undefined)
@@ -1424,7 +1461,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             // Flow > TIER_ONE fallback. The dialog no longer asks the user.
             paygate_tier:
               opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
-            // Backend resolves [tier][quality][aspect] → Flow model key.
+            // Backend resolves [tier][quality][aspect] ? Flow model key.
             video_quality: settings.videoQuality,
           };
           if (hasMulti) {
@@ -1432,6 +1469,13 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           } else {
             videoParams.start_media_id = startMediaId;
           }
+          console.log("[Flowboard][video-request-create]", {
+            rfId,
+            hasMulti,
+            startMediaId: startMediaId ?? null,
+            startMediaIds: startMediaIds ?? null,
+            videoParams,
+          });
           reqDto = await createRequest({
             type: "gen_video",
             node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
@@ -1472,6 +1516,12 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             opts.aspectRatio = "IMAGE_ASPECT_RATIO_LANDSCAPE";
           }
         }
+        const editSourceMediaId = typeof opts.sourceMediaId === "string" && opts.sourceMediaId.length > 0
+          ? opts.sourceMediaId
+          : (refMediaIds.length === 1 && variantCount === 1 ? refMediaIds[0] : undefined);
+        const effectiveRefMediaIds = editSourceMediaId
+          ? refMediaIds.filter((mediaId) => mediaId !== editSourceMediaId)
+          : refMediaIds;
         const params: Record<string, unknown> = {
           prompt: opts.prompt,
           project_id: projectId,
@@ -1480,11 +1530,14 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
           variant_count: variantCount,
           // User's image model preference from the Settings panel.
-          // Backend resolves the nickname → real Flow model identifier.
+          // Backend resolves the nickname ? real Flow model identifier.
           image_model: opts.imageModel ?? useSettingsStore.getState().imageModel,
         };
-        if (refMediaIds.length > 0) {
-          params.ref_media_ids = refMediaIds;
+        if (editSourceMediaId) {
+          params.source_media_id = editSourceMediaId;
+        }
+        if (effectiveRefMediaIds.length > 0) {
+          params.ref_media_ids = effectiveRefMediaIds;
         }
         // Per-variant prompts: when present, each variant uses its own
         // text instead of all sharing `params.prompt`. Backend falls back
@@ -1493,7 +1546,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           params.prompts = opts.prompts;
         }
         reqDto = await createRequest({
-          type: "gen_image",
+          type: editSourceMediaId ? "edit_image" : "gen_image",
           node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
           params,
         });
@@ -1537,7 +1590,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             // the backend marked as partial-failures (e.g. Veo content
             // filter blocked one of 4 i2v clips while the other 3
             // succeeded). Keep the positional alignment so the frontend
-            // can map slot i ↔ upstream variant i, but pick the first
+            // can map slot i ? upstream variant i, but pick the first
             // non-null entry as the "primary" mediaId for legacy
             // single-tile UI consumers.
             const flowMediaIds = (req.result["media_ids"] as (string | null)[] | undefined) ?? [];
@@ -1929,7 +1982,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
   },
 
 
-  // ── Variant (Concepta fork) ───────────────────────────────────────
+  // -- Variant (Concepta fork) ---------------------------------------
   async dispatchVariant(rfId, opts) {
     const variantCount = Math.max(1, Math.min(opts.variantCount ?? 1, 4));
     const prompt = buildVariantPrompt(opts.axisKey, opts.instruction);
@@ -2065,3 +2118,14 @@ function buildVariantPrompt(axisKey: string, instruction: string): string {
   }
   return axis.template.replace("{instruction}", cleaned);
 }
+
+
+
+
+
+
+
+
+
+
+

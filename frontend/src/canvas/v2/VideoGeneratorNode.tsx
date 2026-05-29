@@ -13,7 +13,7 @@ import {
 
 import { cn } from "../../lib/utils";
 import { type FlowNode, useBoardStore } from "../../store/board";
-import { useGenerationStore } from "../../store/generation";
+import { collectSelectedListMediaItems, useGenerationStore } from "../../store/generation";
 import {
   OMNI_FLASH_CREDIT_COST,
   type OmniFlashDuration,
@@ -157,19 +157,12 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
   const startMediaId = (() => {
     if (!startNode) return undefined;
     if (startNode.data.type === "list") {
-      const listItems = Array.isArray(startNode.data.listItems) ? startNode.data.listItems : [];
-      const listSelectedIndexes = Array.isArray(startNode.data.listSelectedIndexes)
-        ? startNode.data.listSelectedIndexes.map(Number)
-        : [];
-      const selectedItems = listSelectedIndexes.length > 0
-        ? listItems.filter((_, idx) => listSelectedIndexes.includes(idx))
-        : listItems;
-      const mediaItems = selectedItems.filter((item: any) => item.kind === "image" || item.kind === "video");
-      return mediaItems[0]?.mediaId ?? undefined;
+      const selectedItems = collectSelectedListMediaItems(startNode as { id: string; data: Record<string, unknown> });
+      return selectedItems[0]?.flowMediaId ?? selectedItems[0]?.mediaId ?? undefined;
     }
-    return typeof startNode.data.mediaId === "string"
-      ? startNode.data.mediaId
-      : (startMediaIds[0] ?? undefined);
+    return (typeof startNode.data.flowMediaId === "string" && startNode.data.flowMediaId)
+      || (typeof startNode.data.mediaId === "string" ? startNode.data.mediaId : undefined)
+      || (startMediaIds[0] ?? undefined);
   })();
 
   const endEdge = edges.find((e) => e.target === rfId && e.targetHandle === "target-end-image");
@@ -179,19 +172,12 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
   const endMediaId = (() => {
     if (!endNode) return undefined;
     if (endNode.data.type === "list") {
-      const listItems = Array.isArray(endNode.data.listItems) ? endNode.data.listItems : [];
-      const listSelectedIndexes = Array.isArray(endNode.data.listSelectedIndexes)
-        ? endNode.data.listSelectedIndexes.map(Number)
-        : [];
-      const selectedItems = listSelectedIndexes.length > 0
-        ? listItems.filter((_, idx) => listSelectedIndexes.includes(idx))
-        : listItems;
-      const mediaItems = selectedItems.filter((item: any) => item.kind === "image" || item.kind === "video");
-      return mediaItems[0]?.mediaId ?? undefined;
+      const selectedItems = collectSelectedListMediaItems(endNode as { id: string; data: Record<string, unknown> });
+      return selectedItems[0]?.flowMediaId ?? selectedItems[0]?.mediaId ?? undefined;
     }
-    return typeof endNode.data.mediaId === "string"
-      ? endNode.data.mediaId
-      : (endMediaIds[0] ?? undefined);
+    return (typeof endNode.data.flowMediaId === "string" && endNode.data.flowMediaId)
+      || (typeof endNode.data.mediaId === "string" ? endNode.data.mediaId : undefined)
+      || (endMediaIds[0] ?? undefined);
   })();
 
   const hasTextConnection = edges.some((e) => e.target === rfId && e.targetHandle === "target-text");
@@ -794,3 +780,7 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
     </div>
   );
 }
+
+
+
+

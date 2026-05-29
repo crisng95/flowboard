@@ -71,7 +71,21 @@ extensionRoutes.post('/extension/claim', async (c) => {
   });
   const job = rows[0];
   if (!job) throw new ApiError(409, 'NO_QUEUED_REQUESTS', 'No queued requests available for claim under this provider');
-  return c.json(job);
+
+  // Some deployed RPC revisions return a narrowed row shape or stale JSONB
+  // projections. Re-read the canonical request row so the extension always
+  // receives the full input_data payload (source_media_id, start_media_ids,
+  // prompts, etc.) that the canvas stored.
+  const requestId = typeof job.id === 'string' ? job.id : null;
+  if (!requestId) return c.json(job);
+
+  const hydrated = await db.get<Record<string, unknown>[]>('/rest/v1/requests', {
+    id: eq.,
+    select: '*',
+    limit: 1,
+  });
+
+  return c.json(hydrated[0] || job);
 });
 
 extensionRoutes.post('/extension/heartbeat', async (c) => {

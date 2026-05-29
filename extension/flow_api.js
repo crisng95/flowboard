@@ -264,6 +264,57 @@
       };
     }
 
+
+    async editImage(prompt, projectId, options) {
+      const opts = options || {};
+      const paygateTier = opts.paygateTier || this.paygateTier;
+      const ctx = clientContext(projectId, paygateTier);
+      const captchaToken = await this.solveCaptcha?.(CAPTCHA_IMAGE);
+      if (!captchaToken) throw new Error('Missing reCAPTCHA token');
+      ctx.recaptchaContext.token = captchaToken;
+
+      const sourceMediaId = typeof opts.sourceMediaId === 'string' ? opts.sourceMediaId : '';
+      if (!sourceMediaId) throw new Error('Missing source media id');
+      const refMediaIds = Array.isArray(opts.refMediaIds) ? opts.refMediaIds.filter((m) => typeof m === 'string' && m) : [];
+      const requestItem = {
+        clientContext: { ...ctx, sessionId: `;${Date.now()}` },
+        seed: Date.now() % 1000000,
+        structuredPrompt: { parts: [{ text: prompt }] },
+        imageAspectRatio: opts.aspectRatio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+        imageModelName: resolveImageModel(opts.imageModel || this.imageModel),
+        imageInputs: [
+          { name: sourceMediaId, imageInputType: 'IMAGE_INPUT_TYPE_BASE_IMAGE' },
+          ...refMediaIds.map((mediaId) => ({ name: mediaId, imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE' })),
+        ],
+      };
+
+      const body = {
+        clientContext: ctx,
+        mediaGenerationContext: { batchId: crypto.randomUUID() },
+        useNewMedia: true,
+        requests: [requestItem],
+      };
+
+      const resp = await fetch(`${FLOW_API_BASE}/v1/projects/${projectId}/flowMedia:batchGenerateImages`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'text/plain;charset=UTF-8',
+          'accept': '*/*',
+          'origin': 'https://labs.google',
+          'referer': 'https://labs.google/',
+          'authorization': this.bearerHeader(),
+        },
+        credentials: 'include',
+        body: JSON.stringify(body),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(`editImage HTTP ${resp.status}`);
+      return {
+        raw: data,
+        mediaEntries: extractMediaEntries(data),
+      };
+    }
+
     async uploadImage(imageBytesBase64, mimeType, projectId, fileName) {
       const resp = await fetch(UPLOAD_IMAGE_URL, {
         method: 'POST',

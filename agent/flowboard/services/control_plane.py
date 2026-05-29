@@ -68,7 +68,7 @@ class ControlPlaneService:
         idempotency_key: str,
         expected_output: str
     ) -> Dict[str, Any]:
-        """TÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¡o mÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âºi hoÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â·c reset tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡c vÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â¥ lÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Âi/hÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â§y (Atomic Create/Reset Job)."""
+        """Tạo mới hoặc reset tác vụ lỗi/hủy (Atomic Create/Reset Job)."""
         payload = {
             "p_user_id": user_id,
             "p_board_id": board_id,
@@ -105,7 +105,21 @@ class ControlPlaneService:
             res = await self.client.post("/rest/v1/rpc/claim_next_request", json=payload)
             res.raise_for_status()
             rows = res.json()
-            return rows[0] if rows else None
+            job = rows[0] if rows else None
+            if not job:
+                return None
+            request_id = job.get("id")
+            if not isinstance(request_id, str) or not request_id:
+                return job
+            hydrated = await self.client.get(
+                "/rest/v1/requests"
+                f"?id=eq.{request_id}"
+                "&select=*"
+                "&limit=1"
+            )
+            hydrated.raise_for_status()
+            fresh_rows = hydrated.json()
+            return fresh_rows[0] if fresh_rows else job
         except httpx.HTTPStatusError as exc:
             logger.warning("claim_next_request RPC failed; using fallback: %s", exc.response.text[:300])
             try:
@@ -152,7 +166,7 @@ class ControlPlaneService:
         client_id: str,
         lease_duration_sec: int
     ) -> Dict[str, Any]:
-        """Gia hÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¡n lease job ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ang chÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¡y ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹nh kÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â³ (Atomic Heartbeat)."""
+        """Gia hạn lease job đang chạy định kỳ (Atomic Heartbeat)."""
         payload = {
             "p_request_id": request_id,
             "p_client_id": client_id,
@@ -181,7 +195,7 @@ class ControlPlaneService:
         progress_stage: str,
         progress: int
     ) -> Dict[str, Any]:
-        """CÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â­p nhÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â­t phÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢n ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“oÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¡n tiÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¿n trÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¬nh (Atomic Progress Update)."""
+        """Cập nhật phân đoạn tiến trình (Atomic Progress Update)."""
         payload = {
             "p_request_id": request_id,
             "p_client_id": client_id,
@@ -213,7 +227,7 @@ class ControlPlaneService:
         output_result: Dict[str, Any],
         assets: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
-        """Ghi nhÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â­n hoÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â n thÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â nh cÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´ng viÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡c vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  chÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨n Assets ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œng bÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ (Atomic Complete)."""
+        """Ghi nhận hoàn thành công việc và chèn Assets đồng bộ (Atomic Complete)."""
         payload = {
             "p_request_id": request_id,
             "p_client_id": client_id,
@@ -266,7 +280,7 @@ class ControlPlaneService:
         debug_snapshot_bucket: Optional[str] = None,
         debug_snapshot_key: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Ghi nhÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â­n job thÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¥t bÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¡i vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  append debug snapshot (Atomic Fail)."""
+        """Ghi nhận job thất bại và append debug snapshot (Atomic Fail)."""
         payload = {
             "p_request_id": request_id,
             "p_client_id": client_id,
@@ -319,7 +333,7 @@ class ControlPlaneService:
         except Exception as exc:
             logger.warning("request_events fallback insert failed: %s", exc)
     async def recover_stale_requests(self) -> None:
-        """QuÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©t vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  khÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´i phÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â¥c tÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â± ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ng cÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡c job bÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ mÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¥t kÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¿t nÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“i (Cron Stale Recovery)."""
+        """Quét và khôi phục tự động các job bị mất kết nối (Cron Stale Recovery)."""
         res = await self.client.post("/rest/v1/rpc/recover_stale_requests", json={})
         res.raise_for_status()
 
@@ -328,7 +342,7 @@ class ControlPlaneService:
     # =========================================================================
 
     async def validate_pairing(self, client_id: str, secret: str) -> bool:
-        """XÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡c thÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â±c pairing secret kÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨m bÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ lÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Âc khoÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â£ng ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡m xoay vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â²ng 24h."""
+        """Xác thực pairing secret kèm bộ lọc khoảng đệm xoay vòng 24h."""
         url = f"/rest/v1/pairings?extension_client_id=eq.{client_id}&is_active=eq.true"
         res = await self.client.get(url)
         res.raise_for_status()
@@ -339,11 +353,11 @@ class ControlPlaneService:
 
         given_hash = self.hash_secret(secret)
         for p in pairings:
-            # 1. KhÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âºp mÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£ secret hash hiÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡n tÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¡i ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â constant-time ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€ Ã¢â‚¬â„¢ trÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡nh timing attacks
+            # 1. Khớp mã secret hash hiện tại — constant-time để tránh timing attacks
             current_hash = p.get("current_secret_hash") or ""
             if secrets.compare_digest(current_hash, given_hash):
                 return True
-            # 2. KhÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âºp mÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£ secret hash cÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â© nÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â±m trong khoÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â£ng ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡m 24h ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â constant-time
+            # 2. Khớp mã secret hash cũ nằm trong khoảng đệm 24h — constant-time
             prev_hash = p.get("previous_secret_hash") or ""
             valid_until = p.get("previous_secret_valid_until")
             if prev_hash and valid_until:
@@ -356,7 +370,7 @@ class ControlPlaneService:
         return False
 
     async def get_client_user_id(self, client_id: str) -> Optional[str]:
-        """Tra cÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â©u user_id sÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€¦Ã‚Â¸ hÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â¯u extension_client tÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â« client_id."""
+        """Tra cứu user_id sở hữu extension_client từ client_id."""
         url = f"/rest/v1/extension_clients?id=eq.{client_id}"
         res = await self.client.get(url)
         res.raise_for_status()
@@ -404,8 +418,8 @@ class ControlPlaneService:
         client_installation_id: str,
         secret: str
     ) -> Dict[str, Any]:
-        """TÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¡o/LÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¥y Client ID vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  thÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â±c hiÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡n tÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¡o Pairing mÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âºi cho thiÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¿t bÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹."""
-        # 1. KiÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€ Ã¢â‚¬â„¢m tra hoÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â·c tÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¡o mÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âºi client_id
+        """Tạo/Lấy Client ID và thực hiện tạo Pairing mới cho thiết bị."""
+        # 1. Kiểm tra hoặc tạo mới client_id
         url = f"/rest/v1/extension_clients?user_id=eq.{user_id}&client_installation_id=eq.{client_installation_id}"
         res = await self.client.get(url)
         res.raise_for_status()
@@ -424,14 +438,14 @@ class ControlPlaneService:
             res.raise_for_status()
             client_id = res.json()[0]["id"]
 
-        # 2. VÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´ hiÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡u hÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³a pairings cÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â© (Revoke old active pairings)
+        # 2. Vô hiệu hóa pairings cũ (Revoke old active pairings)
         # Note: revoked_at is omitted here because DB triggers automatically handle revoked_at updates
         await self.client.patch(
             f"/rest/v1/pairings?user_id=eq.{user_id}&extension_client_id=eq.{client_id}&is_active=eq.true",
             json={"is_active": False}
         )
 
-        # 3. TÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¡o bÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â£n ghi Pairing hoÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¡t ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ng mÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âºi
+        # 3. Tạo bản ghi Pairing hoạt động mới
         secret_hash = self.hash_secret(secret)
         pairing_payload = {
             "user_id": user_id,
@@ -444,8 +458,8 @@ class ControlPlaneService:
         return {"client_id": client_id, "pairing": res.json()[0]}
 
     async def rotate_pairing_secret(self, pairing_id: str, new_secret: str, user_id: Optional[str] = None) -> Dict[str, Any]:
-        """Xoay vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â²ng pairing secret (current -> previous) vÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âºi 24h grace overlap window."""
-        # 1. LÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¥y dÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â¯ liÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡u pairing cÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â© ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â scope by user_id nÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¿u cÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³ ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€ Ã¢â‚¬â„¢ tÃƒÆ’Ã¢â‚¬Å¾Ãƒâ€ Ã¢â‚¬â„¢ng defense-in-depth
+        """Xoay vòng pairing secret (current -> previous) với 24h grace overlap window."""
+        # 1. Lấy dữ liệu pairing cũ — scope by user_id nếu có để tăng defense-in-depth
         if user_id:
             url = f"/rest/v1/pairings?id=eq.{pairing_id}&user_id=eq.{user_id}"
         else:
@@ -457,7 +471,7 @@ class ControlPlaneService:
             raise ValueError("Pairing record not found")
         old_pairing = rows[0]
 
-        # 2. Xoay vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â²ng secret vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  lÃƒÆ’Ã¢â‚¬Â Ãƒâ€šÃ‚Â°u hash cÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â©
+        # 2. Xoay vòng secret và lưu hash cũ
         from datetime import timedelta
         new_hash = self.hash_secret(new_secret)
         grace_expiry = datetime.now(timezone.utc) + timedelta(days=1)
@@ -484,7 +498,7 @@ class ControlPlaneService:
     # =========================================================================
 
     def generate_read_url(self, storage_key: str) -> str:
-        """Sinh signed URL thÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Âi gian ngÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¯n (15 phÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âºt) ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€ Ã¢â‚¬â„¢ tÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â£i file R2 vÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â hiÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€ Ã¢â‚¬â„¢n thÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹."""
+        """Sinh signed URL thời gian ngắn (15 phút) để tải file R2 về hiển thị."""
         s3 = self._get_s3_client()
         return s3.generate_presigned_url(
             "get_object",
@@ -493,7 +507,7 @@ class ControlPlaneService:
         )
 
     def generate_upload_url(self, storage_key: str, content_type: str, expires_in: int = 900) -> str:
-        """Sinh presigned URL cho phÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©p frontend/extension upload tÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡p trÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â±c tiÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¿p lÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âªn R2."""
+        """Sinh presigned URL cho phép frontend/extension upload tệp trực tiếp lên R2."""
         s3 = self._get_s3_client()
         return s3.generate_presigned_url(
             "put_object",

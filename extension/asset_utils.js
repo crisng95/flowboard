@@ -3,9 +3,17 @@
 
   const MAX_ASSET_BYTES = 25 * 1024 * 1024;
   const ALLOWED_MIMES = new Set(['image/png', 'image/jpeg', 'video/mp4']);
-  const ALLOWED_MEDIA_PREFIXES = [
-    'https://flow-content.google/',
-    'https://lh3.googleusercontent.com/',
+  const ALLOWED_MEDIA_HOSTS = new Set([
+    'flow-content.google',
+    'lh3.googleusercontent.com',
+    'lh4.googleusercontent.com',
+    'lh5.googleusercontent.com',
+    'lh6.googleusercontent.com',
+    'storage.googleapis.com',
+  ]);
+  const ALLOWED_MEDIA_HOST_SUFFIXES = [
+    '.googleusercontent.com',
+    '.googlevideo.com',
   ];
 
   class FlowboardAssetError extends Error {
@@ -18,8 +26,20 @@
   }
 
   function assertAllowedMediaUrl(url) {
-    if (typeof url !== 'string' || !ALLOWED_MEDIA_PREFIXES.some((prefix) => url.startsWith(prefix))) {
+    if (typeof url !== 'string' || !url.trim()) {
       throw new Error('Disallowed media URL');
+    }
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_) {
+      throw new Error('Disallowed media URL');
+    }
+    const host = String(parsed.hostname || '').toLowerCase();
+    const allowed = ALLOWED_MEDIA_HOSTS.has(host)
+      || ALLOWED_MEDIA_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
+    if (!allowed) {
+      throw new Error(`Disallowed media URL host: ${host || 'unknown'}`);
     }
   }
 
@@ -108,6 +128,19 @@
     return btoa(binary);
   }
 
+  function base64ToBytes(base64) {
+    if (typeof base64 !== 'string' || !base64) {
+      throw new Error('Invalid base64 payload');
+    }
+    const normalized = base64.replace(/\s+/g, '');
+    const binary = atob(normalized);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+
   async function uploadGeneratedAsset(cloudClient, asset, userId, requestId, index, promptSnapshot) {
     const ext = asset.extension || extensionForMime(asset.mimeType);
     const storageKey = `users/${userId}/flow/${requestId}/output-${index}.${ext}`;
@@ -150,6 +183,7 @@
     fetchMediaBytes,
     fetchAnyImageBytes: fetchImageBytesUnchecked,
     bytesToBase64,
+    base64ToBytes,
     sniffMime,
     sha256Hex,
     canonicalReferenceUrl,
@@ -159,3 +193,4 @@
     FlowboardAssetError,
   };
 })(self);
+

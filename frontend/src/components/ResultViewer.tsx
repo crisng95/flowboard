@@ -167,7 +167,7 @@ export function ResultViewer() {
               const selectedItems = listItems.filter((_, idx) => listSelectedIndexes.includes(idx));
               const selectedMediaItems = selectedItems.filter((item) => item.kind === "image" || item.kind === "video");
               variants = selectedMediaItems
-                .map((item) => (item.flowMediaId ?? item.mediaId) as string)
+                .map((item) => (item.mediaUrl ?? item.imageUrl ?? item.mediaId ?? item.flowMediaId) as string)
                 .filter((m) => typeof m === "string" && m.length > 0);
             }
           }

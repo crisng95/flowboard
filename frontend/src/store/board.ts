@@ -1309,6 +1309,8 @@ export const useBoardStore = create<BoardState>((set, get) => ({
 
   async persistNodePosition(rfId, position) {
     debouncePosition(rfId, async () => {
+      const { nodes } = get();
+      if (!nodes.some((n) => n.id === rfId)) return;
       const dbId = parseInt(rfId, 10);
       if (isNaN(dbId)) return;
       try {

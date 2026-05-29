@@ -9,6 +9,63 @@ const FORWARD_FETCH_EVENT = 'FLOWBOARD_FORWARD_OMNI_FETCH';
 const FORWARD_FETCH_RESULT_EVENT = 'FLOWBOARD_FORWARD_OMNI_FETCH_RESULT';
 let extensionExecuting = false;
 
+function collectSiteKeysFromValue(value, found = new Set(), seen = new Set(), depth = 0) {
+  if (!value || depth > 6) return found;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^6[Lc][A-Za-z0-9_-]{20,}$/.test(trimmed)) {
+      found.add(trimmed);
+    }
+    return found;
+  }
+  if (typeof value !== 'object' || seen.has(value)) return found;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectSiteKeysFromValue(entry, found, seen, depth + 1);
+    }
+    return found;
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === 'string' && /(sitekey|site_key|render)/i.test(key)) {
+      collectSiteKeysFromValue(entry, found, seen, depth + 1);
+      continue;
+    }
+    collectSiteKeysFromValue(entry, found, seen, depth + 1);
+  }
+  return found;
+}
+
+function discoverSiteKey(preferredSiteKey) {
+  if (typeof preferredSiteKey === 'string' && preferredSiteKey.trim()) {
+    return preferredSiteKey.trim();
+  }
+
+  for (const script of document.querySelectorAll('script[src]')) {
+    try {
+      const src = new URL(script.src, window.location.href);
+      const render = src.searchParams.get('render');
+      if (render && render !== 'explicit') {
+        return render;
+      }
+    } catch {}
+  }
+
+  const keyedElement = document.querySelector('[data-sitekey]');
+  if (keyedElement) {
+    const siteKey = keyedElement.getAttribute('data-sitekey');
+    if (siteKey && siteKey.trim()) {
+      return siteKey.trim();
+    }
+  }
+
+  const discovered = Array.from(collectSiteKeysFromValue(window.___grecaptcha_cfg));
+  if (discovered.length > 0) {
+    return discovered[0];
+  }
+
+  return null;
+}
 async function ensureWrapped() {
   await waitForGrecaptcha();
   const enterprise = window.grecaptcha?.enterprise;
@@ -25,6 +82,7 @@ async function ensureWrapped() {
       window.dispatchEvent(new CustomEvent(OBSERVE_EVENT, {
         detail: {
           action,
+          scope: action,
           siteKey: typeof siteKey === 'string' ? siteKey : null,
           href: window.location.href,
           observedAt: Date.now(),
@@ -41,12 +99,13 @@ window.addEventListener('GET_CAPTCHA', async ({ detail }) => {
   const { requestId, pageAction, siteKey: observedSiteKey } = detail;
   try {
     await ensureWrapped();
-    if (typeof observedSiteKey !== 'string' || !observedSiteKey) {
+    const siteKey = discoverSiteKey(observedSiteKey);
+    if (typeof siteKey !== 'string' || !siteKey) {
       throw new Error('missing siteKey');
     }
     extensionExecuting = true;
-    console.log('[Injected Omni Action/SiteKey]:', pageAction, observedSiteKey);
-    const token = await window.grecaptcha.enterprise.execute(observedSiteKey, {
+    console.log('[Injected Omni Action/SiteKey]:', pageAction, siteKey);
+    const token = await window.grecaptcha.enterprise.execute(siteKey, {
       action: pageAction,
     });
     window.dispatchEvent(new CustomEvent('CAPTCHA_RESULT', {

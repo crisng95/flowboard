@@ -352,36 +352,65 @@ export function ListNode(props: NodeProps<FlowNode>) {
     persistNodeData(rfId, { imageFit: nextFit });
   }, [rfId, imageFit]);
 
+  const buildSelectionPatch = useCallback((nextIndexes: number[]) => {
+    const mediaItems = (nextIndexes.length > 0
+      ? listItems.filter((_, idx) => nextIndexes.includes(idx))
+      : listItems)
+      .filter((item) => item.kind === "image" || item.kind === "video");
+
+    const mediaIds = mediaItems
+      .map((item) => item.mediaId)
+      .filter((value): value is string => typeof value === "string" && value.length > 0);
+    const flowMediaIds = mediaItems
+      .map((item) => item.flowMediaId ?? item.mediaId)
+      .filter((value): value is string => typeof value === "string" && value.length > 0);
+
+    return {
+      listSelectedIndexes: nextIndexes,
+      mediaIds,
+      mediaId: mediaIds[0] ?? undefined,
+      flowMediaIds,
+      flowMediaId: flowMediaIds[0] ?? undefined,
+      variantCount: mediaIds.length,
+    };
+  }, [listItems]);
+
   const toggleItemSelection = useCallback((idx: number, e: React.MouseEvent) => {
-    if (!listSelectionMode) return; // Allow canvas node selection click to propagate
+    if (!listSelectionMode || !selected) {
+      return;
+    }
+
     e.stopPropagation();
-    
+
     let nextIndexes = [...listSelectedIndexes];
     if (nextIndexes.includes(idx)) {
       nextIndexes = nextIndexes.filter((i) => i !== idx);
     } else {
       nextIndexes.push(idx);
     }
-    useBoardStore.getState().updateNodeData(rfId, { listSelectedIndexes: nextIndexes });
-    persistNodeData(rfId, { listSelectedIndexes: nextIndexes });
-  }, [rfId, listSelectionMode, listSelectedIndexes]);
 
+    const patch = buildSelectionPatch(nextIndexes);
+    useBoardStore.getState().updateNodeData(rfId, patch);
+    persistNodeData(rfId, patch);
+  }, [rfId, listSelectionMode, listSelectedIndexes, buildSelectionPatch]);
   const selectAllItems = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     const isAllSelected = listSelectedIndexes.length === listItems.length;
     const nextIndexes = isAllSelected ? [] : listItems.map((_, i) => i);
-    useBoardStore.getState().updateNodeData(rfId, { listSelectedIndexes: nextIndexes });
-    persistNodeData(rfId, { listSelectedIndexes: nextIndexes });
-  }, [rfId, listItems, listSelectedIndexes]);
+    const patch = buildSelectionPatch(nextIndexes);
+    useBoardStore.getState().updateNodeData(rfId, patch);
+    persistNodeData(rfId, patch);
+  }, [rfId, listItems, listSelectedIndexes, buildSelectionPatch]);
 
   const invertSelection = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     const inverted = listItems
       .map((_, i) => i)
       .filter((i) => !listSelectedIndexes.includes(i));
-    useBoardStore.getState().updateNodeData(rfId, { listSelectedIndexes: inverted });
-    persistNodeData(rfId, { listSelectedIndexes: inverted });
-  }, [rfId, listItems, listSelectedIndexes]);
+    const patch = buildSelectionPatch(inverted);
+    useBoardStore.getState().updateNodeData(rfId, patch);
+    persistNodeData(rfId, patch);
+  }, [rfId, listItems, listSelectedIndexes, buildSelectionPatch]);
 
   function stopNodeAction(event: React.MouseEvent) {
     event.stopPropagation();
@@ -994,3 +1023,8 @@ export function ListNode(props: NodeProps<FlowNode>) {
     </div>
   );
 }
+
+
+
+
+
