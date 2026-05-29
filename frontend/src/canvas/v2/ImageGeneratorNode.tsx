@@ -407,7 +407,13 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
           {/* Bottom overlay: prompt textarea + toolbar */}
           <div className={cn("absolute bottom-0 left-0 right-0 z-30", "transition-all duration-300 ease-out")}>
             {/* Prompt */}
-            <div className={cn("px-4 pb-1 transition-all duration-300 ease-out", promptFocused ? "pt-4" : "pt-2")}>
+            <div 
+              className={cn("px-4 pb-1 transition-all duration-300 ease-out", promptFocused ? "pt-4" : "pt-2")}
+              style={{ 
+                paddingBottom: (promptCount > 1 && imageCountUpstream > 1) ? 40 : 4,
+                paddingLeft: (promptCount > 1 && imageCountUpstream > 1) ? 64 : 16
+              }}
+            >
               <textarea
                 value={hasPromptSource ? upstreamText : prompt}
                 onChange={(e) => setPrompt(e.target.value)}

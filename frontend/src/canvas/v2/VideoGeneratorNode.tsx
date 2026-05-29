@@ -485,7 +485,13 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
           )}
 
           <div className={cn("absolute bottom-0 left-0 right-0 z-10", "transition-all duration-300 ease-out")}>
-            <div className={cn("px-4 pb-1 transition-all duration-300 ease-out", promptFocused ? "pt-4" : "pt-2")}>
+            <div 
+              className={cn("px-4 pb-1 transition-all duration-300 ease-out", promptFocused ? "pt-4" : "pt-2")}
+              style={{ 
+                paddingBottom: (promptCount > 1 && imageCountUpstream > 1) ? 40 : 4,
+                paddingLeft: (promptCount > 1 && imageCountUpstream > 1) ? 64 : 16
+              }}
+            >
               <textarea
                 value={hasTextConnection ? upstreamText : prompt}
                 onChange={(e) => setPrompt(e.target.value)}
