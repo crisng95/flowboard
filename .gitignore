@@ -53,3 +53,14 @@ coverage/
 # comments as source-of-truth, but contains raw OAuth bearer tokens.
 # Keep on disk; never commit.
 /video_model*.md
+
+# Logs
+*.log
+vite-dev.*
+
+# Scratch / scratchpad files
+scratch_*
+scratch.*
+
+# Archives
+*.rar
