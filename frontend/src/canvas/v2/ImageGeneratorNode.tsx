@@ -1,6 +1,6 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, useEffect } from "react";
 import { Handle, Position, useConnection, useEdges, type NodeProps } from "@xyflow/react";
-import { ImageUp, Minus, Play, Plus, RefreshCw, Settings, Type } from "lucide-react";
+import { ImageUp, Play, RefreshCw, Settings, Type } from "lucide-react";
 
 import { type FlowNode } from "../../store/board";
 import { useBoardStore } from "../../store/board";
@@ -9,6 +9,7 @@ import { cn } from "../../lib/utils";
 import { mediaUrl } from "./shared/useUploadFlow";
 import { persistNodeData } from "./shared/persistNodeData";
 import { ResizeHandle } from "./shared/ResizeHandle";
+import { CountStepper } from "./shared/CountStepper";
 import { useNodeWidth } from "./shared/useNodeWidth";
 import { HandleBadge } from "./shared/HandleBadge";
 import { DropdownCaret } from "./shared/DropdownCaret";
@@ -39,6 +40,26 @@ const MODEL_OPTIONS: ModelOption[] = [
 
 export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
   const { id: rfId, data, selected } = props;
+  const status = data.status as string | undefined;
+  const isRunning = status === "running" || status === "queued";
+
+  const [simulatedProgress, setSimulatedProgress] = useState(2);
+  useEffect(() => {
+    if (isRunning) {
+      setSimulatedProgress(2);
+      const interval = setInterval(() => {
+        setSimulatedProgress((prev) => {
+          if (prev >= 98) return 98;
+          const increment = Math.floor(Math.random() * 6) + 1;
+          return Math.min(98, prev + increment);
+        });
+      }, 800);
+      return () => clearInterval(interval);
+    } else {
+      setSimulatedProgress(2);
+    }
+  }, [isRunning]);
+
   const mediaIds = Array.isArray(data.mediaIds)
     ? data.mediaIds.filter((m): m is string => typeof m === "string" && !!m)
     : [];
@@ -56,7 +77,6 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
   const aspectKey = (data.aspectKey as AspectOption | undefined) ?? "1:1";
   const modelKey = normalizeImageModelKey(data.modelKey as string | undefined);
   const shortId = data.shortId as string | undefined;
-  const status = data.status as string | undefined;
 
   const { width: nodeWidth, onResize, onResizeEnd } = useNodeWidth({
     nodeId: rfId, data, min: MIN_WIDTH, max: MAX_WIDTH, fallback: DEFAULT_WIDTH,
@@ -117,6 +137,9 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     useBoardStore.getState().updateNodeData(rfId, { imageCount: next });
     persistNodeData(rfId, { imageCount: next });
   }
+  function stopNodeAction(event: React.MouseEvent) {
+    event.stopPropagation();
+  }
   function setAspect(value: AspectOption) {
     useBoardStore.getState().updateNodeData(rfId, { aspectKey: value });
     persistNodeData(rfId, { aspectKey: value });
@@ -142,9 +165,8 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     setImgSize({ w: img.naturalWidth, h: img.naturalHeight });
   }
 
-  const isRunning = status === "running" || status === "queued";
-  const showVariantGrid = mediaIds.length > 1 || (isRunning && imageCount > 1);
-  const visibleSlots = showVariantGrid ? Math.max(mediaIds.length, imageCount) : 1;
+  const showVariantGrid = false;
+  const visibleSlots = 1;
 
   return (
     <div
@@ -176,7 +198,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
           className="relative overflow-hidden"
           style={{ aspectRatio: ASPECT_CSS[aspectKey], minHeight: 200, borderRadius: BORDER_RADIUS - 3 }}
         >
-          {/* Variant grid (multiple results) */}
+           {/* Variant grid (multiple results) */}
           {showVariantGrid ? (
             <div
               className={cn(
@@ -187,19 +209,22 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
               {Array.from({ length: visibleSlots }).map((_, idx) => {
                 const slotMediaId = mediaIds[idx] ?? null;
                 return (
-                  <button
+                  <div
                     key={idx}
-                    type="button"
-                    onClick={() => {
+                    onDoubleClick={() => {
                       if (slotMediaId) useGenerationStore.getState().openResultViewer(rfId, idx);
                     }}
-                    className="relative min-h-0 min-w-0 overflow-hidden bg-white/[0.04] disabled:cursor-default"
-                    disabled={!slotMediaId}
+                    className={cn(
+                      "relative min-h-0 min-w-0 overflow-hidden bg-white/[0.04] outline-none",
+                      slotMediaId ? "cursor-default" : "cursor-default"
+                    )}
                   >
                     {slotMediaId ? (
                       <img
                         src={mediaUrl(slotMediaId)}
                         alt={`generated ${idx + 1}`}
+                        draggable={false}
+                        onDragStart={(e) => e.preventDefault()}
                         className={cn(
                           "absolute inset-0 size-full object-cover transition-all duration-300",
                           promptFocused && "blur-sm scale-[1.02]",
@@ -210,18 +235,16 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
                       /* Loading slot placeholder */
                       <div className="absolute inset-0 bg-white/[0.05]">
                         {isRunning && (
-                          <div
-                            className="absolute inset-0"
-                            style={{
-                              background: "linear-gradient(105deg, transparent 40%, rgba(124,92,255,0.2) 50%, transparent 60%)",
-                              backgroundSize: "200% 100%",
-                              animation: "shimmer 1.6s ease-in-out infinite",
-                            }}
-                          />
+                          <div className="absolute inset-0 flow-generating-sheen">
+                            <ImageUp size={14} className="absolute top-2.5 left-2.5 text-white/30" />
+                            <span className="absolute top-2.5 right-2.5 text-[10px] font-semibold font-mono text-white/40">
+                              {simulatedProgress}%
+                            </span>
+                          </div>
                         )}
                       </div>
                     )}
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -230,6 +253,8 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
             <img
               src={mediaUrl(mediaId)}
               alt="generated"
+              draggable={false}
+              onDragStart={(e) => e.preventDefault()}
               className={cn(
                 "absolute inset-0 size-full object-cover transition-all duration-300",
                 promptFocused && "blur-sm scale-[1.02]",
@@ -238,7 +263,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
               onDoubleClick={() => useGenerationStore.getState().openResultViewer(rfId)}
             />
           ) : (
-            /* ── Empty state ────────────────────────────────────────────────
+            /* ── Empty state ───────────────────────────────────────────────
                Visible when node has no image yet and is not running. */
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 select-none">
               <div
@@ -260,23 +285,18 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
             </div>
           )}
 
-          {/* ── Running shimmer overlay ──────────────────────────────────────
-              Gradient sweep animation while generation is in progress.
-              Works over both the empty state and any existing image. */}
+          {/* ── Running shimmer overlay ───────────────────────────────────────
+               Gradient sweep animation while generation is in progress.
+               Works over both the empty state and any existing image. */}
           {isRunning && !showVariantGrid && (
             <div
-              className="absolute inset-0 z-[4] overflow-hidden"
+              className="absolute inset-0 z-[4] overflow-hidden flow-generating-sheen"
               style={{ borderRadius: BORDER_RADIUS - 3 }}
             >
-              <div
-                className="absolute inset-0"
-                style={{
-                  background: "linear-gradient(105deg, transparent 35%, rgba(124,92,255,0.22) 50%, transparent 65%)",
-                  backgroundSize: "200% 100%",
-                  animation: "shimmer 1.6s ease-in-out infinite",
-                }}
-              />
-              <div className="absolute inset-0 bg-black/25" />
+              <ImageUp size={16} className="absolute top-3 left-3 text-white/35" />
+              <span className="absolute top-3 right-3 text-2xs font-semibold font-mono text-white/45">
+                {simulatedProgress}%
+              </span>
             </div>
           )}
 
@@ -285,13 +305,15 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
             <div className="absolute inset-0 bg-black/50 transition-opacity duration-300 z-[5]" />
           )}
 
-          {/* ── Expand / quick-view button ───────────────────────────────────
+          {/* â”€â”€ Expand / quick-view button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
               Top-left on hover when an image exists. Opens ResultViewer. */}
           {mediaId && showControls && !showVariantGrid && !promptFocused && (
             <button
               type="button"
+              onMouseDown={stopNodeAction}
+              onDoubleClick={stopNodeAction}
               onClick={() => useGenerationStore.getState().openResultViewer(rfId)}
-              className="absolute top-2.5 left-2.5 z-[6] flex items-center justify-center rounded-full transition-all duration-150 hover:scale-110"
+              className="nodrag nowheel absolute top-2.5 left-2.5 z-[6] flex items-center justify-center rounded-full transition-all duration-150 hover:scale-110"
               style={{
                 width: 28, height: 28,
                 backgroundColor: "rgba(0,0,0,0.55)",
@@ -308,18 +330,18 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
             </button>
           )}
 
-          {/* Size badge — top-right */}
+          {/* Size badge â€” top-right */}
           {imgSize && showControls && mediaId && !showVariantGrid && (
             <div
               className="absolute top-3 right-3 px-2.5 py-1 rounded-full text-2xs font-medium text-ink-primary z-10"
               style={{ backgroundColor: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }}
             >
-              {imgSize.w} × {imgSize.h}
+              {imgSize.w} Ã— {imgSize.h}
             </div>
           )}
 
           {/* Bottom overlay: prompt textarea + toolbar */}
-          <div className={cn("absolute bottom-0 left-0 right-0 z-10", "transition-all duration-300 ease-out")}>
+          <div className={cn("absolute bottom-0 left-0 right-0 z-30", "transition-all duration-300 ease-out")}>
             {/* Prompt */}
             <div className={cn("px-4 pb-1 transition-all duration-300 ease-out", promptFocused ? "pt-4" : "pt-2")}>
               <textarea
@@ -331,14 +353,17 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
                 rows={promptFocused ? 6 : 1}
                 onFocus={() => setPromptFocused(true)}
                 onBlur={() => setPromptFocused(false)}
-                className="img-gen-prompt w-full bg-transparent text-sm text-white placeholder:text-white/70 resize-none outline-none border-0 leading-relaxed"
+                onMouseDown={stopNodeAction}
+                onClick={stopNodeAction}
+                onDoubleClick={stopNodeAction}
+                className="nodrag nowheel img-gen-prompt w-full bg-transparent text-sm text-white placeholder:text-white/70 resize-none outline-none border-0 leading-relaxed"
               />
             </div>
 
             {/* Toolbar - slides in on hover */}
             <div
               className={cn(
-                "flex items-center gap-1.5 px-3 pb-3 pt-0",
+                "nodrag nowheel flex items-center gap-1.5 px-3 pb-3 pt-0",
                 "transition-all duration-300 ease-out",
                 showControls
                   ? "max-h-[48px] opacity-100 translate-y-0"
@@ -346,18 +371,21 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
               )}
             >
               {/* Image count */}
-              <div className="flex items-center gap-0.5 rounded-full px-1.5 py-1" style={{ backgroundColor: "rgba(255,255,255,0.1)" }}>
-                <button onClick={() => setImageCount(-1)} className="p-0.5 text-white/70 hover:text-white transition-colors"><Minus size={12} strokeWidth={2} /></button>
-                <span className="text-2xs font-medium text-white min-w-[20px] text-center">x{imageCount}</span>
-                <button onClick={() => setImageCount(1)} className="p-0.5 text-white/70 hover:text-white transition-colors"><Plus size={12} strokeWidth={2} /></button>
-              </div>
+              <CountStepper
+                value={imageCount}
+                min={1}
+                max={4}
+                onChange={(next) => setImageCount(next - imageCount)}
+              />
 
               {/* Model picker */}
               <div className="relative">
                 <button
                   ref={modelButtonRef}
+                  onMouseDown={stopNodeAction}
+                  onDoubleClick={stopNodeAction}
                   onClick={() => { setShowModelPicker(!showModelPicker); setShowAspectPicker(false); }}
-                  className="flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
+                  className="nodrag nowheel flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
                   style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
                 >
                   {currentModel.label} <DropdownCaret className="text-white/50" />
@@ -378,8 +406,10 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
               <div className="relative">
                 <button
                   ref={aspectButtonRef}
+                  onMouseDown={stopNodeAction}
+                  onDoubleClick={stopNodeAction}
                   onClick={() => { setShowAspectPicker(!showAspectPicker); setShowModelPicker(false); }}
-                  className="flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
+                  className="nodrag nowheel flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
                   style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
                 >
                   {aspectKey} <DropdownCaret className="text-white/50" />
@@ -399,16 +429,19 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
               <div className="flex-1" />
 
               {/* Settings */}
-              <button className="p-1.5 rounded-full text-white/70 hover:text-white transition-colors" style={{ backgroundColor: "rgba(255,255,255,0.1)" }}>
+              <button type="button" onMouseDown={stopNodeAction} onDoubleClick={stopNodeAction} className="nodrag nowheel p-1.5 rounded-full text-white/70 hover:text-white transition-colors" style={{ backgroundColor: "rgba(255,255,255,0.1)" }}>
                 <Settings size={13} strokeWidth={2} />
               </button>
 
               {/* Generate */}
               <button
+                type="button"
+                onMouseDown={stopNodeAction}
+                onDoubleClick={stopNodeAction}
                 onClick={handleGenerate}
                 disabled={isRunning}
                 className={cn(
-                  "p-2 rounded-full border transition-all duration-150 shadow-sm",
+                  "nodrag nowheel p-2 rounded-full border transition-all duration-150 shadow-sm",
                   isRunning
                     ? "bg-[#8f939b] border-[#8f939b] text-white/45 cursor-not-allowed"
                     : "bg-[#f3f4f6] border-[#f3f4f6] text-[#1c2027] hover:bg-white hover:border-white hover:scale-[1.06] cursor-pointer"
@@ -433,7 +466,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
         />
       </div>
 
-      {/* Source handle — right side */}
+      {/* Source handle â€” right side */}
       <Handle type="source" position={Position.Right} id="source"
         className={edgeHandleClass({ side: "right", visible: showSourceHandle })}
         style={{ top: EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET }}
@@ -441,14 +474,14 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
         <HandleBadge icon={ImageUp} active={hasSourceEdge} label="Generated Image" side="right" />
       </Handle>
 
-      {/* Target handle (text input) — left side */}
+      {/* Target handle (text input) â€” left side */}
       <Handle type="target" position={Position.Left} id="target-text" style={{ bottom: 54, top: "auto" }}
         className={targetHandleClassName(hasTextConnection)}
       >
         <HandleBadge icon={Type} active={hasTextConnection} label="Prompt" side="left" />
       </Handle>
 
-      {/* Target handle (image input) — left side */}
+      {/* Target handle (image input) â€” left side */}
       <Handle type="target" position={Position.Left} id="target-image" style={{ bottom: 14, top: "auto" }}
         className={targetHandleClassName(hasImageConnection)}
       >

@@ -1856,6 +1856,20 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
 
   async runNodeGraph(rfId) {
     try {
+      // Auto-run text edge sources if they are runnable but not done
+      const board = useBoardStore.getState();
+      const textEdge = board.edges.find((e) => e.target === rfId && isTextEdge(e as any, board));
+      if (textEdge) {
+        const textSourceNode = board.nodes.find((n) => n.id === textEdge.source);
+        if (textSourceNode && isRunnableNodeType(primaryNodeType(textSourceNode))) {
+          const status = (textSourceNode.data.status as string | undefined) ?? "idle";
+          if (status !== "done" && status !== "running" && status !== "queued") {
+            await runNodeDirect(get, textSourceNode.id);
+            await waitForNodeSettled(get, textSourceNode.id);
+          }
+        }
+      }
+
       await ensureNodeInputsReady(get, rfId, rfId, new Set<string>());
 
       const node = useBoardStore.getState().nodes.find((entry) => entry.id === rfId);
