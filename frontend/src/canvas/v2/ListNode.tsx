@@ -29,7 +29,7 @@ import { EmptyState } from "./shared/EmptyState";
 const MIN_WIDTH = 460;
 const MAX_WIDTH = 700;
 const DEFAULT_WIDTH = 580;
-const BORDER_RADIUS = 24; // Smooth outer border radius as seen in mockup
+const BORDER_RADIUS = 16; // Smooth outer border radius: 16px (ReactFlow V12 Canvas V2 gold standard)
 const HOVER_LEAVE_DELAY = 200;
 
 export function ListNode(props: NodeProps<FlowNode>) {
@@ -82,7 +82,7 @@ export function ListNode(props: NodeProps<FlowNode>) {
 
   const gridThumbSize = (() => {
     const cols = gridLayout.cols;
-    const availableWidth = nodeWidth - 40 - 6 - 24; // wrapper padding (40px) + card borders (6px) + card padding (24px)
+    const availableWidth = nodeWidth - 40 - 6 - 32 - 8 - 4; // wrapper padding (40px) + card borders (6px) + Scrollable Wrapper padding (32px for px-4) + Content Viewport padding-right (8px for pr-2) + scrollbar width (4px)
     const gap = 8;
     return (availableWidth - (cols - 1) * gap) / cols;
   })();
@@ -353,8 +353,8 @@ export function ListNode(props: NodeProps<FlowNode>) {
   }, [rfId, imageFit]);
 
   const toggleItemSelection = useCallback((idx: number, e: React.MouseEvent) => {
+    if (!listSelectionMode) return; // Allow canvas node selection click to propagate
     e.stopPropagation();
-    if (!listSelectionMode) return;
     
     let nextIndexes = [...listSelectedIndexes];
     if (nextIndexes.includes(idx)) {
@@ -401,26 +401,30 @@ export function ListNode(props: NodeProps<FlowNode>) {
   const selectionPillLabel = (() => {
     const totalCount = listItems.length;
     const selectedCount = listSelectedIndexes.length;
+    const isSimplified = selectedCount === 0 || selectedCount === totalCount;
 
     if (videoItemsCount > 0 && imageItemsCount === 0 && textItemsCount === 0) {
-      return `${selectedVideoCount}/${videoItemsCount} ${videoItemsCount === 1 ? "video" : "videos"}`;
+      const suffix = videoItemsCount === 1 ? "video" : "videos";
+      return isSimplified ? `${videoItemsCount} ${suffix}` : `${selectedVideoCount}/${videoItemsCount} ${suffix}`;
     }
     if (textItemsCount > 0 && imageItemsCount === 0 && videoItemsCount === 0) {
-      return `${selectedTextCount}/${textItemsCount} ${textItemsCount === 1 ? "text" : "texts"}`;
+      const suffix = textItemsCount === 1 ? "text" : "texts";
+      return isSimplified ? `${textItemsCount} ${suffix}` : `${selectedTextCount}/${textItemsCount} ${suffix}`;
     }
     if (imageItemsCount > 0 && videoItemsCount === 0 && textItemsCount === 0) {
-      return `${selectedImageCount}/${imageItemsCount} ${imageItemsCount === 1 ? "image" : "images"}`;
+      const suffix = imageItemsCount === 1 ? "image" : "images";
+      return isSimplified ? `${imageItemsCount} ${suffix}` : `${selectedImageCount}/${imageItemsCount} ${suffix}`;
     }
     
     // Mixed media
     const mediaTotal = imageItemsCount + videoItemsCount;
     const mediaSelected = selectedImageCount + selectedVideoCount;
     if (videoItemsCount > 0 && imageItemsCount > 0 && textItemsCount === 0) {
-      return `${mediaSelected}/${mediaTotal} media`;
+      return isSimplified ? `${mediaTotal} media` : `${mediaSelected}/${mediaTotal} media`;
     }
 
     // Default/fallback
-    return `${selectedCount}/${totalCount} items`;
+    return isSimplified ? `${totalCount} items` : `${selectedCount}/${totalCount} items`;
   })();
 
   return (
@@ -445,11 +449,11 @@ export function ListNode(props: NodeProps<FlowNode>) {
           "border-[3px] shadow-[0_8px_32px_rgba(0,0,0,0.7)]",
           selected || isConnectingFrom
             ? "border-accent ring-1 ring-accent/30" 
-            : "border-white/[0.12] hover:border-white/[0.18]",
+            : "border-white/[0.14] hover:border-white/[0.22]",
         )}
         style={{ 
           borderRadius: BORDER_RADIUS, 
-          backgroundColor: "#161616", 
+          backgroundColor: "#1a1a1a", 
           minHeight: dynamicMinHeight,
           maxHeight: 520
         }}
@@ -489,11 +493,18 @@ export function ListNode(props: NodeProps<FlowNode>) {
           </div>
         </NodeToolbar>
 
-        {/* Content Viewport */}
+        {/* Scrollable Wrapper to clip scrollbar within rounded corners */}
         <div 
-          className="flex-1 py-3 px-3 overflow-y-auto img-gen-prompt"
-          style={{ borderRadius: `${BORDER_RADIUS - 3}px` }}
+          className="flex-1 flex flex-col min-h-0 overflow-hidden px-4 pt-3.5 pb-1.5"
+          style={{ 
+            borderTopLeftRadius: `${BORDER_RADIUS - 3}px`, 
+            borderTopRightRadius: `${BORDER_RADIUS - 3}px` 
+          }}
         >
+          {/* Content Viewport */}
+          <div 
+            className="flex-1 pb-3 pr-2 overflow-y-auto img-gen-prompt"
+          >
           {listItems.length === 0 ? (
             isRunning ? (
               <div 
@@ -714,6 +725,7 @@ export function ListNode(props: NodeProps<FlowNode>) {
               })}
             </div>
           )}
+          </div>
         </div>
 
         {/* Elegant Bottom Toolbar - Docked at the bottom inside card container */}
@@ -721,7 +733,7 @@ export function ListNode(props: NodeProps<FlowNode>) {
           onMouseDown={stopNodeAction}
           onClick={stopNodeAction}
           onDoubleClick={stopNodeAction}
-          className="nodrag nowheel h-14 flex items-center justify-between px-3 z-30 border-t border-white/[0.06] rounded-b-[21px] bg-[#161616] shrink-0"
+          className="nodrag nowheel h-14 flex items-center justify-between px-4 z-30 bg-transparent shrink-0 pb-3"
         >
           {/* Left Actions */}
           <div className="flex items-center gap-1.5">
@@ -859,12 +871,21 @@ export function ListNode(props: NodeProps<FlowNode>) {
                     : "bg-white/[0.06] border-white/[0.08] text-white/80 hover:text-white hover:bg-white/[0.12]"
                 )}
               >
-                {/* Fill/Fit scroll-arrow icon */}
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="8 3 12 7 16 3" />
-                  <polyline points="8 21 12 17 16 21" />
-                  <line x1="12" y1="7" x2="12" y2="17" />
-                </svg>
+                {imageFit === "cover" ? (
+                  /* Fill (Cover/Expand) icon matching mockup 1 */
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="6" y="10" width="12" height="4" rx="1.2" />
+                    <path d="M8 6L12 3L16 6" />
+                    <path d="M8 18L12 21L16 18" />
+                  </svg>
+                ) : (
+                  /* Fit (Contain/Shrink) icon matching mockup 2 */
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="6" y="10" width="12" height="4" rx="1.2" />
+                    <path d="M8 3L12 6L16 3" />
+                    <path d="M8 21L12 18L16 21" />
+                  </svg>
+                )}
               </button>
             )}
           </div>
