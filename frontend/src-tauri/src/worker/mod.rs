@@ -574,7 +574,7 @@ async fn process_request(
 
     if req_type == "gen_image" {
         let variant_count = params.get("variant_count").and_then(|v| v.as_i64()).unwrap_or(1);
-        let n = variant_count.clamp(1, 4);
+        let n = variant_count.clamp(1, 99);
         let image_model = params.get("image_model").and_then(|m| m.as_str());
         let model_name = resolve_image_model(image_model);
         let prompts = params.get("prompts").and_then(|p| p.as_array());
