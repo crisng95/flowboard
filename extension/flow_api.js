@@ -151,7 +151,7 @@
       ctx.recaptchaContext.token = captchaToken;
 
       const now = Date.now();
-      const variantCount = Math.max(1, Math.min(Number(opts.variantCount || 1), 4));
+      const variantCount = Math.max(1, Math.min(Number(opts.variantCount || 1), 99));
       const refMediaIds = Array.isArray(opts.refMediaIds) ? opts.refMediaIds.filter((m) => typeof m === 'string' && m) : [];
       const prompts = Array.isArray(opts.prompts) ? opts.prompts : [];
       const requests = [];
