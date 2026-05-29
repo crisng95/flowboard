@@ -261,8 +261,8 @@ CAPTCHA_VIDEO = "VIDEO_GENERATION"
 _MAX_VIDEO_OPS = 4
 
 # Image variants per dispatch are capped server-side as defence-in-depth — the
-# UI clamps to 4 too. Any value above this is silently coerced down.
-MAX_VARIANT_COUNT = 4
+# UI clamps to 4 too for standard runs, but batch runs can go higher (e.g. cross product).
+MAX_VARIANT_COUNT = 99
 
 # Minimal static headers that have worked against labs.google in flowkit.
 _TRPC_HEADERS = {
