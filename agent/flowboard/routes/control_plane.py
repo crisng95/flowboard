@@ -19,7 +19,7 @@ class RequestCreateInput(BaseModel):
     provider: str = Field(..., description="Target provider (e.g. 'flow', 'gemini')")
     task_type: str = Field(..., description="Generation type (e.g. 'txt2img')")
     input_data: Dict[str, Any] = Field(..., description="Task inputs")
-    idempotency_key: str = Field(..., description="BÃ„Æ’m key trÃƒÂ¡nh xung Ã„â€˜Ã¡Â»â„¢t chÃƒÂ©o")
+    idempotency_key: str = Field(..., description="Băm key tránh xung đột chéo")
     expected_output: str = Field(..., description="Output expected type")
 
 class SignReadInput(BaseModel):
@@ -108,7 +108,7 @@ async def verify_extension_client(
     return x_client_id
 
 # =========================================================================
-# A. NhÃƒÂ³m API cho TrÃƒÂ¬nh duyÃ¡Â»â€¡t Frontend (User-Facing)
+# A. Nhóm API cho Trình duyệt Frontend (User-Facing)
 # =========================================================================
 
 @router.post("/control-plane/requests")
@@ -116,7 +116,7 @@ async def create_request(
     body: RequestCreateInput,
     current_user_id: str = Depends(get_current_user_id)
 ) -> Dict[str, Any]:
-    """TÃ¡ÂºÂ¡o mÃ¡Â»â€ºi hoÃ¡ÂºÂ·c reset tÃƒÂ¡c vÃ¡Â»Â¥ lÃ¡Â»â€”i/hÃ¡Â»Â§y (Atomic Create/Reset Job)."""
+    """Tạo mới hoặc reset tác vụ lỗi/hủy (Atomic Create/Reset Job)."""
     try:
         req = await control_plane_service.create_or_reset_request(
             user_id=current_user_id,
@@ -137,7 +137,7 @@ async def sign_read(
     body: SignReadInput,
     current_user_id: str = Depends(get_current_user_id)
 ) -> Dict[str, Any]:
-    """Sinh signed read URL thÃ¡Â»Âi gian ngÃ¡ÂºÂ¯n (15 phÃƒÂºt) Ã„â€˜Ã¡Â»Æ’ tÃ¡ÂºÂ£i file vÃ¡Â»Â hiÃ¡Â»Æ’n thÃ¡Â»â€¹."""
+    """Sinh signed read URL thời gian ngắn (15 phút) để tải file về hiển thị."""
     try:
         # Lookup owner and storage key from DB assets table prior to signing
         asset = await control_plane_service.get_user_asset(current_user_id, body.asset_id)
@@ -164,8 +164,8 @@ async def sign_upload(
     body: SignUploadInput,
     current_user_id: str = Depends(get_current_user_id)
 ) -> Dict[str, Any]:
-    """Sinh presigned URL cho phÃƒÂ©p frontend/extension upload tÃ¡Â»â€¡p trÃ¡Â»Â±c tiÃ¡ÂºÂ¿p lÃƒÂªn R2."""
-    # KhÃƒÂ³a sign-upload bÃ¡ÂºÂ±ng policy key prefix: users/{user_id}/...
+    """Sinh presigned URL cho phép frontend/extension upload tệp trực tiếp lên R2."""
+    # Khóa sign-upload bằng policy key prefix: users/{user_id}/...
     expected_prefix = f"users/{current_user_id}/"
     if not body.storage_key.startswith(expected_prefix):
         raise HTTPException(
@@ -187,7 +187,7 @@ async def register_pairing(
     body: PairingRegisterInput,
     current_user_id: str = Depends(get_current_user_id)
 ) -> Dict[str, Any]:
-    """Ã„ÂÃ„Æ’ng kÃƒÂ½ thiÃ¡ÂºÂ¿t bÃ¡Â»â€¹ extension client mÃ¡Â»â€ºi vÃƒÂ  tÃ¡ÂºÂ¡o Pairing hoÃ¡ÂºÂ¡t Ã„â€˜Ã¡Â»â„¢ng."""
+    """Đăng ký thiết bị extension client mới và tạo Pairing hoạt động."""
     try:
         result = await control_plane_service.register_pairing(
             user_id=current_user_id,
@@ -204,7 +204,7 @@ async def rotate_pairing_secret(
     body: PairingRotateInput,
     current_user_id: str = Depends(get_current_user_id)
 ) -> Dict[str, Any]:
-    """Xoay vÃƒÂ²ng pairing secret (current -> previous) vÃ¡Â»â€ºi 24h grace overlap."""
+    """Xoay vòng pairing secret (current -> previous) với 24h grace overlap."""
     try:
         # Verify ownership of pairing
         pairing = await control_plane_service.get_user_pairing(current_user_id, body.pairing_id)
@@ -225,7 +225,7 @@ async def rotate_pairing_secret(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 # =========================================================================
-# B. NhÃƒÂ³m API cho Extension (Execution Plane)
+# B. Nhóm API cho Extension (Execution Plane)
 # =========================================================================
 
 @router.post("/extension/sign-upload")
@@ -233,7 +233,7 @@ async def extension_sign_upload(
     body: SignUploadInput,
     client_id: str = Depends(verify_extension_client)
 ) -> Dict[str, Any]:
-    """Sinh presigned URL cho phÃƒÂ©p extension upload tÃ¡Â»â€¡p trÃ¡Â»Â±c tiÃ¡ÂºÂ¿p lÃƒÂªn R2."""
+    """Sinh presigned URL cho phép extension upload tệp trực tiếp lên R2."""
     import re
     control_chars_regex = re.compile(r"[\x00-\x1f\x7f-\x9f]")
     
@@ -317,7 +317,7 @@ async def heartbeat_job(
     body: HeartbeatJobInput,
     client_id: str = Depends(verify_extension_client)
 ) -> Dict[str, Any]:
-    """Gia hÃ¡ÂºÂ¡n lease job Ã„â€˜ang chÃ¡ÂºÂ¡y Ã„â€˜Ã¡Â»â€¹nh kÃ¡Â»Â³ (Heartbeat)."""
+    """Gia hạn lease job đang chạy định kỳ (Heartbeat)."""
     try:
         result = await control_plane_service.renew_request_lease(
             request_id=body.request_id,
@@ -333,7 +333,7 @@ async def progress_job(
     body: ProgressJobInput,
     client_id: str = Depends(verify_extension_client)
 ) -> Dict[str, Any]:
-    """CÃ¡ÂºÂ­p nhÃ¡ÂºÂ­t phÃƒÂ¢n Ã„â€˜oÃ¡ÂºÂ¡n tiÃ¡ÂºÂ¿n trÃƒÂ¬nh (Progress Update)."""
+    """Cập nhật phân đoạn tiến trình (Progress Update)."""
     try:
         result = await control_plane_service.update_request_progress(
             request_id=body.request_id,
@@ -350,7 +350,7 @@ async def complete_job(
     body: CompleteJobInput,
     client_id: str = Depends(verify_extension_client)
 ) -> Dict[str, Any]:
-    """Ghi nhÃ¡ÂºÂ­n hoÃƒÂ n thÃƒÂ nh cÃƒÂ´ng viÃ¡Â»â€¡c vÃƒÂ  chÃƒÂ¨n Assets Ã„â€˜Ã¡Â»â€œng bÃ¡Â»â„¢ (Atomic Complete)."""
+    """Ghi nhận hoàn thành công việc và chèn Assets đồng bộ (Atomic Complete)."""
     try:
         result = await control_plane_service.complete_request_with_assets(
             request_id=body.request_id,
@@ -367,7 +367,7 @@ async def fail_job(
     body: FailJobInput,
     client_id: str = Depends(verify_extension_client)
 ) -> Dict[str, Any]:
-    """Ghi nhÃ¡ÂºÂ­n job thÃ¡ÂºÂ¥t bÃ¡ÂºÂ¡i vÃƒÂ  append debug snapshot (Atomic Fail)."""
+    """Ghi nhận job thất bại và append debug snapshot (Atomic Fail)."""
     try:
         result = await control_plane_service.fail_request_with_event(
             request_id=body.request_id,
@@ -381,14 +381,14 @@ async def fail_job(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 # =========================================================================
-# C. NhÃƒÂ³m API HÃ¡Â»â€¡ thÃ¡Â»â€˜ng (Cron / Admin)
+# C. Nhóm API Hệ thống (Cron / Admin)
 # =========================================================================
 
 @router.post("/cron/recover-stale")
 async def recover_stale(
     recover_token: Optional[str] = Header(None, alias="X-Recover-Token")
 ) -> Dict[str, Any]:
-    """QuÃƒÂ©t vÃƒÂ  khÃƒÂ´i phÃ¡Â»Â¥c tÃ¡Â»Â± Ã„â€˜Ã¡Â»â„¢ng cÃƒÂ¡c job bÃ¡Â»â€¹ mÃ¡ÂºÂ¥t kÃ¡ÂºÂ¿t nÃ¡Â»â€˜i (Cron Stale Recovery)."""
+    """Quét và khôi phục tự động các job bị mất kết nối (Cron Stale Recovery)."""
     if not recover_token or not secrets.compare_digest(recover_token, CONTROL_PLANE_CRON_TOKEN):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

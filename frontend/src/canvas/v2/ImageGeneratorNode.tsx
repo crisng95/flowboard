@@ -369,7 +369,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
             <div className="absolute inset-0 bg-black/50 transition-opacity duration-300 z-[5]" />
           )}
 
-          {/* â”€â”€ Expand / quick-view button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+          {/* ── Expand / quick-view button ───────────────────────────────────
               Top-left on hover when an image exists. Opens ResultViewer. */}
           {mediaId && showControls && !showVariantGrid && !promptFocused && (
             <button
@@ -394,13 +394,13 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
             </button>
           )}
 
-          {/* Size badge â€” top-right */}
+          {/* Size badge — top-right */}
           {imgSize && showControls && mediaId && !showVariantGrid && (
             <div
               className="absolute top-3 right-3 px-2.5 py-1 rounded-full text-2xs font-medium text-ink-primary z-10"
               style={{ backgroundColor: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }}
             >
-              {imgSize.w} Ã— {imgSize.h}
+              {imgSize.w} × {imgSize.h}
             </div>
           )}
 
@@ -553,7 +553,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
         />
       </div>
 
-      {/* Source handle â€” right side */}
+      {/* Source handle — right side */}
       <Handle type="source" position={Position.Right} id="source"
         className={edgeHandleClass({ side: "right", visible: showSourceHandle })}
         style={{ top: EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET }}
@@ -561,14 +561,14 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
         <HandleBadge icon={ImageUp} active={hasSourceEdge} label="Generated Image" side="right" />
       </Handle>
 
-      {/* Target handle (text input) â€” left side */}
+      {/* Target handle (text input) — left side */}
       <Handle type="target" position={Position.Left} id="target-text" style={{ bottom: 54, top: "auto" }}
         className={targetHandleClassName(hasTextConnection)}
       >
         <HandleBadge icon={Type} active={hasTextConnection} label="Prompt" side="left" />
       </Handle>
 
-      {/* Target handle (image input) â€” left side */}
+      {/* Target handle (image input) — left side */}
       <Handle type="target" position={Position.Left} id="target-image" style={{ bottom: 14, top: "auto" }}
         className={targetHandleClassName(hasImageConnection)}
       >
