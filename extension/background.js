@@ -1146,7 +1146,8 @@ async function runCloudFlowJob(cloud, job) {
         throw stageError('ERR_STAGE_GENERATE', new Error('Flow API returned no operation names or workflows'));
       }
 
-      await cloud.progress(requestId, 'generating', 50);
+      await cloud.progress(requestId, 'waiting_provider', 50);
+
       
       let pollAttempts = 60; // up to 10 mins
       let finalOps = [];
