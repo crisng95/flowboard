@@ -171,6 +171,39 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
   const upstreamTextNode = upstreamTextEdge ? allNodes.find((n) => n.id === upstreamTextEdge.source) : null;
   const upstreamText = ((upstreamTextNode?.data.prompt as string) ?? "").trim();
 
+  const batchMode = (data.batchMode as "zip" | "cross") || "cross";
+
+  const promptCount = (() => {
+    if (!upstreamTextNode) return 1;
+    const items = upstreamTextNode.data.listItems;
+    if (Array.isArray(items)) {
+      if (upstreamTextNode.data.listSelectionMode && Array.isArray(upstreamTextNode.data.listSelectedIndexes) && upstreamTextNode.data.listSelectedIndexes.length > 0) {
+        return upstreamTextNode.data.listSelectedIndexes.length;
+      }
+      return items.length;
+    }
+    return 1;
+  })();
+
+  const imageCountUpstream = (() => {
+    if (!startNode) return 1;
+    const items = startNode.data.listItems;
+    if (Array.isArray(items)) {
+      if (startNode.data.listSelectionMode && Array.isArray(startNode.data.listSelectedIndexes) && startNode.data.listSelectedIndexes.length > 0) {
+        return startNode.data.listSelectedIndexes.length;
+      }
+      return items.length;
+    }
+    return 1;
+  })();
+
+  const batchTaskCount = batchMode === "cross" ? promptCount * imageCountUpstream : Math.min(promptCount, imageCountUpstream);
+
+  const toggleBatchMode = useCallback(() => {
+    const nextMode = batchMode === "cross" ? "zip" : "cross";
+    persistDelta({ batchMode: nextMode });
+  }, [batchMode]);
+
   useEffect(() => {
     const next: Record<string, unknown> = {};
     if ((data.startImageMediaId as string | undefined) !== startMediaId) {
@@ -472,6 +505,23 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
               />
             </div>
 
+            {/* Persistent Batch Mode Toggle Badge when List is connected */}
+            {promptCount > 1 && imageCountUpstream > 1 && !showControls && (
+              <div className="px-4 pb-3 pt-0">
+                <button
+                  type="button"
+                  onMouseDown={stopNodeAction}
+                  onDoubleClick={stopNodeAction}
+                  onClick={toggleBatchMode}
+                  title={`Batch Mode: ${batchMode === "cross" ? "Cross Product (Generate every prompt for every image)" : "Zip Paired (Generate prompts matched with images by index)"}`}
+                  className="nodrag nowheel flex h-7 w-fit items-center justify-center rounded-full border border-white/[0.08] px-2.5 py-1 text-2xs font-bold text-white/80 hover:bg-white/[0.08] hover:text-white transition-all whitespace-nowrap cursor-pointer"
+                  style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
+                >
+                  x{batchTaskCount}
+                </button>
+              </div>
+            )}
+
             <div
               onMouseDown={stopNodeAction}
               onClick={stopNodeAction}
@@ -599,11 +649,24 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
                   }))}
                   activeKey={cameraMode}
                   onPick={(key) => setCameraMode(key as CameraMode)}
-                  minWidth={148}
-                  matchAnchorWidth={false}
                   estimatedHeight={180}
                 />
               </div>
+
+              {/* Batch Mode Toggle (Zip vs Cross) */}
+              {promptCount > 1 && imageCountUpstream > 1 && (
+                <button
+                  type="button"
+                  onMouseDown={stopNodeAction}
+                  onDoubleClick={stopNodeAction}
+                  onClick={toggleBatchMode}
+                  title={`Batch Mode: ${batchMode === "cross" ? "Cross Product (Generate every prompt for every image)" : "Zip Paired (Generate prompts matched with images by index)"}`}
+                  className="nodrag nowheel flex h-7 items-center justify-center rounded-full border border-white/[0.08] px-2.5 py-1 text-2xs font-bold text-white/80 hover:bg-white/[0.08] hover:text-white transition-all whitespace-nowrap cursor-pointer"
+                  style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
+                >
+                  x{batchTaskCount}
+                </button>
+              )}
 
               <div className="flex-1" />
 

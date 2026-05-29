@@ -583,18 +583,50 @@ async function runNodeDirect(
     const aspectRatio = IMAGE_NODE_ASPECT_TO_FLOW[aspectKey] ?? IMAGE_NODE_ASPECT_TO_FLOW["1:1"];
     const imageModel = normalizeImageModelKey(node.data.modelKey as string | undefined);
 
-    // ── Dispatch Mode Detection ─────────────────────────────────────────────
-    //
-    // Mode A — Paired (N prompts = N images, N > 1):
-    //   Each pair (prompt_i, image_i) dispatches as its own generation request.
-    //   Results are laid out as individual nodes to the right of the original.
-    //
-    // Mode B — Multi-image (1 prompt + N images):
-    //   All N images are sent as ref_media_ids in one request so the model
-    //   can use every image as a reference; variantCount = 1 (single output).
-    //
-    // Mode C — Standard:
-    //   Single prompt + ≤1 image → classic single dispatch with imageCount.
+    const hasBatchInputs = upstreamPrompts.length > 1 && refMediaIds.length > 1;
+    const batchMode = (node.data.batchMode as "zip" | "cross") || "cross";
+
+    if (hasBatchInputs) {
+      if (batchMode === "zip") {
+        const minLength = Math.min(upstreamPrompts.length, refMediaIds.length);
+        const pairedPrompts = upstreamPrompts.slice(0, minLength);
+        const pairedRefs = refMediaIds.slice(0, minLength);
+
+        await get().dispatchGeneration(rfId, {
+          prompt: pairedPrompts[0],
+          kind: "image",
+          aspectRatio,
+          variantCount: minLength,
+          imageModel,
+          prompts: pairedPrompts,
+          sourceMediaIds: pairedRefs,
+          skipSpawningNodes: true,
+        });
+        return;
+      } else {
+        // Cartesian Product / Cross Mode
+        const crossedPrompts: string[] = [];
+        const crossedRefs: string[] = [];
+        for (const p of upstreamPrompts) {
+          for (const r of refMediaIds) {
+            crossedPrompts.push(p);
+            crossedRefs.push(r);
+          }
+        }
+
+        await get().dispatchGeneration(rfId, {
+          prompt: crossedPrompts[0],
+          kind: "image",
+          aspectRatio,
+          variantCount: crossedPrompts.length,
+          imageModel,
+          prompts: crossedPrompts,
+          sourceMediaIds: crossedRefs,
+          skipSpawningNodes: true,
+        });
+        return;
+      }
+    }
 
     const isPairedMode =
       upstreamPrompts.length >= 2 &&
@@ -660,7 +692,29 @@ async function runNodeDirect(
   }
 
   if (nodeType === "video") {
-    const prompt = getUpstreamTextPrompt(rfId) || ((node.data.prompt as string | undefined) ?? "").trim();
+    const textEdge = board.edges.find((e) => e.target === rfId && e.targetHandle === "target-text");
+    const textSourceNode = textEdge ? board.nodes.find((n) => n.id === textEdge.source) : null;
+    const upstreamPrompts = textSourceNode
+      ? (textSourceNode.data.type === "list"
+          ? collectListItemsFromNode(textSourceNode as any)
+              .filter((item) => item.kind === "text")
+              .map((item) => String(item.text || item.title || "").trim())
+              .filter(Boolean)
+          : [((textSourceNode.data.prompt as string | undefined) ?? "").trim()].filter(Boolean))
+      : [];
+
+    const startEdge = board.edges.find((e) => e.target === rfId && e.targetHandle === "target-start-image");
+    const startNode = startEdge ? board.nodes.find((n) => n.id === startEdge.source) : undefined;
+    const startMediaIds = startNode
+      ? (startNode.data.type === "list"
+          ? collectListItemsFromNode(startNode as any)
+              .filter((item) => item.kind === "image" || item.kind === "video")
+              .map((item) => item.mediaId)
+              .filter((m): m is string => typeof m === "string" && m.length > 0)
+          : (Array.isArray(startNode.data.mediaIds) ? startNode.data.mediaIds : [startNode.data.mediaId]).filter((m): m is string => typeof m === "string" && m.length > 0))
+      : [];
+
+    const prompt = upstreamPrompts[0] || ((node.data.prompt as string | undefined) ?? "").trim();
     if (!prompt) throw new Error("video_node_missing_prompt");
 
     const videoModel = ((node.data.videoModel as string | undefined) ?? "veo") as "veo" | "omni_flash";
@@ -678,13 +732,52 @@ async function runNodeDirect(
         : VIDEO_NODE_ASPECT_TO_FLOW["16:9"]);
     const cameraMode = ((node.data.cameraMode as string | undefined) ?? "static") as keyof typeof VIDEO_CAMERA_INSTRUCTIONS;
     const cameraInstruction = VIDEO_CAMERA_INSTRUCTIONS[cameraMode] ?? "";
+
+    const hasBatchInputs = upstreamPrompts.length > 1 && startMediaIds.length > 1;
+    const batchMode = (node.data.batchMode as "zip" | "cross") || "cross";
+
+    if (hasBatchInputs) {
+      let finalPrompts: string[] = [];
+      let finalRefs: string[] = [];
+
+      if (batchMode === "zip") {
+        const minLength = Math.min(upstreamPrompts.length, startMediaIds.length);
+        finalPrompts = upstreamPrompts.slice(0, minLength);
+        finalRefs = startMediaIds.slice(0, minLength);
+      } else {
+        for (const p of upstreamPrompts) {
+          for (const r of startMediaIds) {
+            finalPrompts.push(p);
+            finalRefs.push(r);
+          }
+        }
+      }
+
+      // Add camera instruction to prompts
+      const formattedPrompts = cameraInstruction 
+        ? finalPrompts.map(p => `${p}. ${cameraInstruction}`)
+        : finalPrompts;
+
+      await get().dispatchGeneration(rfId, {
+        prompt: formattedPrompts[0],
+        kind: "video",
+        aspectRatio,
+        variantCount: formattedPrompts.length,
+        prompts: formattedPrompts,
+        sourceMediaIds: finalRefs,
+      });
+      return;
+    }
+
     const promptWithCamera = cameraInstruction ? `${prompt}. ${cameraInstruction}` : prompt;
+    const startMediaId = startMediaIds[0] ?? undefined;
 
     await get().dispatchGeneration(rfId, {
       prompt: promptWithCamera,
       kind: "video",
       aspectRatio,
       variantCount: 1,
+      sourceMediaId: startMediaId,
     });
     return;
   }

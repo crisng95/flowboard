@@ -129,6 +129,45 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
 
   const currentModel = MODEL_OPTIONS.find((m) => m.key === modelKey) ?? MODEL_OPTIONS[0];
 
+  const upstreamImageEdge = edges.find((e) => e.target === rfId && e.targetHandle === "target-image");
+  const upstreamImageNode = upstreamImageEdge
+    ? allNodes.find((n) => n.id === upstreamImageEdge.source)
+    : null;
+
+  const batchMode = (data.batchMode as "zip" | "cross") || "cross";
+
+  const promptCount = (() => {
+    if (!upstreamTextNode) return 1;
+    const items = upstreamTextNode.data.listItems;
+    if (Array.isArray(items)) {
+      if (upstreamTextNode.data.listSelectionMode && Array.isArray(upstreamTextNode.data.listSelectedIndexes) && upstreamTextNode.data.listSelectedIndexes.length > 0) {
+        return upstreamTextNode.data.listSelectedIndexes.length;
+      }
+      return items.length;
+    }
+    return 1;
+  })();
+
+  const imageCountUpstream = (() => {
+    if (!upstreamImageNode) return 1;
+    const items = upstreamImageNode.data.listItems;
+    if (Array.isArray(items)) {
+      if (upstreamImageNode.data.listSelectionMode && Array.isArray(upstreamImageNode.data.listSelectedIndexes) && upstreamImageNode.data.listSelectedIndexes.length > 0) {
+        return upstreamImageNode.data.listSelectedIndexes.length;
+      }
+      return items.length;
+    }
+    return 1;
+  })();
+
+  const batchTaskCount = batchMode === "cross" ? promptCount * imageCountUpstream : Math.min(promptCount, imageCountUpstream);
+
+  const toggleBatchMode = useCallback(() => {
+    const nextMode = batchMode === "cross" ? "zip" : "cross";
+    useBoardStore.getState().updateNodeData(rfId, { batchMode: nextMode });
+    persistNodeData(rfId, { batchMode: nextMode });
+  }, [rfId, batchMode]);
+
   function setPrompt(value: string) {
     useBoardStore.getState().updateNodeData(rfId, { prompt: value });
     persistNodeData(rfId, { prompt: value });
@@ -385,6 +424,23 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
               />
             </div>
 
+            {/* Persistent Batch Mode Toggle Badge when List is connected */}
+            {promptCount > 1 && imageCountUpstream > 1 && !showControls && (
+              <div className="px-4 pb-3 pt-0">
+                <button
+                  type="button"
+                  onMouseDown={stopNodeAction}
+                  onDoubleClick={stopNodeAction}
+                  onClick={toggleBatchMode}
+                  title={`Batch Mode: ${batchMode === "cross" ? "Cross Product (Generate every prompt for every image)" : "Zip Paired (Generate prompts matched with images by index)"}`}
+                  className="nodrag nowheel flex h-7 w-fit items-center justify-center rounded-full border border-white/[0.08] px-2.5 py-1 text-2xs font-bold text-white/80 hover:bg-white/[0.08] hover:text-white transition-all whitespace-nowrap cursor-pointer"
+                  style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
+                >
+                  x{batchTaskCount}
+                </button>
+              </div>
+            )}
+
             {/* Toolbar - slides in on hover */}
             <div
               className={cn(
@@ -395,13 +451,27 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
                   : "max-h-0 opacity-0 translate-y-1 overflow-hidden",
               )}
             >
-              {/* Image count */}
-              <CountStepper
-                value={imageCount}
-                min={1}
-                max={4}
-                onChange={(next) => setImageCount(next - imageCount)}
-              />
+              {/* Batch Mode Toggle OR standard Image count stepper */}
+              {promptCount > 1 && imageCountUpstream > 1 ? (
+                <button
+                  type="button"
+                  onMouseDown={stopNodeAction}
+                  onDoubleClick={stopNodeAction}
+                  onClick={toggleBatchMode}
+                  title={`Batch Mode: ${batchMode === "cross" ? "Cross Product (Generate every prompt for every image)" : "Zip Paired (Generate prompts matched with images by index)"}`}
+                  className="nodrag nowheel flex h-7 items-center justify-center rounded-full border border-white/[0.08] px-2.5 py-1 text-2xs font-bold text-white/80 hover:bg-white/[0.08] hover:text-white transition-all whitespace-nowrap cursor-pointer shrink-0"
+                  style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
+                >
+                  x{batchTaskCount}
+                </button>
+              ) : (
+                <CountStepper
+                  value={imageCount}
+                  min={1}
+                  max={4}
+                  onChange={(next) => setImageCount(next - imageCount)}
+                />
+              )}
 
               {/* Model picker */}
               <div className="relative">
