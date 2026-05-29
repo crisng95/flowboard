@@ -140,7 +140,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     if (!upstreamTextNode) return 1;
     const items = upstreamTextNode.data.listItems;
     if (Array.isArray(items)) {
-      if (upstreamTextNode.data.listSelectionMode && Array.isArray(upstreamTextNode.data.listSelectedIndexes) && upstreamTextNode.data.listSelectedIndexes.length > 0) {
+      if (Array.isArray(upstreamTextNode.data.listSelectedIndexes) && upstreamTextNode.data.listSelectedIndexes.length > 0) {
         return upstreamTextNode.data.listSelectedIndexes.length;
       }
       return items.length;
@@ -152,7 +152,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     if (!upstreamImageNode) return 1;
     const items = upstreamImageNode.data.listItems;
     if (Array.isArray(items)) {
-      if (upstreamImageNode.data.listSelectionMode && Array.isArray(upstreamImageNode.data.listSelectedIndexes) && upstreamImageNode.data.listSelectedIndexes.length > 0) {
+      if (Array.isArray(upstreamImageNode.data.listSelectedIndexes) && upstreamImageNode.data.listSelectedIndexes.length > 0) {
         return upstreamImageNode.data.listSelectedIndexes.length;
       }
       return items.length;

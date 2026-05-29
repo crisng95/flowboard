@@ -177,7 +177,7 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
     if (!upstreamTextNode) return 1;
     const items = upstreamTextNode.data.listItems;
     if (Array.isArray(items)) {
-      if (upstreamTextNode.data.listSelectionMode && Array.isArray(upstreamTextNode.data.listSelectedIndexes) && upstreamTextNode.data.listSelectedIndexes.length > 0) {
+      if (Array.isArray(upstreamTextNode.data.listSelectedIndexes) && upstreamTextNode.data.listSelectedIndexes.length > 0) {
         return upstreamTextNode.data.listSelectedIndexes.length;
       }
       return items.length;
@@ -189,7 +189,7 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
     if (!startNode) return 1;
     const items = startNode.data.listItems;
     if (Array.isArray(items)) {
-      if (startNode.data.listSelectionMode && Array.isArray(startNode.data.listSelectedIndexes) && startNode.data.listSelectedIndexes.length > 0) {
+      if (Array.isArray(startNode.data.listSelectedIndexes) && startNode.data.listSelectedIndexes.length > 0) {
         return startNode.data.listSelectedIndexes.length;
       }
       return items.length;
