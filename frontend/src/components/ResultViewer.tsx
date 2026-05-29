@@ -80,8 +80,8 @@ function formatRelativeTime(iso: string | undefined): string {
 export function ResultViewer() {
   const openViewer = useGenerationStore((s) => s.openViewer);
   const closeResultViewer = useGenerationStore((s) => s.closeResultViewer);
-  const openGenerationDialog = useGenerationStore((s) => s.openGenerationDialog);
   const dispatchGeneration = useGenerationStore((s) => s.dispatchGeneration);
+  const runNodeGraph = useGenerationStore((s) => s.runNodeGraph);
   const projectId = useGenerationStore((s) => s.projectId);
   const nodes = useBoardStore((s) => s.nodes);
   const edges = useBoardStore((s) => s.edges);
@@ -157,7 +157,20 @@ export function ResultViewer() {
           // when a structural ref is also upstream. Mirrors the
           // dispatcher's filter in `collectUpstreamRefMediaIds`.
           if (rfId && isMaterialRefDemoted(n, targetHasStructuralRef(rfId))) return null;
-          const variants = Array.isArray(n.data.mediaIds) ? n.data.mediaIds : [];
+          let variants = Array.isArray(n.data.mediaIds) ? n.data.mediaIds : [];
+          if (n.data.type === "list") {
+            const listSelectedIndexes = Array.isArray(n.data.listSelectedIndexes) 
+              ? n.data.listSelectedIndexes.map(Number)
+              : [];
+            if (listSelectedIndexes.length > 0) {
+              const listItems = Array.isArray(n.data.listItems) ? n.data.listItems : [];
+              const selectedItems = listItems.filter((_, idx) => listSelectedIndexes.includes(idx));
+              const selectedMediaItems = selectedItems.filter((item) => item.kind === "image" || item.kind === "video");
+              variants = selectedMediaItems
+                .map((item) => (item.flowMediaId ?? item.mediaId) as string)
+                .filter((m) => typeof m === "string" && m.length > 0);
+            }
+          }
           const pin = (e.data?.sourceVariantIdx ?? null) as number | null;
           let mediaId: string | undefined;
           let variantIdx: number | null = null;
@@ -170,14 +183,18 @@ export function ResultViewer() {
           ) {
             mediaId = variants[pin] as string;
             variantIdx = pin;
-          } else if (typeof n.data.mediaId === "string" && n.data.mediaId) {
-            mediaId = n.data.mediaId;
-          } else if (
-            variants.length > 0
-            && typeof variants[0] === "string"
-            && variants[0]
-          ) {
-            mediaId = variants[0] as string;
+          } else {
+            const primaryMediaId = n.data.type === "list" ? null : (typeof n.data.mediaId === "string" && n.data.mediaId ? n.data.mediaId : null);
+            if (primaryMediaId) {
+              mediaId = primaryMediaId;
+            } else if (
+              variants.length > 0
+              && typeof variants[0] === "string"
+              && variants[0]
+            ) {
+              mediaId = variants[0] as string;
+              variantIdx = 0;
+            }
           }
           if (!mediaId) return null;
           return { node: n, mediaId, variantIdx };
@@ -397,7 +414,7 @@ export function ResultViewer() {
   function handleEditPrompt() {
     if (!rfId || !data || llmBusy) return;
     closeResultViewer();
-    openGenerationDialog(rfId, data.prompt ?? "");
+    void runNodeGraph(rfId);
   }
 
   async function handleNewVariant() {
@@ -410,7 +427,7 @@ export function ResultViewer() {
     // Open the gen dialog on the fresh sibling so the user can hit
     // Generate immediately (or tweak prompt first) — that's the natural
     // next step after cloning.
-    openGenerationDialog(newRfId, data?.prompt ?? "");
+    void runNodeGraph(newRfId);
   }
 
   return (

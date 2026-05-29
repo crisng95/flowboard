@@ -40,12 +40,15 @@ export function IconChip({
       title={label}
       aria-label={label}
       disabled={disabled || busy}
+      onMouseDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
       onClick={(e) => {
         e.stopPropagation();
         onClick?.();
       }}
       className={cn(
         "inline-flex h-6 w-6 items-center justify-center rounded-md",
+        "nodrag nowheel",
         "transition-all duration-150",
         "disabled:opacity-50 disabled:pointer-events-none",
         active

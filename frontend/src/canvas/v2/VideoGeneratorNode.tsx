@@ -83,13 +83,32 @@ type CameraMode = (typeof CAMERA_OPTIONS)[number]["key"];
 
 export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
   const { id: rfId, data, selected } = props;
+  const status = data.status as string | undefined;
+  const isRunning = status === "running" || status === "queued";
+
+  const [simulatedProgress, setSimulatedProgress] = useState(2);
+  useEffect(() => {
+    if (isRunning) {
+      setSimulatedProgress(2);
+      const interval = setInterval(() => {
+        setSimulatedProgress((prev) => {
+          if (prev >= 98) return 98;
+          const increment = Math.floor(Math.random() * 5) + 1;
+          return Math.min(98, prev + increment);
+        });
+      }, 900);
+      return () => clearInterval(interval);
+    } else {
+      setSimulatedProgress(2);
+    }
+  }, [isRunning]);
+
   const prompt = (data.prompt as string | undefined) ?? "";
   const mediaIds = Array.isArray(data.mediaIds)
     ? data.mediaIds.filter((m): m is string => typeof m === "string" && !!m)
     : [];
   const mediaId = mediaIds[0] ?? (data.mediaId as string | undefined);
   const shortId = data.shortId as string | undefined;
-  const status = data.status as string | undefined;
   const aspectRatio = ((data.aspectRatio as string | undefined) === "VIDEO_ASPECT_RATIO_PORTRAIT" ? "9:16" : "16:9") as AspectOption;
   const videoModel = ((data.videoModel as VideoModelFamily | undefined) ?? "veo");
   const videoQuality = ((data.videoQuality as VideoQuality | undefined) ?? "fast");
@@ -130,7 +149,6 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
   const edges = useEdges();
   const connection = useConnection();
   const allNodes = useBoardStore((s) => s.nodes);
-  const isRunning = status === "running" || status === "queued";
 
   const startEdge = edges.find((e) => e.target === rfId && e.targetHandle === "target-start-image");
   const startNode = startEdge ? allNodes.find((n) => n.id === startEdge.source) : undefined;
@@ -214,6 +232,10 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
     const finalPrompt = (hasTextConnection ? upstreamText : prompt).trim();
     if (!finalPrompt || isRunning) return;
     useGenerationStore.getState().runNodeGraph(rfId);
+  }
+
+  function stopNodeAction(event: React.MouseEvent) {
+    event.stopPropagation();
   }
 
   function handleClass(role: "source" | "target", active: boolean) {
@@ -303,11 +325,18 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
               )}
             >
               {mediaIds.map((mid, idx) => (
-                <button
+                <div
                   key={mid}
-                  type="button"
-                  onClick={() => useGenerationStore.getState().openResultViewer(rfId, idx)}
-                  className="relative min-h-0 min-w-0 overflow-hidden bg-white/[0.04]"
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      useGenerationStore.getState().openResultViewer(rfId, idx);
+                    }
+                  }}
+                  onDoubleClick={() => useGenerationStore.getState().openResultViewer(rfId, idx)}
+                  className="relative min-h-0 min-w-0 overflow-hidden bg-white/[0.04] outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 >
                   <video
                     src={mediaUrl(mid)}
@@ -319,8 +348,10 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
                     loop
                     playsInline
                     autoPlay={shouldPreviewPlay}
+                    draggable={false}
+                    onDragStart={(e) => e.preventDefault()}
                   />
-                </button>
+                </div>
               ))}
             </div>
           ) : mediaId ? (
@@ -328,14 +359,24 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
               ref={previewVideoRef}
               src={mediaUrl(mediaId)}
               className={cn(
-                "absolute inset-0 size-full object-cover transition-all duration-300",
+                "absolute inset-0 size-full object-cover transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-accent",
                 promptFocused && "blur-sm scale-[1.02]",
               )}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  useGenerationStore.getState().openResultViewer(rfId);
+                }
+              }}
               muted={!soundEnabled}
               loop
               playsInline
               onLoadedMetadata={handleVideoMetadata}
               onDoubleClick={() => useGenerationStore.getState().openResultViewer(rfId)}
+              draggable={false}
+              onDragStart={(e) => e.preventDefault()}
             />
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 select-none">
@@ -361,18 +402,13 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
 
           {isRunning && !showVariantGrid && (
             <div
-              className="absolute inset-0 z-[4] overflow-hidden"
+              className="absolute inset-0 z-[4] overflow-hidden flow-generating-sheen animate-fade-in"
               style={{ borderRadius: BORDER_RADIUS - 3 }}
             >
-              <div
-                className="absolute inset-0"
-                style={{
-                  background: "linear-gradient(105deg, transparent 35%, rgba(124,92,255,0.22) 50%, transparent 65%)",
-                  backgroundSize: "200% 100%",
-                  animation: "shimmer 1.6s ease-in-out infinite",
-                }}
-              />
-              <div className="absolute inset-0 bg-black/25" />
+              <Video size={16} className="absolute top-3 left-3 text-white/35" />
+              <span className="absolute top-3 right-3 text-2xs font-semibold font-mono text-white/45">
+                {simulatedProgress}%
+              </span>
             </div>
           )}
 
@@ -398,8 +434,10 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
               )}
               <button
                 type="button"
+                onMouseDown={stopNodeAction}
+                onDoubleClick={stopNodeAction}
                 onClick={() => setSound(!soundEnabled)}
-                className="flex items-center justify-center rounded-full text-white/90 transition-colors hover:text-white"
+                className="nodrag nowheel flex items-center justify-center rounded-full text-white/90 transition-colors hover:text-white"
                 style={{
                   width: 26,
                   height: 26,
@@ -427,13 +465,19 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
                   setPromptFocused(true);
                 }}
                 onBlur={() => setPromptFocused(false)}
-                className="img-gen-prompt w-full bg-transparent text-sm text-white placeholder:text-white/70 resize-none outline-none border-0 leading-relaxed"
+                onMouseDown={stopNodeAction}
+                onClick={stopNodeAction}
+                onDoubleClick={stopNodeAction}
+                className="nodrag nowheel img-gen-prompt w-full bg-transparent text-sm text-white placeholder:text-white/70 resize-none outline-none border-0 leading-relaxed"
               />
             </div>
 
             <div
+              onMouseDown={stopNodeAction}
+              onClick={stopNodeAction}
+              onDoubleClick={stopNodeAction}
               className={cn(
-                "flex items-center gap-1.5 px-3 pb-3 pt-0",
+                "nodrag nowheel flex items-center gap-1.5 px-3 pb-3 pt-0",
                 "transition-all duration-300 ease-out",
                 showControls
                   ? "max-h-[48px] opacity-100 translate-y-0"
@@ -443,13 +487,15 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
               <div className="relative">
                 <button
                   ref={modelButtonRef}
+                  onMouseDown={stopNodeAction}
+                  onDoubleClick={stopNodeAction}
                   onClick={() => {
                     setShowModelPicker(!showModelPicker);
                     setShowModePicker(false);
                     setShowAspectPicker(false);
                     setShowCameraPicker(false);
                   }}
-                  className="flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
+                  className="nodrag nowheel flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
                   style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
                 >
                   {currentModel.label} <DropdownCaret className="text-white/50" />
@@ -469,13 +515,15 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
               <div className="relative">
                 <button
                   ref={modeButtonRef}
+                  onMouseDown={stopNodeAction}
+                  onDoubleClick={stopNodeAction}
                   onClick={() => {
                     setShowModePicker(!showModePicker);
                     setShowModelPicker(false);
                     setShowAspectPicker(false);
                     setShowCameraPicker(false);
                   }}
-                  className="flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
+                  className="nodrag nowheel flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
                   style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
                 >
                   {modeLabel} {modeMeta ? <span className="text-white/45">{modeMeta}</span> : null} <DropdownCaret className="text-white/50" />
@@ -499,13 +547,15 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
               <div className="relative">
                 <button
                   ref={aspectButtonRef}
+                  onMouseDown={stopNodeAction}
+                  onDoubleClick={stopNodeAction}
                   onClick={() => {
                     setShowAspectPicker(!showAspectPicker);
                     setShowModelPicker(false);
                     setShowModePicker(false);
                     setShowCameraPicker(false);
                   }}
-                  className="flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
+                  className="nodrag nowheel flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
                   style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
                 >
                   {aspectRatio} <DropdownCaret className="text-white/50" />
@@ -525,13 +575,15 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
               <div className="relative">
                 <button
                   ref={cameraButtonRef}
+                  onMouseDown={stopNodeAction}
+                  onDoubleClick={stopNodeAction}
                   onClick={() => {
                     setShowCameraPicker(!showCameraPicker);
                     setShowModelPicker(false);
                     setShowModePicker(false);
                     setShowAspectPicker(false);
                   }}
-                  className="flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
+                  className="nodrag nowheel flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
                   style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
                 >
                   {CAMERA_OPTIONS.find((option) => option.key === cameraMode)?.label ?? "Static"} <DropdownCaret className="text-white/50" />
@@ -556,6 +608,9 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
               <div className="flex-1" />
 
               <button
+                type="button"
+                onMouseDown={stopNodeAction}
+                onDoubleClick={stopNodeAction}
                 onClick={handleGenerate}
                 disabled={isRunning}
                 className={cn(

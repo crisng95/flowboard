@@ -51,6 +51,7 @@ interface GenerationState {
       // prompt — required for batch auto-prompt to keep poses distinct
       // across the 4 generated images.
       prompts?: string[];
+      skipSpawningNodes?: boolean;
     },
   ): Promise<void>;
 
@@ -614,6 +615,7 @@ async function runNodeDirect(
         imageModel,
         prompts: upstreamPrompts,
         sourceMediaIds: refMediaIds,
+        skipSpawningNodes: true,
       });
       return;
     }
@@ -762,10 +764,13 @@ async function ensureNodeInputsReady(
 function collectUpstreamRefMediaIds(targetRfId: string, allowedTargetHandles?: string[]): string[] {
   const { nodes, edges } = useBoardStore.getState();
   const ids: string[] = [];
+  const seenSourceIds = new Set<string>();
 
   for (const e of edges) {
     if (e.target !== targetRfId) continue;
     if (allowedTargetHandles && !allowedTargetHandles.includes(e.targetHandle ?? "target")) continue;
+    if (seenSourceIds.has(e.source)) continue;
+    seenSourceIds.add(e.source);
     const src = nodes.find((n) => n.id === e.source);
     if (!src || !REF_SOURCE_TYPES.has(src.data.type)) continue;
 
@@ -1196,6 +1201,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     variantCount?: number;
     imageModel?: ImageModelKey;
     prompts?: string[];
+    skipSpawningNodes?: boolean;
   }) {
     const isTauri = typeof window !== "undefined" && 
       (!!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__);
@@ -1523,7 +1529,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                 // Non-fatal: the in-memory state is still correct for this session.
               });
             }
-            if ((opts.kind ?? "image") === "image" && mediaIds.length > 1) {
+            if ((opts.kind ?? "image") === "image" && mediaIds.length > 1 && !(opts as any).skipSpawningNodes) {
               const board = useBoardStore.getState();
               const rootNode = board.nodes.find((x) => x.id === rfId);
               const baseX = rootNode?.position.x ?? 0;

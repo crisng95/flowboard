@@ -39,7 +39,6 @@ import { Board } from "./canvas/Board";
 import { AddNodePalette } from "./canvas/AddNodePalette";
 import { AppLogo } from "./components/AppLogo";
 import { Toaster } from "./components/Toaster";
-import { GenerationDialog } from "./components/GenerationDialog";
 import { ResultViewerV2 } from "./components/ResultViewerV2";
 import { ForcedSetupGate } from "./components/ForcedSetupGate";
 import { AuthGateModal } from "./components/AuthGateModal";
@@ -1176,7 +1175,6 @@ export function App() {
         <CanvasPage session={session} />
       )}
       <Toaster />
-      <GenerationDialog />
       <ResultViewerV2 />
       <ForcedSetupGate />
       

@@ -577,21 +577,30 @@ async fn process_request(
         let n = variant_count.clamp(1, 4);
         let image_model = params.get("image_model").and_then(|m| m.as_str());
         let model_name = resolve_image_model(image_model);
+        let prompts = params.get("prompts").and_then(|p| p.as_array());
 
-        let mut image_inputs = Vec::new();
+        let mut image_inputs_all = Vec::new();
         if let Some(refs) = params.get("ref_media_ids").and_then(|r| r.as_array()) {
             for mid in refs {
                 if let Some(mid_str) = mid.as_str() {
-                    image_inputs.push(json!({
-                        "name": mid_str,
-                        "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
-                    }));
+                    image_inputs_all.push(mid_str.to_string());
                 }
             }
         }
 
         let mut requests_arr = Vec::new();
         for i in 0..n {
+            let idx = i as usize;
+            let item_prompt = if let Some(p_arr) = prompts {
+                if idx < p_arr.len() {
+                    p_arr[idx].as_str().unwrap_or(prompt)
+                } else {
+                    prompt
+                }
+            } else {
+                prompt
+            };
+
             let seed = (ts + (i as u128) * 9973) % 1_000_000;
             let mut item = json!({
                 "clientContext": {
@@ -606,14 +615,40 @@ async fn process_request(
                 },
                 "seed": seed,
                 "structuredPrompt": {
-                    "parts": [{"text": prompt}]
+                    "parts": [{"text": item_prompt}]
                 },
                 "imageAspectRatio": aspect_ratio,
                 "imageModelName": model_name
             });
 
-            if !image_inputs.is_empty() {
-                item["imageInputs"] = json!(image_inputs);
+            let mut item_inputs = Vec::new();
+            if !image_inputs_all.is_empty() {
+                if let Some(p_arr) = prompts {
+                    if p_arr.len() == image_inputs_all.len() && idx < image_inputs_all.len() {
+                        item_inputs.push(json!({
+                            "name": image_inputs_all[idx],
+                            "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
+                        }));
+                    } else {
+                        for mid_str in &image_inputs_all {
+                            item_inputs.push(json!({
+                                "name": mid_str,
+                                "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
+                            }));
+                        }
+                    }
+                } else {
+                    for mid_str in &image_inputs_all {
+                        item_inputs.push(json!({
+                            "name": mid_str,
+                            "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
+                            }));
+                    }
+                }
+            }
+
+            if !item_inputs.is_empty() {
+                item["imageInputs"] = json!(item_inputs);
             }
             requests_arr.push(item);
         }

@@ -9,7 +9,7 @@ routes = [
 [vars]
 ENVIRONMENT = "production"
 R2_BUCKET_NAME = "flowboard-prod-assets"
-ALLOWED_ORIGINS = "https://app.flowboard.bond,chrome-extension://*"
+ALLOWED_ORIGINS = "https://app.flowboard.bond,chrome-extension://*,http://localhost:5173,http://127.0.0.1:5173"
 
 [[r2_buckets]]
 binding = "ASSETS_BUCKET"

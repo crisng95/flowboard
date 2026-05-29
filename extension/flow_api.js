@@ -153,9 +153,6 @@
       const now = Date.now();
       const variantCount = Math.max(1, Math.min(Number(opts.variantCount || 1), 4));
       const refMediaIds = Array.isArray(opts.refMediaIds) ? opts.refMediaIds.filter((m) => typeof m === 'string' && m) : [];
-      const imageInputs = refMediaIds.length
-        ? refMediaIds.map((mediaId) => ({ name: mediaId, imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE' }))
-        : null;
       const prompts = Array.isArray(opts.prompts) ? opts.prompts : [];
       const requests = [];
       for (let i = 0; i < variantCount; i++) {
@@ -166,7 +163,13 @@
           imageAspectRatio: opts.aspectRatio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
           imageModelName: resolveImageModel(opts.imageModel || this.imageModel),
         };
-        if (imageInputs) item.imageInputs = imageInputs.slice();
+        if (refMediaIds.length > 0) {
+          if (prompts.length === refMediaIds.length && i < refMediaIds.length) {
+            item.imageInputs = [{ name: refMediaIds[i], imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE' }];
+          } else {
+            item.imageInputs = refMediaIds.map((mediaId) => ({ name: mediaId, imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE' }));
+          }
+        }
         requests.push(item);
       }
       const body = {

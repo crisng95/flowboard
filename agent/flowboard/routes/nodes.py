@@ -17,6 +17,7 @@ NodeType = Literal[
     "variant",
     "video",
     "upload",
+    "list",
     "text",
     "add_reference",
     "group",

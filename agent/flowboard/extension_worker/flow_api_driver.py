@@ -214,76 +214,76 @@ class FlowAPIDriver(FlowDriver):
                 "gen_image returned no media entries"
             )
 
-        first = entries[0]
-        fife_url: Optional[str] = first.get("url")
-        media_id: Optional[str] = first.get("media_id")
+        out_assets = []
+        for index, entry in enumerate(entries):
+            fife_url: Optional[str] = entry.get("url")
+            media_id: Optional[str] = entry.get("media_id")
 
-        if not fife_url:
-            raise FlowAPIDriverError(
-                f"gen_image media entry has no fifeUrl "
-                f"(media_id={str(media_id)[:12] if media_id else 'none'})"
+            if not fife_url:
+                raise FlowAPIDriverError(
+                    f"gen_image media entry {index} has no fifeUrl "
+                    f"(media_id={str(media_id)[:12] if media_id else 'none'})"
+                )
+
+            if not self._is_allowed_fife_url(fife_url):
+                raise FlowAPIDriverError(
+                    f"fifeUrl {index} has disallowed scheme: {self._redact_url(fife_url)}"
+                )
+
+            logger.info(
+                "[flow-api-driver] downloading asset %d: url=%s",
+                index, self._redact_url(fife_url),
             )
 
-        if not self._is_allowed_fife_url(fife_url):
-            raise FlowAPIDriverError(
-                f"fifeUrl has disallowed scheme: {self._redact_url(fife_url)}"
+            # 5. Download bytes (GCS signed URL — no auth header)
+            try:
+                async with httpx.AsyncClient(timeout=self._download_timeout) as client:
+                    resp = await client.get(fife_url)
+            except Exception as exc:
+                raise FlowAPIDriverError(f"fifeUrl download failed: {exc}") from exc
+
+            if resp.status_code != 200:
+                raise FlowAPIDriverError(
+                    f"fifeUrl download HTTP {resp.status_code}"
+                )
+
+            content_bytes = resp.content
+
+            # 6. Size guard
+            if len(content_bytes) > _MAX_ASSET_BYTES:
+                raise FlowAPIDriverError(
+                    f"asset exceeds 25 MB limit ({len(content_bytes)} bytes)"
+                )
+
+            # 7. MIME sniff
+            reported_mime = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+            sniffed = self._sniff_mime(content_bytes)
+            final_mime = sniffed or (reported_mime if reported_mime in _ALLOWED_OUTPUT_MIMES else None)
+            if not final_mime:
+                raise FlowAPIDriverError(
+                    f"unrecognised MIME type (reported={reported_mime!r}, sniffed=None)"
+                )
+            if final_mime not in _ALLOWED_OUTPUT_MIMES:
+                raise FlowAPIDriverError(f"unsupported MIME type: {final_mime}")
+
+            ext_map = {
+                "image/png": "png",
+                "image/jpeg": "jpg",
+                "video/mp4": "mp4",
+            }
+            ext = ext_map.get(final_mime, "bin")
+            file_name = f"flow_output_{index}.{ext}"
+            checksum = hashlib.sha256(content_bytes).hexdigest()
+
+            logger.info(
+                "[flow-api-driver] asset %d OK: mime=%s bytes=%d checksum=%s",
+                index, final_mime, len(content_bytes), checksum[:12],
             )
 
-        logger.info(
-            "[flow-api-driver] downloading asset: url=%s",
-            self._redact_url(fife_url),
-        )
-
-        # 5. Download bytes (GCS signed URL — no auth header)
-        try:
-            async with httpx.AsyncClient(timeout=self._download_timeout) as client:
-                resp = await client.get(fife_url)
-        except Exception as exc:
-            raise FlowAPIDriverError(f"fifeUrl download failed: {exc}") from exc
-
-        if resp.status_code != 200:
-            raise FlowAPIDriverError(
-                f"fifeUrl download HTTP {resp.status_code}"
-            )
-
-        content_bytes = resp.content
-
-        # 6. Size guard
-        if len(content_bytes) > _MAX_ASSET_BYTES:
-            raise FlowAPIDriverError(
-                f"asset exceeds 25 MB limit ({len(content_bytes)} bytes)"
-            )
-
-        # 7. MIME sniff
-        reported_mime = resp.headers.get("content-type", "").split(";")[0].strip().lower()
-        sniffed = self._sniff_mime(content_bytes)
-        final_mime = sniffed or (reported_mime if reported_mime in _ALLOWED_OUTPUT_MIMES else None)
-        if not final_mime:
-            raise FlowAPIDriverError(
-                f"unrecognised MIME type (reported={reported_mime!r}, sniffed=None)"
-            )
-        if final_mime not in _ALLOWED_OUTPUT_MIMES:
-            raise FlowAPIDriverError(f"unsupported MIME type: {final_mime}")
-
-        ext_map = {
-            "image/png": "png",
-            "image/jpeg": "jpg",
-            "video/mp4": "mp4",
-        }
-        ext = ext_map.get(final_mime, "bin")
-        file_name = f"flow_output.{ext}"
-        checksum = hashlib.sha256(content_bytes).hexdigest()
-
-        logger.info(
-            "[flow-api-driver] asset OK: mime=%s bytes=%d checksum=%s",
-            final_mime, len(content_bytes), checksum[:12],
-        )
-
-        return [
-            {
+            out_assets.append({
                 "source_provider": "flow",
                 "file_name": file_name,
-                "storage_key": f"users/{user_id}/flow/{request_id}/output-0.{ext}",
+                "storage_key": f"users/{user_id}/flow/{request_id}/output-{index}.{ext}",
                 "mime_type": final_mime,
                 "byte_size": len(content_bytes),
                 "checksum": checksum,
@@ -291,8 +291,9 @@ class FlowAPIDriver(FlowDriver):
                 "content_bytes": content_bytes,
                 "media_id": media_id,
                 "project_id": project_id,
-            }
-        ]
+            })
+
+        return out_assets
 
     def _resolve_variant_count(self, value: Any) -> int:
         try:

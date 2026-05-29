@@ -103,6 +103,10 @@ export function UploadNode(props: NodeProps<FlowNode>) {
     return id.length > len ? id.slice(0, len) + "..." : id;
   }
 
+  function stopNodeAction(event: React.MouseEvent) {
+    event.stopPropagation();
+  }
+
   return (
     <div
       onMouseEnter={onMouseEnter}
@@ -148,7 +152,17 @@ export function UploadNode(props: NodeProps<FlowNode>) {
               <img
                 src={mediaUrl(mediaId)}
                 alt={fileName ?? "upload"}
-                className="absolute inset-0 size-full object-cover rounded-[13px] animate-fade-in"
+                draggable={false}
+                onDragStart={(e) => e.preventDefault()}
+                className="absolute inset-0 size-full object-cover rounded-[13px] animate-fade-in outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    useGenerationStore.getState().openResultViewer(rfId);
+                  }
+                }}
                 onLoad={onImageLoad}
                 onDoubleClick={() => useGenerationStore.getState().openResultViewer(rfId)}
               />
@@ -192,8 +206,11 @@ export function UploadNode(props: NodeProps<FlowNode>) {
             <div className="flex flex-col items-center gap-2 p-4 text-center">
               <span className="text-2xs text-red-400">{flow.error}</span>
               <button
+                type="button"
+                onMouseDown={stopNodeAction}
+                onDoubleClick={stopNodeAction}
                 onClick={flow.pickFile}
-                className="text-2xs text-accent hover:underline"
+                className="nodrag nowheel text-2xs text-accent hover:underline"
               >
                 Try again
               </button>
@@ -214,9 +231,12 @@ export function UploadNode(props: NodeProps<FlowNode>) {
         {mediaId && (
           <div className={cn("absolute bottom-3 left-3 z-10 transition-all duration-300 ease-out", showControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1 pointer-events-none")}>
             <button
+              type="button"
+              onMouseDown={stopNodeAction}
+              onDoubleClick={stopNodeAction}
               onClick={flow.pickFile}
               className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg",
+                "nodrag nowheel flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg",
                 "text-2xs font-medium text-ink-primary",
                 "transition-all duration-300 ease-out cursor-pointer",
                 "hover:bg-white/[0.12]",

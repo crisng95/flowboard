@@ -34,15 +34,22 @@ export function SettingsButton({
     toggle(nodeId);
   }
 
+  function stopInteraction(event: MouseEvent<HTMLButtonElement>) {
+    event.stopPropagation();
+  }
+
   return (
     <button
       type="button"
+      onMouseDown={stopInteraction}
+      onDoubleClick={stopInteraction}
       onClick={handleClick}
       title={label}
       aria-label={label}
       aria-expanded={isOpen}
       className={cn(
         "shrink-0 size-7 inline-flex items-center justify-center rounded-full",
+        "nodrag nowheel",
         "text-2xs transition-all duration-150",
         "border",
         isOpen

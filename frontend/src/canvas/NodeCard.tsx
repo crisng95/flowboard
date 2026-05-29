@@ -61,6 +61,11 @@ function isLLMBusy(data: FlowboardNodeData): boolean {
   );
 }
 
+function runNodePrimaryAction(rfId: string, data: FlowboardNodeData): void {
+  if (isLLMBusy(data)) return;
+  void useGenerationStore.getState().runNodeGraph(rfId);
+}
+
 function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
   const mediaId = data.mediaId;
   const isProcessing = data.status === "queued" || data.status === "running";
@@ -151,7 +156,7 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
   }
 
   function openGenerate() {
-    useGenerationStore.getState().openGenerationDialog(rfId, data.prompt ?? "");
+    runNodePrimaryAction(rfId, data);
   }
 
   // Filled state — show the avatar circle. Drag-drop on the avatar replaces it.
@@ -498,17 +503,15 @@ async function applyVariantToTarget(variantIdx: number, target: VariantTarget) {
       return;
     }
   }
-  // If the target doesn't have a prompt yet, we open the GenerationDialog
-  // instead of dispatching blind — the dialog gives the user the
-  // auto-prompt path or a place to type. The pin we just persisted will
-  // apply to whichever Generate is fired from the dialog.
+  // If the target doesn't have a prompt yet, run the target graph directly;
+  // the graph runner will either use upstream media or surface a node error.
   const targetNode = useBoardStore
     .getState()
     .nodes.find((n) => n.id === target.targetRfId);
   if (!targetNode) return;
   const prompt = (targetNode.data.prompt ?? "").trim();
   if (!prompt) {
-    useGenerationStore.getState().openGenerationDialog(target.targetRfId, "");
+    await useGenerationStore.getState().runNodeGraph(target.targetRfId);
     return;
   }
   await useGenerationStore.getState().dispatchGeneration(target.targetRfId, {
@@ -664,7 +667,7 @@ function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
   }
 
   function openGenerate() {
-    useGenerationStore.getState().openGenerationDialog(rfId, data.prompt ?? "");
+    runNodePrimaryAction(rfId, data);
   }
 
   const hiddenFileInput = (
@@ -1169,7 +1172,7 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
   }
 
   function openGenerate() {
-    useGenerationStore.getState().openGenerationDialog(rfId, data.prompt ?? "");
+    runNodePrimaryAction(rfId, data);
   }
 
   if (!mediaId) {
@@ -1585,7 +1588,7 @@ export function NodeCard(props: NodeProps<FlowNode>) {
   function handleGenerate(e: React.MouseEvent) {
     e.stopPropagation();
     if (llmBusy) return; // guard: backend still composing for this node
-    useGenerationStore.getState().openGenerationDialog(props.id, data.prompt ?? "");
+    runNodePrimaryAction(props.id, data);
   }
 
   function handleDownload(e: React.MouseEvent) {

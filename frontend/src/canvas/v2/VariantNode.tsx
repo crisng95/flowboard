@@ -10,7 +10,7 @@
  *   • Shared floating dropdown behavior aligned with other V2 nodes
  *   • DOM order: target-text before target-image
  */
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useMemo, useEffect } from "react";
 import { type NodeProps, Handle, Position, useEdges, useConnection } from "@xyflow/react";
 import { Copy, Layers, Palette, Sparkles, Play, Type } from "lucide-react";
 
@@ -45,17 +45,6 @@ const MODE_OPTIONS: VariantMode[] = ["Age", "Custom", "Demographics", "Expressio
 
 // B. Aspect Ratio (8 options)
 const ASPECT_OPTIONS = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"] as const;
-const ASPECT_CSS: Record<string, string> = {
-  "1:1": "1 / 1",
-  "16:9": "16 / 9",
-  "9:16": "9 / 16",
-  "4:3": "4 / 3",
-  "3:4": "3 / 4",
-  "3:2": "3 / 2",
-  "2:3": "2 / 3",
-  "21:9": "21 / 9",
-};
-
 // C. Resolution (2 options)
 const RESOLUTION_OPTIONS = ["2K", "4K"] as const;
 
@@ -118,6 +107,22 @@ function gridToCount(grid: string): number {
     if (!isNaN(a) && !isNaN(b)) return a * b;
   }
   return 9; // fallback 3x3
+}
+
+function gridToLayout(grid: string): { rows: number; cols: number } {
+  const parts = grid.split("x");
+  if (parts.length === 2) {
+    const rows = parseInt(parts[0], 10);
+    const cols = parseInt(parts[1], 10);
+    if (!isNaN(rows) && !isNaN(cols) && rows > 0 && cols > 0) return { rows, cols };
+  }
+  return { rows: 3, cols: 3 };
+}
+
+function aspectStringToRatio(value: string | undefined): number {
+  const [w, h] = String(value ?? "16:9").split(":").map((part) => Number(part));
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return 16 / 9;
+  return w / h;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -217,9 +222,31 @@ function PortalDropdown({
 export function VariantNode(props: NodeProps<FlowNode>) {
   const { id: rfId, data, selected } = props;
   const isProcessing = data.status === "queued" || data.status === "running";
+
+  const [simulatedProgress, setSimulatedProgress] = useState(2);
+  useEffect(() => {
+    if (isProcessing) {
+      setSimulatedProgress(2);
+      const interval = setInterval(() => {
+        setSimulatedProgress((prev) => {
+          if (prev >= 98) return 98;
+          const increment = Math.floor(Math.random() * 6) + 1;
+          return Math.min(98, prev + increment);
+        });
+      }, 800);
+      return () => clearInterval(interval);
+    } else {
+      setSimulatedProgress(2);
+    }
+  }, [isProcessing]);
+
   const mediaIds = (data.mediaIds as (string | null)[] | undefined) ?? [];
   const slotErrors = (data.slotErrors as (string | null)[] | undefined) ?? [];
   const hasFilled = mediaIds.some(Boolean);
+
+  function stopNodeAction(event: React.MouseEvent) {
+    event.stopPropagation();
+  }
 
   const config: VariantConfig = {
     ...DEFAULT_CONFIG,
@@ -229,6 +256,8 @@ export function VariantNode(props: NodeProps<FlowNode>) {
   const [hovered, setHovered] = useState(false);
   const [promptFocused, setPromptFocused] = useState(false);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const runInFlight = useRef(false);
+  const [imageRatios, setImageRatios] = useState<Record<number, number>>({});
 
   const onMouseEnter = useCallback(() => {
     if (leaveTimer.current) {
@@ -245,6 +274,22 @@ export function VariantNode(props: NodeProps<FlowNode>) {
   const showControls = hovered || !!selected;
 
   const [width, setWidth] = useState((data.nodeWidth as number | undefined) ?? DEFAULT_WIDTH);
+
+  const recordImageRatio = useCallback((idx: number, event: React.SyntheticEvent<HTMLImageElement>) => {
+    const { naturalWidth, naturalHeight } = event.currentTarget;
+    if (!naturalWidth || !naturalHeight) return;
+    const ratio = naturalWidth / naturalHeight;
+    setImageRatios((prev) => {
+      if (Math.abs((prev[idx] ?? 0) - ratio) < 0.001) return prev;
+      return { ...prev, [idx]: ratio };
+    });
+  }, []);
+
+  const openVariantViewer = (event: React.MouseEvent, idx: number, mediaId?: string | null) => {
+    event.stopPropagation();
+    if (!mediaId) return;
+    useGenerationStore.getState().openResultViewer(rfId, idx);
+  };
 
   /* ── Portal dropdown state: 7 dropdowns total ─────────────────────────── */
   // Row 1: Mode, Aspect, Resolution, Grid
@@ -291,6 +336,17 @@ export function VariantNode(props: NodeProps<FlowNode>) {
   };
 
   const variantCount = gridToCount(config.grid);
+  const gridLayout = useMemo(() => gridToLayout(config.grid), [config.grid]);
+  const displayAspectRatio = useMemo(() => {
+    const fallback = aspectStringToRatio(config.aspect_ratio);
+    const filledRatios = mediaIds
+      .map((mid, idx) => (mid ? imageRatios[idx] : undefined))
+      .filter((ratio): ratio is number => typeof ratio === "number" && Number.isFinite(ratio) && ratio > 0);
+    if (filledRatios.length === 0) return fallback;
+    if (variantCount === 1) return filledRatios[0];
+    const averageTileRatio = filledRatios.reduce((sum, ratio) => sum + ratio, 0) / filledRatios.length;
+    return Math.max(0.2, Math.min(5, (gridLayout.cols * averageTileRatio) / gridLayout.rows));
+  }, [config.aspect_ratio, gridLayout.cols, gridLayout.rows, imageRatios, mediaIds, variantCount]);
 
   /* ── Real-time edge state via ReactFlow native hooks (0ms delay) ─────── */
   const edges = useEdges();
@@ -321,12 +377,15 @@ export function VariantNode(props: NodeProps<FlowNode>) {
 
   /* ── Run handler ──────────────────────────────────────────────────────── */
   const handleRun = async () => {
-    if (isProcessing) return;
+    if (isProcessing || runInFlight.current) return;
+    runInFlight.current = true;
     try {
       console.log("Running variant graph:", config);
       await useGenerationStore.getState().runNodeGraph(rfId);
     } catch (err) {
       console.error("Failed to run variant generation:", err);
+    } finally {
+      runInFlight.current = false;
     }
   };
 
@@ -371,8 +430,8 @@ export function VariantNode(props: NodeProps<FlowNode>) {
         <div
           className="relative overflow-hidden w-full"
           style={{
-            aspectRatio: ASPECT_CSS[config.aspect_ratio] || "16 / 9",
-            minHeight: 240,
+            aspectRatio: String(displayAspectRatio),
+            minHeight: hasFilled ? undefined : 240,
             borderRadius: "13px",
           }}
         >
@@ -383,33 +442,32 @@ export function VariantNode(props: NodeProps<FlowNode>) {
               {variantCount === 1 ? (
                 /* Single image */
                 mediaIds[0] ? (
-                  <button
-                    type="button"
-                    onClick={() => useGenerationStore.getState().openResultViewer(rfId, 0)}
-                    className="absolute inset-0 size-full overflow-hidden bg-white/[0.04] p-0 border-0 cursor-pointer"
+                  <div
+                    onDoubleClick={(event) => openVariantViewer(event, 0, mediaIds[0])}
+                    className="absolute inset-0 size-full overflow-hidden bg-white/[0.04] outline-none"
                   >
                     <img
                       src={mediaUrl(mediaIds[0])}
                       alt="variant 1"
                       className={cn(
-                        "absolute inset-0 w-full h-full object-cover transition-all duration-300 rounded-[13px]",
+                        "absolute inset-0 w-full h-full object-contain transition-all duration-300 rounded-[13px]",
                         promptFocused && "blur-sm scale-[1.02]",
                       )}
-                      onDoubleClick={() => useGenerationStore.getState().openResultViewer(rfId, 0)}
+                      onLoad={(event) => recordImageRatio(0, event)}
+                      draggable={false}
+                      onDragStart={(e) => e.preventDefault()}
                     />
-                  </button>
+                  </div>
                 ) : (
                   /* Loading/Shimmer slot placeholder */
-                  <div className="absolute inset-0 bg-white/[0.05]">
+                  <div className="absolute inset-0 bg-white/[0.05] flow-generating-sheen animate-fade-in" onDoubleClick={(event) => event.stopPropagation()}>
                     {isProcessing && (
-                      <div
-                        className="absolute inset-0"
-                        style={{
-                          background: "linear-gradient(105deg, transparent 40%, rgba(124,92,255,0.2) 50%, transparent 60%)",
-                          backgroundSize: "200% 100%",
-                          animation: "shimmer 1.6s ease-in-out infinite",
-                        }}
-                      />
+                      <>
+                        <Copy size={16} className="absolute top-3 left-3 text-white/35" />
+                        <span className="absolute top-3 right-3 text-2xs font-semibold font-mono text-white/45">
+                          {simulatedProgress}%
+                        </span>
+                      </>
                     )}
                   </div>
                 )
@@ -418,31 +476,34 @@ export function VariantNode(props: NodeProps<FlowNode>) {
                 <div
                   className={cn(
                     "absolute inset-0 grid gap-px bg-black/20",
-                    variantCount <= 4 ? "grid-cols-2" : "grid-cols-3",
                   )}
+                  style={{
+                    gridTemplateColumns: `repeat(${gridLayout.cols}, minmax(0, 1fr))`,
+                    gridTemplateRows: `repeat(${gridLayout.rows}, minmax(0, 1fr))`,
+                  }}
                 >
                   {Array.from({ length: variantCount }).map((_, i) => {
                     const mid = mediaIds[i];
                     const err = slotErrors[i];
                     return (
-                      <button
+                      <div
                         key={i}
-                        type="button"
-                        onClick={() => {
-                          if (mid) useGenerationStore.getState().openResultViewer(rfId, i);
-                        }}
-                        className="relative min-h-0 min-w-0 overflow-hidden bg-white/[0.04] p-0 border-0 disabled:cursor-default"
-                        disabled={!mid}
+                        onDoubleClick={(event) => openVariantViewer(event, i, mid)}
+                        className={cn(
+                          "relative min-h-0 min-w-0 overflow-hidden bg-white/[0.04] outline-none"
+                        )}
                       >
                         {mid ? (
                           <img
                             src={mediaUrl(mid)}
                             alt={`variant ${i + 1}`}
                             className={cn(
-                              "absolute inset-0 w-full h-full object-cover transition-all duration-300",
+                              "absolute inset-0 w-full h-full object-contain transition-all duration-300",
                               promptFocused && "blur-sm scale-[1.02]",
                             )}
-                            onDoubleClick={() => useGenerationStore.getState().openResultViewer(rfId, i)}
+                            onLoad={(event) => recordImageRatio(i, event)}
+                            draggable={false}
+                            onDragStart={(e) => e.preventDefault()}
                           />
                         ) : err ? (
                           <div className="absolute inset-0 flex items-center justify-center bg-black/40">
@@ -450,20 +511,18 @@ export function VariantNode(props: NodeProps<FlowNode>) {
                           </div>
                         ) : (
                           /* Loading or Empty slot placeholder */
-                          <div className="absolute inset-0 bg-white/[0.05]">
+                          <div className="absolute inset-0 bg-white/[0.05] flow-generating-sheen" onDoubleClick={(event) => event.stopPropagation()}>
                             {isProcessing && (
-                              <div
-                                className="absolute inset-0"
-                                style={{
-                                  background: "linear-gradient(105deg, transparent 40%, rgba(124,92,255,0.2) 50%, transparent 60%)",
-                                  backgroundSize: "200% 100%",
-                                  animation: "shimmer 1.6s ease-in-out infinite",
-                                }}
-                              />
+                              <>
+                                <Copy size={13} className="absolute top-2 left-2 text-white/30" />
+                                <span className="absolute top-2 right-2 text-[9px] font-semibold font-mono text-white/40">
+                                  {simulatedProgress}%
+                                </span>
+                              </>
                             )}
                           </div>
                         )}
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -471,7 +530,10 @@ export function VariantNode(props: NodeProps<FlowNode>) {
             </div>
           ) : (
             /* Empty state placeholder */
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 select-none">
+            <div
+              className="absolute inset-0 flex flex-col items-center justify-center gap-3 select-none"
+              onDoubleClick={(event) => event.stopPropagation()}
+            >
               <div
                 className="flex items-center justify-center rounded-full"
                 style={{
@@ -634,9 +696,11 @@ export function VariantNode(props: NodeProps<FlowNode>) {
               <button
                 type="button"
                 disabled={isProcessing}
+                onMouseDown={stopNodeAction}
+                onDoubleClick={stopNodeAction}
                 onClick={handleRun}
                 className={cn(
-                  "absolute right-3 bottom-3 p-2 rounded-full border transition-all duration-150 z-30 shadow-sm",
+                  "nodrag nowheel absolute right-3 bottom-3 p-2 rounded-full border transition-all duration-150 z-30 shadow-sm",
                   isProcessing
                     ? "bg-[#8f939b] border-[#8f939b] text-white/45 cursor-not-allowed"
                     : "bg-[#f3f4f6] border-[#f3f4f6] text-[#1c2027] hover:bg-white hover:border-white hover:scale-[1.06] cursor-pointer"

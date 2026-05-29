@@ -38,15 +38,22 @@ export function RunButton({
     onClick();
   }
 
+  function stopInteraction(event: MouseEvent<HTMLButtonElement>) {
+    event.stopPropagation();
+  }
+
   return (
     <button
       type="button"
+      onMouseDown={stopInteraction}
+      onDoubleClick={stopInteraction}
       onClick={handleClick}
       disabled={disabled}
       title={label}
       aria-label={label}
       className={cn(
         "shrink-0 size-8 rounded-full inline-flex items-center justify-center",
+        "nodrag nowheel",
         "transition-all duration-150",
         "disabled:opacity-40 disabled:cursor-not-allowed",
         "hover:scale-105 active:scale-95",

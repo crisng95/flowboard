@@ -502,6 +502,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
             variant_count: body.params.variant_count ?? body.params.variantCount,
             image_model: body.params.image_model ?? body.params.imageModel,
             ref_media_ids: body.params.ref_media_ids,
+            prompts: body.params.prompts,
             start_media_id: body.params.start_media_id,
             start_media_ids: body.params.start_media_ids,
             duration_s: body.params.duration_s,
@@ -716,7 +717,8 @@ export type NodeType =
   | "text"
   | "add_reference"
   | "group"
-  | "Storyboard";
+  | "Storyboard"
+  | "list";
 export type NodeStatus = "idle" | "queued" | "running" | "done" | "error" | "partial";
 
 export interface Board {

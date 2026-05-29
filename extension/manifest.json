@@ -10,6 +10,7 @@
     "https://flow-content.google/*",
     "https://lh3.googleusercontent.com/*",
     "https://*.r2.cloudflarestorage.com/*",
+    "https://app.flowboard.bond/*",
     "https://api.flowboard.bond/*",
     "http://127.0.0.1:8101/*",
     "http://localhost:8101/*"
@@ -29,6 +30,15 @@
         "https://labs.google/fx/*/tools/flow*"
       ],
       "js": ["content.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://app.flowboard.bond/*",
+        "http://localhost:5173/*",
+        "http://127.0.0.1:5173/*"
+      ],
+      "js": ["app_bridge.js"],
       "run_at": "document_start"
     }
   ],

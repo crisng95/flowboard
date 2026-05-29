@@ -1275,13 +1275,13 @@ button:disabled {
   z-index: 220;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px;
-  border-radius: 8px;
-  background: var(--panel-higher);
-  border: 1px solid var(--border);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
-  min-width: 132px;
+  gap: 0;
+  padding: 8px 0;
+  border-radius: 12px;
+  background: #1a1a1a;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
+  min-width: 240px;
   animation: drop-popover-in 120ms ease-out;
 }
 @keyframes drop-popover-in {
@@ -1291,28 +1291,29 @@ button:disabled {
 .drop-popover__btn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  font-size: 12px;
-  border-radius: 6px;
-  border: 1px solid transparent;
-  background: var(--panel-high);
-  color: var(--text);
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 14px;
+  line-height: 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
   cursor: pointer;
   text-align: left;
   font-weight: 500;
+  transition: color 150ms ease, background-color 150ms ease;
 }
 .drop-popover__btn:hover,
 .drop-popover__btn:focus-visible {
-  border-color: var(--accent);
   outline: none;
-  background: var(--panel);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
 }
 .drop-popover__icon {
-  font-size: 13px;
-  color: var(--accent);
-  width: 16px;
-  text-align: center;
+  flex: 0 0 auto;
+  color: rgba(255, 255, 255, 0.5);
 }
 
 /* Edge selection — accent stroke + subtle glow so the user can clearly see
@@ -6583,3 +6584,25 @@ button:disabled {
   }
 }
 
+/* Google Flow Premium Sheen Animation */
+@keyframes flow-liquid-sheen {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.flow-generating-sheen {
+  background: linear-gradient(
+    110deg,
+    #121214 20%,
+    #1b1b1e 38%,
+    #27272c 50%,
+    #1b1b1e 62%,
+    #121214 80%
+  );
+  background-size: 200% 100%;
+  animation: flow-liquid-sheen 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}

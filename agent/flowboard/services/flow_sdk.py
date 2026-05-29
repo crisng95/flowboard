@@ -762,8 +762,17 @@ class FlowSDK:
                 "imageAspectRatio": aspect_ratio,
                 "imageModelName": model_name,
             }
-            if image_inputs is not None:
-                item["imageInputs"] = list(image_inputs)
+            if merged_refs:
+                # If we have equal number of prompts and media references, pair them 1-to-1!
+                if prompts and len(prompts) == len(merged_refs) and i < len(merged_refs):
+                    item["imageInputs"] = [
+                        {"name": merged_refs[i], "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"}
+                    ]
+                else:
+                    item["imageInputs"] = [
+                        {"name": mid, "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"}
+                        for mid in merged_refs
+                    ]
             requests_arr.append(item)
 
         body = {

@@ -239,7 +239,7 @@ _REF_SOURCE_TYPES = {
     # legacy
     "character", "image", "visual_asset", "Storyboard",
     # Concepta
-    "reference", "concept", "multiview", "part", "variant", "pose", "add_reference",
+    "reference", "concept", "multiview", "part", "variant", "pose", "add_reference", "list",
 }
 
 

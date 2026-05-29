@@ -209,6 +209,10 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
     persistNodeData(rfId, { prompt: value });
   }
 
+  function stopNodeAction(event: React.MouseEvent) {
+    event.stopPropagation();
+  }
+
   const currentCategoryLabel = referenceCategoryLabel(referenceCategory);
 
   return (
@@ -262,10 +266,20 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
               <img
                 src={displayUrl}
                 alt="reference"
+                draggable={false}
+                onDragStart={(e) => e.preventDefault()}
                 className={cn(
-                  "absolute inset-0 size-full object-cover transition-all duration-300",
+                  "absolute inset-0 size-full object-cover transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-accent",
                   promptFocused && "blur-sm scale-[1.02]",
                 )}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    useGenerationStore.getState().openResultViewer(rfId);
+                  }
+                }}
                 onLoad={onImageLoad}
                 onDoubleClick={() => useGenerationStore.getState().openResultViewer(rfId)}
               />
@@ -277,8 +291,10 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
               {showControls && !promptFocused && (
                 <button
                   type="button"
+                  onMouseDown={stopNodeAction}
+                  onDoubleClick={stopNodeAction}
                   onClick={() => useGenerationStore.getState().openResultViewer(rfId)}
-                  className="absolute top-2.5 left-2.5 z-20 flex items-center justify-center rounded-full transition-all duration-150 hover:scale-110"
+                  className="nodrag nowheel absolute top-2.5 left-2.5 z-20 flex items-center justify-center rounded-full transition-all duration-150 hover:scale-110"
                   style={{
                     width: 28, height: 28,
                     backgroundColor: "rgba(0,0,0,0.55)",
@@ -331,7 +347,7 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
                 </span>
                 <button
                   type="button"
-                  className="cursor-pointer rounded-lg border border-white/[0.08] px-3 py-1.5 text-2xs font-medium text-white/70 hover:border-white/[0.15] hover:bg-white/[0.06] hover:text-white transition-all active:scale-95 duration-150"
+                  className="nodrag nowheel cursor-pointer rounded-lg border border-white/[0.08] px-3 py-1.5 text-2xs font-medium text-white/70 hover:border-white/[0.15] hover:bg-white/[0.06] hover:text-white transition-all active:scale-95 duration-150"
                 >
                   Select Reference
                 </button>
@@ -360,7 +376,7 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
           {flow.bodyState === "error" && flow.error && (
             <div className="flex flex-col items-center gap-2 p-4 text-center">
               <span className="text-2xs text-red-400">{flow.error}</span>
-              <button onClick={flow.pickFile} className="text-2xs text-accent hover:underline">Try again</button>
+              <button type="button" onMouseDown={stopNodeAction} onDoubleClick={stopNodeAction} onClick={(event) => { stopNodeAction(event); flow.pickFile(); }} className="nodrag nowheel text-2xs text-accent hover:underline">Try again</button>
             </div>
           )}
 
@@ -403,17 +419,22 @@ export function AddReferenceNode(props: NodeProps<FlowNode>) {
                   rows={promptFocused ? 6 : 1}
                   onFocus={() => setPromptFocused(true)}
                   onBlur={() => setPromptFocused(false)}
+                  onMouseDown={stopNodeAction}
+                  onClick={stopNodeAction}
+                  onDoubleClick={stopNodeAction}
                   className="img-gen-prompt nodrag nowheel w-full bg-transparent text-sm text-white placeholder:text-white/70 resize-none outline-none border-0 leading-relaxed"
                 />
                 <div className="mt-2 flex items-center">
                   <button
-                    type="button"
-                    onClick={() => {
+                  type="button"
+                  onMouseDown={stopNodeAction}
+                  onDoubleClick={stopNodeAction}
+                  onClick={() => {
                       setLibraryCategory(referenceCategory);
                       setShowLibrary(true);
                     }}
                     className={cn(
-                      "rounded-full border px-2.5 py-1 text-[10px] font-medium",
+                      "nodrag nowheel rounded-full border px-2.5 py-1 text-[10px] font-medium",
                       "border-white/[0.08] bg-black/45 text-white/70 backdrop-blur-md transition-colors",
                       "hover:bg-black/60 hover:text-white",
                     )}

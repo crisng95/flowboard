@@ -69,12 +69,16 @@ export function GroupToolbar({
           boxShadow: "0 8px 28px -10px rgba(0,0,0,0.6)",
         }}
         onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
       >
         <div className="relative flex items-center shrink-0">
           <button
             type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
             onClick={() => setPaletteOpen((v) => !v)}
-            className="h-7 px-2 flex items-center justify-center gap-1.5 rounded-full transition-colors hover:bg-white/[0.08]"
+            className="nodrag nowheel h-7 px-2 flex items-center justify-center gap-1.5 rounded-full transition-colors hover:bg-white/[0.08]"
             style={{
               backgroundColor: paletteOpen ? "rgba(255,255,255,0.08)" : "transparent",
               cursor: "pointer",
@@ -114,11 +118,13 @@ export function GroupToolbar({
                     key={swatch}
                     type="button"
                     aria-label={`Set color ${swatch}`}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onDoubleClick={(e) => e.stopPropagation()}
                     onClick={() => {
                       void updateGroupColor(groupRfId, swatch);
                       setPaletteOpen(false);
                     }}
-                    className="w-5.5 h-5.5 rounded-full border transition-transform hover:scale-110 relative flex items-center justify-center shrink-0 cursor-pointer"
+                    className="nodrag nowheel w-5.5 h-5.5 rounded-full border transition-transform hover:scale-110 relative flex items-center justify-center shrink-0 cursor-pointer"
                     style={{
                       backgroundColor: isTransparent ? "#ffffff" : swatch,
                       width: "20px",
@@ -194,11 +200,13 @@ function ToolbarButton({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onMouseDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
       disabled={disabled}
       title={label}
       aria-label={label}
-      className={`w-7 h-7 flex items-center justify-center rounded-full transition-colors ${
+      className={`nodrag nowheel w-7 h-7 flex items-center justify-center rounded-full transition-colors ${
         disabled ? "opacity-50 cursor-not-allowed" : ""
       }`}
       style={{

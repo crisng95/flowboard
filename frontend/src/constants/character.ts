@@ -1,4 +1,4 @@
-// Character builder presets — shared between the GenerationDialog
+// Character builder presets shared between character prompt generation
 // (uses `tokens` to bake into the prompt) and the ResultViewer detail
 // panel (uses `label` to render country/vibe pills under the model
 // badge). Keep `key` stable: it's persisted into `node.data.charCountry`

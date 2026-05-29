@@ -34,7 +34,10 @@ export function CountStepper({
 
   return (
     <div
-      className="inline-flex items-center gap-0.5 h-7 px-1 rounded-full border border-white/[0.08]"
+      className="nodrag nowheel inline-flex items-center gap-0.5 h-7 px-1 rounded-full border border-white/[0.08]"
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
       style={{ backgroundColor: "rgba(255,255,255,0.02)" }}
       role="group"
       aria-label="Count"
@@ -42,6 +45,8 @@ export function CountStepper({
       <button
         type="button"
         disabled={disabled || atMin}
+        onMouseDown={(event) => event.stopPropagation()}
+        onDoubleClick={(event) => event.stopPropagation()}
         onClick={(event) => step(-1, event)}
         aria-label="Decrease"
         className="size-5 inline-flex items-center justify-center rounded-md hover:bg-white/[0.08] disabled:opacity-30 text-ink-muted"
@@ -54,6 +59,8 @@ export function CountStepper({
       <button
         type="button"
         disabled={disabled || atMax}
+        onMouseDown={(event) => event.stopPropagation()}
+        onDoubleClick={(event) => event.stopPropagation()}
         onClick={(event) => step(1, event)}
         aria-label="Increase"
         className="size-5 inline-flex items-center justify-center rounded-md hover:bg-white/[0.08] disabled:opacity-30 text-ink-muted"

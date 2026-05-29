@@ -150,12 +150,14 @@ export function RadioField<V extends string>({
             <button
               key={opt.value}
               type="button"
+              onMouseDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 if (!active) onChange(opt.value);
               }}
               className={cn(
-                "flex items-start gap-2 px-3 py-2 rounded-lg border text-left transition-colors",
+                "nodrag nowheel flex items-start gap-2 px-3 py-2 rounded-lg border text-left transition-colors",
                 active
                   ? "bg-accent/10 border-accent/40"
                   : "bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.05]",
@@ -211,12 +213,14 @@ export function ToggleField({ label, value, onChange, hint }: ToggleFieldProps) 
         type="button"
         role="switch"
         aria-checked={value}
+        onMouseDown={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation();
           onChange(!value);
         }}
         className={cn(
-          "relative shrink-0 h-5 w-9 rounded-full border transition-colors duration-150",
+          "nodrag nowheel relative shrink-0 h-5 w-9 rounded-full border transition-colors duration-150",
           value
             ? "bg-accent border-accent/60"
             : "bg-white/[0.06] border-white/[0.10]",

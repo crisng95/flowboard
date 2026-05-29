@@ -137,7 +137,7 @@ _VALID_NODE_TYPES = {
     # legacy
     "character", "image", "video", "prompt", "note", "Storyboard", "visual_asset",
     # Concepta fork
-    "reference", "style_pack", "concept", "multiview", "part", "variant",
+    "reference", "style_pack", "concept", "multiview", "part", "variant", "list",
     "pose", "turntable",
 }
 

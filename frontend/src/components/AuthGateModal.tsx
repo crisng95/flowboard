@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { KeyRound, Mail, X, ArrowRight, Loader2, CheckCircle2 } from "lucide-react";
-import { supabase } from "../cloud/supabase";
+import { hasSupabaseConfig, supabase } from "../cloud/supabase";
 
 interface AuthGateModalProps {
   isOpen: boolean;
@@ -20,7 +20,10 @@ export function AuthGateModal({ isOpen, onClose, onSuccess }: AuthGateModalProps
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!supabase) return;
+    if (!supabase) {
+      setError("Missing Supabase config. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY, then restart the dev server.");
+      return;
+    }
     setLoading(true);
     setError(null);
     setSuccessMsg(null);
@@ -128,7 +131,7 @@ export function AuthGateModal({ isOpen, onClose, onSuccess }: AuthGateModalProps
               <input
                 type="password"
                 required
-                placeholder="••••••••••••"
+                placeholder="ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full rounded-xl border border-white/[0.08] bg-white/[0.02] py-3 pl-10 pr-4 text-sm text-white placeholder-white/20 outline-none focus:border-accent/50 focus:bg-white/[0.04] transition-all"
@@ -138,7 +141,7 @@ export function AuthGateModal({ isOpen, onClose, onSuccess }: AuthGateModalProps
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || !hasSupabaseConfig}
             className="w-full rounded-xl bg-accent py-3.5 text-sm font-semibold text-white hover:bg-accent/90 focus:ring-2 focus:ring-accent/50 disabled:opacity-50 transition-all flex items-center justify-center gap-2 mt-6 cursor-pointer shadow-lg shadow-accent/20"
           >
             {loading ? (
@@ -151,6 +154,12 @@ export function AuthGateModal({ isOpen, onClose, onSuccess }: AuthGateModalProps
             )}
           </button>
         </form>
+
+        {!hasSupabaseConfig && (
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-200">
+            Missing Supabase config. Sign-in is disabled until <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> are set.
+          </div>
+        )}
 
         {/* Footer Toggle */}
         <div className="relative mt-6 pt-6 border-t border-white/[0.06] text-center">

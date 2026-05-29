@@ -134,8 +134,11 @@ export function NodeShell({
       >
         {(toolbarLeft || toolbarRight) && (
           <div
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
             className={cn(
-              "flex items-center justify-between",
+              "nodrag nowheel flex items-center justify-between",
               padded ? "px-3 pt-3" : "px-3 pt-2.5 absolute inset-x-0 top-0 z-10",
             )}
           >

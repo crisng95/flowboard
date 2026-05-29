@@ -16,6 +16,8 @@ let flowKey          = null;
 let callbackSecret   = null; // Auth secret received from agent on WS connect
 let state            = 'off'; // off | idle | running
 let manualDisconnect = false;
+let activeRequests   = new Map();
+let idleTimeout      = null;
 let metrics = {
   tokenCapturedAt: null,
   requestCount:    0,
@@ -27,8 +29,14 @@ let observedCaptchaActions = {};
 let cloudConfig = null;
 let cloudWorkerBusy = false;
 let cloudWorkerLastPollAt = null;
+let cloudNoJobStreak = 0;
+let cloudFastPollUntil = 0;
 const FLOW_PROJECT_MEDIA_CACHE_KEY = 'flowProjectMediaCache';
 const FLOW_PROJECT_MEDIA_CACHE_MAX = 500;
+const CLOUD_FAST_POLL_SECONDS = 5;
+const CLOUD_FAST_POLL_WINDOW_MS = 90 * 1000;
+const CLOUD_IDLE_BACKOFF_SECONDS = [30, 60, 120, 300];
+const CLOUD_HEARTBEAT_SECONDS = 60;
 
 const flowUrls = ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'];
 
@@ -327,6 +335,27 @@ function sendToAgent(msg) {
 
 // ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ API Request Proxy ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬
 
+function updateStateFromActiveRequests() {
+  if (cloudConfig?.mode === 'cloud-worker') return;
+
+  if (activeRequests.size > 0) {
+    if (idleTimeout) {
+      clearTimeout(idleTimeout);
+      idleTimeout = null;
+    }
+    setState('running');
+  } else {
+    if (!idleTimeout) {
+      idleTimeout = setTimeout(() => {
+        idleTimeout = null;
+        if (activeRequests.size === 0) {
+          setState('idle');
+        }
+      }, 4000);
+    }
+  }
+}
+
 async function handleApiRequest(msg) {
   const { id, params } = msg;
   const { url, method, headers, body, captchaAction } = params || {};
@@ -336,14 +365,17 @@ async function handleApiRequest(msg) {
     return;
   }
 
-  setState('running');
+  const type = classifyUrl(url);
+  activeRequests.set(id, type);
+  updateStateFromActiveRequests();
+
   const effectiveCaptchaAction = resolveCaptchaAction(url, captchaAction);
   const hasCaptcha = !!effectiveCaptchaAction;
   if (hasCaptcha) metrics.requestCount++;
 
   addRequestLog({
     id,
-    type:   classifyUrl(url),
+    type,
     time:   new Date().toISOString(),
     status: 'processing',
     url,
@@ -356,9 +388,7 @@ async function handleApiRequest(msg) {
     if (!flowKey) {
       sendToAgent({ id, status: 503, error: 'NO_FLOW_KEY' });
       if (hasCaptcha) { metrics.failedCount++; metrics.lastError = 'NO_FLOW_KEY'; }
-      chrome.storage.local.set({ metrics });
       updateRequestLog(id, { status: 'failed', error: 'NO_FLOW_KEY' });
-      setState('idle');
       return;
     }
 
@@ -372,9 +402,7 @@ async function handleApiRequest(msg) {
         console.error(`[Flowboard] Captcha failed for ${effectiveCaptchaAction}: ${err}`);
         sendToAgent({ id, status: 403, error: `CAPTCHA_FAILED: ${err}` });
         if (hasCaptcha) { metrics.failedCount++; metrics.lastError = `CAPTCHA_FAILED: ${err}`; }
-        chrome.storage.local.set({ metrics });
         updateRequestLog(id, { status: 'failed', error: `CAPTCHA_FAILED: ${err}` });
-        setState('idle');
         return;
       }
     }
@@ -480,10 +508,11 @@ async function handleApiRequest(msg) {
     sendToAgent({ id, status: 500, error: e.message || 'API_REQUEST_FAILED' });
     if (hasCaptcha) { metrics.failedCount++; metrics.lastError = e.message || 'API_REQUEST_FAILED'; }
     updateRequestLog(id, { status: 'failed', error: e.message || 'API_REQUEST_FAILED' });
+  } finally {
+    activeRequests.delete(id);
+    updateStateFromActiveRequests();
+    chrome.storage.local.set({ metrics });
   }
-
-  chrome.storage.local.set({ metrics });
-  setState('idle');
 }
 
 function resolveCaptchaAction(url, requestedAction) {
@@ -866,13 +895,43 @@ async function withStage(stage, work, fallback) {
 function startCloudWorkerLoop() {
   if (cloudConfig?.mode !== 'cloud-worker') return;
   setState('idle');
-  chrome.alarms.create('cloudPoll', { delayInMinutes: 0.02, periodInMinutes: 0.1 });
+  cloudNoJobStreak = 0;
+  scheduleCloudPoll(2);
+}
+
+function scheduleCloudPoll(delaySeconds) {
+  if (cloudConfig?.mode !== 'cloud-worker' || manualDisconnect) {
+    chrome.alarms.clear('cloudPoll');
+    return;
+  }
+  const seconds = Math.max(2, Math.min(300, Number(delaySeconds) || 300));
+  chrome.alarms.create('cloudPoll', { delayInMinutes: seconds / 60 });
+}
+
+function nextCloudPollDelaySeconds() {
+  if (Date.now() < cloudFastPollUntil) return CLOUD_FAST_POLL_SECONDS;
+  const index = Math.min(Math.max(cloudNoJobStreak - 1, 0), CLOUD_IDLE_BACKOFF_SECONDS.length - 1);
+  return CLOUD_IDLE_BACKOFF_SECONDS[index];
+}
+
+function nudgeCloudWorker(reason) {
+  if (cloudConfig?.mode !== 'cloud-worker' || manualDisconnect) return false;
+  cloudFastPollUntil = Date.now() + CLOUD_FAST_POLL_WINDOW_MS;
+  cloudNoJobStreak = 0;
+  scheduleCloudPoll(2);
+  console.log(`[Flowboard] Cloud worker nudged${reason ? ` (${reason})` : ''}`);
+  return true;
 }
 
 async function pollCloudWorkerOnce() {
-  if (cloudConfig?.mode !== 'cloud-worker' || cloudWorkerBusy || manualDisconnect) return;
+  if (cloudConfig?.mode !== 'cloud-worker' || manualDisconnect) return;
+  if (cloudWorkerBusy) {
+    scheduleCloudPoll(15);
+    return;
+  }
   cloudWorkerBusy = true;
   cloudWorkerLastPollAt = Date.now();
+  let hadJob = false;
   try {
     const cloud = new FlowboardCloudClient({
       baseUrl: cloudConfig.controlPlaneBaseUrl,
@@ -888,16 +947,25 @@ async function pollCloudWorkerOnce() {
         'Claim request failed'
       );
     } catch (error) {
-      if (error?.name === 'FlowboardNoJobError') return;
+      if (error?.name === 'FlowboardNoJobError') {
+        cloudNoJobStreak++;
+        return;
+      }
       throw error;
     }
-    if (job?.id) await runCloudFlowJob(cloud, job);
+    if (job?.id) {
+      hadJob = true;
+      cloudNoJobStreak = 0;
+      await runCloudFlowJob(cloud, job);
+    }
   } catch (error) {
+    cloudNoJobStreak = Math.min(cloudNoJobStreak + 1, CLOUD_IDLE_BACKOFF_SECONDS.length - 1);
     metrics.lastError = formatWorkerError(error, 'CLOUD_WORKER_ERROR');
     chrome.storage.local.set({ metrics });
   } finally {
     cloudWorkerBusy = false;
     if (cloudConfig?.mode === 'cloud-worker') setState('idle');
+    scheduleCloudPoll(hadJob ? CLOUD_FAST_POLL_SECONDS : nextCloudPollDelaySeconds());
   }
 }
 
@@ -908,11 +976,61 @@ async function solveCaptchaForCloud(action) {
   throw new Error(result?.error || 'CAPTCHA_FAILED');
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchMediaBytesWithRetry(url, attempts = 5) {
+  let lastError = null;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await FlowboardAssetUtils.fetchMediaBytes(url);
+    } catch (error) {
+      lastError = error;
+      if (i < attempts - 1) await delay(1500 * (i + 1));
+    }
+  }
+  throw lastError || new Error('Media download failed');
+}
+
+async function completeCloudRequestWithRetry(cloud, requestId, outputResult, assets, attempts = 5) {
+  let lastError = null;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await cloud.complete(requestId, outputResult, assets);
+    } catch (error) {
+      lastError = error;
+      console.warn('[Flowboard] Complete request retry', {
+        requestId,
+        attempt: i + 1,
+        attempts,
+        error: error?.message || String(error),
+      });
+      if (i < attempts - 1) await delay(2000 * (i + 1));
+    }
+  }
+  throw lastError || new Error('Complete request failed');
+}
+
 async function runCloudFlowJob(cloud, job) {
   const requestId = job.id;
   const userId = job.user_id;
   const inputData = job?.input_data && typeof job.input_data === 'object' ? job.input_data : {};
   const prompt = inputData.prompt;
+  const sourceMediaIdForLog = inputData.source_media_id || inputData.sourceMediaId || null;
+  const hasSource = !!sourceMediaIdForLog;
+  const taskType = job.task_type || 'unknown';
+  const variantCountLog = inputData.variant_count || 1;
+
+  // Safe debug log (no secrets, no full prompts)
+  console.log('[Flowboard][cloud-worker]', {
+    requestId: String(requestId).slice(0, 12),
+    task_type: taskType,
+    hasSourceMediaId: hasSource,
+    branch: (taskType === 'edit_image' || hasSource) ? 'editImage' : 'generateImage',
+    variantCount: variantCountLog,
+  });
+
   if (!userId) throw new Error('Claimed job missing user_id');
   if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('Missing prompt in claimed job');
   if (!flowKey) throw new Error('Missing Google Flow bearer token');
@@ -924,7 +1042,8 @@ async function runCloudFlowJob(cloud, job) {
   } catch (error) {
     throw new Error('progress/preparing failed: ' + formatWorkerError(error));
   }
-  const heartbeat = setInterval(() => cloud.heartbeat(requestId, cloudConfig?.leaseDurationSec || 60).catch(() => {}), 20000);
+  const leaseDurationSec = Math.max(cloudConfig?.leaseDurationSec || 180, CLOUD_HEARTBEAT_SECONDS * 3);
+  const heartbeat = setInterval(() => cloud.heartbeat(requestId, leaseDurationSec).catch(() => {}), CLOUD_HEARTBEAT_SECONDS * 1000);
   try {
     const flowApi = new FlowboardFlowApi({
       getBearerToken: () => flowKey,
@@ -953,18 +1072,53 @@ async function runCloudFlowJob(cloud, job) {
       () => resolveCloudRefMediaIds(flowApi, inputData.ref_media_ids, project.projectId),
       'Reference preparation failed'
     );
-    const generated = await withStage(
-      'ERR_STAGE_GENERATE',
-      () => flowApi.generateImage(prompt, project.projectId, {
-        paygateTier: inputData.paygate_tier || cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
-        imageModel: inputData.image_model || cloudConfig?.imageModel || null,
-        aspectRatio: inputData.aspect_ratio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
-        variantCount: inputData.variant_count || 1,
-        prompts: Array.isArray(inputData.prompts) ? inputData.prompts : undefined,
-        refMediaIds,
-      }),
-      'Google Flow generation failed'
-    );
+
+    let sourceMediaId = inputData.source_media_id || inputData.sourceMediaId || null;
+    if (typeof sourceMediaId === 'string' && /^https?:\/\//i.test(sourceMediaId)) {
+      const resolvedBaseIds = await withStage(
+        'ERR_STAGE_GENERATE',
+        () => resolveCloudRefMediaIds(flowApi, [sourceMediaId], project.projectId),
+        'Base image preparation failed'
+      );
+      sourceMediaId = resolvedBaseIds[0] || null;
+    }
+
+    let generated;
+    const isEditTask = job.task_type === 'edit_image' || !!sourceMediaId;
+
+    if (isEditTask) {
+      if (!sourceMediaId || typeof sourceMediaId !== 'string') {
+        throw stageError('ERR_STAGE_GENERATE', new Error('Missing source_media_id for edit_image / variant task'));
+      }
+      // Use edit path for gen_variant, gen_part, edit_image / refine — source must be BASE_IMAGE
+      generated = await withStage(
+        'ERR_STAGE_GENERATE',
+        () => flowApi.editImage(prompt, project.projectId, {
+          paygateTier: inputData.paygate_tier || cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
+          imageModel: inputData.image_model || cloudConfig?.imageModel || null,
+          aspectRatio: inputData.aspect_ratio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+          variantCount: inputData.variant_count || 1,
+          prompts: Array.isArray(inputData.prompts) ? inputData.prompts : undefined,
+          sourceMediaId,
+          refMediaIds,
+        }),
+        'Google Flow edit/image generation failed'
+      );
+    } else {
+      // Pure generation (txt2img or img2vid cases without base image)
+      generated = await withStage(
+        'ERR_STAGE_GENERATE',
+        () => flowApi.generateImage(prompt, project.projectId, {
+          paygateTier: inputData.paygate_tier || cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
+          imageModel: inputData.image_model || cloudConfig?.imageModel || null,
+          aspectRatio: inputData.aspect_ratio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+          variantCount: inputData.variant_count || 1,
+          prompts: Array.isArray(inputData.prompts) ? inputData.prompts : undefined,
+          refMediaIds,
+        }),
+        'Google Flow generation failed'
+      );
+    }
     const entries = generated.mediaEntries || [];
     if (!entries.length) throw stageError('ERR_STAGE_GENERATE', new Error('Flow API returned no media entries'));
     try {
@@ -973,26 +1127,42 @@ async function runCloudFlowJob(cloud, job) {
       throw new Error('progress/uploading failed: ' + formatWorkerError(error));
     }
     const assets = [];
+    const mediaUrls = entries.map((entry) => entry.url).filter(Boolean);
     for (let i = 0; i < entries.length; i++) {
-      if (!entries[i]?.url) throw stageError('ERR_STAGE_DOWNLOAD', new Error(`Media entry ${i} has no fifeUrl`));
-      const mediaAsset = await withStage(
-        'ERR_STAGE_DOWNLOAD',
-        () => FlowboardAssetUtils.fetchMediaBytes(entries[i].url),
-        'Media download failed'
-      );
-      assets.push(await withStage(
-        'ERR_STAGE_R2_PUT',
-        () => FlowboardAssetUtils.uploadGeneratedAsset(cloud, mediaAsset, userId, requestId, i, prompt),
-        'Asset upload failed'
-      ));
+      if (!entries[i]?.url) {
+        console.warn('[Flowboard] Media entry has no fifeUrl; completing with media id only', { requestId, index: i });
+        continue;
+      }
+      try {
+        const mediaAsset = await withStage(
+          'ERR_STAGE_DOWNLOAD',
+          () => fetchMediaBytesWithRetry(entries[i].url),
+          'Media download failed'
+        );
+        assets.push(await withStage(
+          'ERR_STAGE_R2_PUT',
+          () => FlowboardAssetUtils.uploadGeneratedAsset(cloud, mediaAsset, userId, requestId, i, prompt),
+          'Asset upload failed'
+        ));
+      } catch (error) {
+        console.warn('[Flowboard] Generated media upload skipped; falling back to Flow media URL', {
+          requestId,
+          index: i,
+          error: error?.message || String(error),
+        });
+      }
+    }
+    if (!assets.length && !mediaUrls.length) {
+      throw stageError('ERR_STAGE_DOWNLOAD', new Error('Generated media had no downloadable URLs'));
     }
     await withStage(
       'ERR_STAGE_COMPLETE',
-      () => cloud.complete(requestId, {
+      () => completeCloudRequestWithRetry(cloud, requestId, {
         provider: 'flow',
-        media_count: assets.length,
+        media_count: mediaUrls.length || assets.length,
         project_id: project.projectId,
         media_ids: entries.map((entry) => entry.media_id).filter(Boolean),
+        media_urls: mediaUrls,
       }, assets),
       'Complete request failed'
     );
@@ -1124,8 +1294,14 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
     return true;
   }
 
+  if (msg.type === 'FLOWBOARD_CLAIM_NOW') {
+    reply({ ok: nudgeCloudWorker('web-generate') });
+    return true;
+  }
+
   if (msg.type === 'DISCONNECT') {
     manualDisconnect = true;
+    chrome.alarms.clear('cloudPoll');
     ws?.close();
     reply({ ok: true });
     return true;
@@ -1153,6 +1329,7 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
       provider: next.provider || 'flow',
       paygateTier: next.paygateTier || 'PAYGATE_TIER_ONE',
       imageModel: next.imageModel || null,
+      leaseDurationSec: Number(next.leaseDurationSec || 180),
     };
     metrics.lastError = null;
     chrome.storage.local.set({ cloudConfig, metrics }, () => {
@@ -1219,5 +1396,8 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
 
   return true;
 });
+
+// Run init immediately on service worker startup to ensure state is hydrated from storage
+init();
 
 console.log('[Flowboard] Extension loaded');

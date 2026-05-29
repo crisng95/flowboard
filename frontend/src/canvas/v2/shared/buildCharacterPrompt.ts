@@ -1,11 +1,9 @@
-// Shared character prompt builder — used by both AddReferenceNode
-// (character builder in the library modal) and GenerationDialog
-// (legacy character node generation flow).
+// Shared character prompt builder used by AddReferenceNode's character
+// builder in the library modal.
 //
 // Extracted so the exact same prompt template is used regardless of
 // which UI surface triggers the generation. Keep in sync with the
-// framing anchors and negative locks documented in the original
-// GenerationDialog implementation.
+// framing anchors and negative locks used by the original character flow.
 
 import {
   CHARACTER_GENDERS,
