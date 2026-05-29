@@ -424,47 +424,34 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
               />
             </div>
 
-            {/* Persistent Batch Mode Toggle Badge when List is connected */}
-            {promptCount > 1 && imageCountUpstream > 1 && !showControls && (
-              <div className="px-4 pb-3 pt-0">
-                <button
-                  type="button"
-                  onMouseDown={stopNodeAction}
-                  onDoubleClick={stopNodeAction}
-                  onClick={toggleBatchMode}
-                  title={`Batch Mode: ${batchMode === "cross" ? "Cross Product (Generate every prompt for every image)" : "Zip Paired (Generate prompts matched with images by index)"}`}
-                  className="nodrag nowheel flex h-7 w-fit items-center justify-center rounded-full border border-white/[0.08] px-2.5 py-1 text-2xs font-bold text-white/80 hover:bg-white/[0.08] hover:text-white transition-all whitespace-nowrap cursor-pointer"
-                  style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
-                >
-                  x{batchTaskCount}
-                </button>
-              </div>
+            {/* Persistent Batch Mode Toggle Badge when List is connected - absolute & static to prevent animation stutter */}
+            {promptCount > 1 && imageCountUpstream > 1 && (
+              <button
+                type="button"
+                onMouseDown={stopNodeAction}
+                onDoubleClick={stopNodeAction}
+                onClick={toggleBatchMode}
+                title={`Batch Mode: ${batchMode === "cross" ? "Cross Product (Generate every prompt for every image)" : "Zip Paired (Generate prompts matched with images by index)"}`}
+                className="nodrag nowheel absolute left-4 bottom-3 z-40 flex h-7 items-center justify-center rounded-full border border-white/[0.08] px-2.5 py-1 text-2xs font-bold text-white/80 hover:bg-white/[0.08] hover:text-white transition-all whitespace-nowrap cursor-pointer"
+                style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
+              >
+                x{batchTaskCount}
+              </button>
             )}
 
             {/* Toolbar - slides in on hover */}
             <div
               className={cn(
-                "nodrag nowheel flex items-center gap-1.5 px-3 pb-3 pt-0",
+                "nodrag nowheel flex items-center gap-1.5 pb-3 pt-0 pr-3",
                 "transition-all duration-300 ease-out",
                 showControls
                   ? "max-h-[48px] opacity-100 translate-y-0"
                   : "max-h-0 opacity-0 translate-y-1 overflow-hidden",
               )}
+              style={{ paddingLeft: promptCount > 1 && imageCountUpstream > 1 ? 64 : 12 }}
             >
-              {/* Batch Mode Toggle OR standard Image count stepper */}
-              {promptCount > 1 && imageCountUpstream > 1 ? (
-                <button
-                  type="button"
-                  onMouseDown={stopNodeAction}
-                  onDoubleClick={stopNodeAction}
-                  onClick={toggleBatchMode}
-                  title={`Batch Mode: ${batchMode === "cross" ? "Cross Product (Generate every prompt for every image)" : "Zip Paired (Generate prompts matched with images by index)"}`}
-                  className="nodrag nowheel flex h-7 items-center justify-center rounded-full border border-white/[0.08] px-2.5 py-1 text-2xs font-bold text-white/80 hover:bg-white/[0.08] hover:text-white transition-all whitespace-nowrap cursor-pointer shrink-0"
-                  style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
-                >
-                  x{batchTaskCount}
-                </button>
-              ) : (
+              {/* Standard Image count stepper (Only shown when not in batch list mode) */}
+              {!(promptCount > 1 && imageCountUpstream > 1) && (
                 <CountStepper
                   value={imageCount}
                   min={1}
