@@ -12,6 +12,71 @@
     NANO_BANANA_2: 'NARWHAL',
   };
 
+  const VIDEO_I2V_URL = `${FLOW_API_BASE}/v1/video:batchAsyncGenerateVideoStartImage`;
+  const VIDEO_OMNI_URL = `${FLOW_API_BASE}/v1/video:batchAsyncGenerateVideoReferenceImages`;
+  const VIDEO_POLL_URL = `${FLOW_API_BASE}/v1/video:batchCheckAsyncVideoGenerationStatus`;
+  const CAPTCHA_VIDEO = 'VIDEO_GENERATION';
+
+  const VIDEO_MODEL_KEYS = {
+    PAYGATE_TIER_ONE: {
+      lite: {
+        VIDEO_ASPECT_RATIO_LANDSCAPE: "veo_3_1_i2v_lite",
+        VIDEO_ASPECT_RATIO_PORTRAIT: "veo_3_1_i2v_lite",
+      },
+      fast: {
+        VIDEO_ASPECT_RATIO_LANDSCAPE: "veo_3_1_i2v_s_fast",
+        VIDEO_ASPECT_RATIO_PORTRAIT: "veo_3_1_i2v_s_fast_portrait",
+      },
+      quality: {
+        VIDEO_ASPECT_RATIO_LANDSCAPE: "veo_3_1_i2v_s",
+        VIDEO_ASPECT_RATIO_PORTRAIT: "veo_3_1_i2v_s_portrait",
+      },
+    },
+    PAYGATE_TIER_TWO: {
+      lite: {
+        VIDEO_ASPECT_RATIO_LANDSCAPE: "veo_3_1_i2v_lite",
+        VIDEO_ASPECT_RATIO_PORTRAIT: "veo_3_1_i2v_lite",
+      },
+      fast: {
+        VIDEO_ASPECT_RATIO_LANDSCAPE: "veo_3_1_i2v_s_fast_ultra",
+        VIDEO_ASPECT_RATIO_PORTRAIT: "veo_3_1_i2v_s_fast_portrait_ultra",
+      },
+      quality: {
+        VIDEO_ASPECT_RATIO_LANDSCAPE: "veo_3_1_i2v_s",
+        VIDEO_ASPECT_RATIO_PORTRAIT: "veo_3_1_i2v_s_portrait",
+      },
+      lite_relaxed: {
+        VIDEO_ASPECT_RATIO_LANDSCAPE: "veo_3_1_i2v_lite_low_priority",
+        VIDEO_ASPECT_RATIO_PORTRAIT: "veo_3_1_i2v_lite_low_priority",
+      },
+      fast_relaxed: {
+        VIDEO_ASPECT_RATIO_LANDSCAPE: "veo_3_1_i2v_s_fast_ultra_relaxed",
+        VIDEO_ASPECT_RATIO_PORTRAIT: "veo_3_1_i2v_s_fast_ultra_relaxed",
+      },
+    },
+  };
+
+  const OMNI_FLASH_DURATION_KEYS = {
+    4: "abra_r2v_4s",
+    6: "abra_r2v_6s",
+    8: "abra_r2v_8s",
+    10: "abra_r2v_10s",
+  };
+
+  function resolveVideoModel(tier, aspect, quality) {
+    const activeTier = tier || 'PAYGATE_TIER_ONE';
+    const activeAspect = aspect || 'VIDEO_ASPECT_RATIO_LANDSCAPE';
+    const activeQuality = quality || 'fast';
+    const tierMap = VIDEO_MODEL_KEYS[activeTier] || VIDEO_MODEL_KEYS.PAYGATE_TIER_ONE;
+    const qualityMap = tierMap[activeQuality] || tierMap.fast;
+    return qualityMap[activeAspect] || qualityMap.VIDEO_ASPECT_RATIO_LANDSCAPE;
+  }
+
+  function resolveOmniFlashModel(duration) {
+    const d = Number(duration) || 4;
+    return OMNI_FLASH_DURATION_KEYS[d] || OMNI_FLASH_DURATION_KEYS[4];
+  }
+
   function resolveImageModel(key) {
     return IMAGE_MODELS[key] || IMAGE_MODELS.NANO_BANANA_PRO;
   }
@@ -224,6 +289,142 @@
       const mediaId = data?.data?.media?.name || findUploadedMediaId(data);
       if (typeof mediaId !== 'string' || !mediaId) throw new Error('uploadImage returned no media id');
       return { mediaId, raw: data };
+    }
+
+    async generateVideo(prompt, projectId, options) {
+      const opts = options || {};
+      const paygateTier = opts.paygateTier || this.paygateTier;
+      const ctx = clientContext(projectId, paygateTier);
+      const captchaToken = await this.solveCaptcha?.(CAPTCHA_VIDEO);
+      if (!captchaToken) throw new Error('Missing reCAPTCHA token');
+      ctx.recaptchaContext.token = captchaToken;
+
+      const sources = Array.isArray(opts.startMediaIds) && opts.startMediaIds.length > 0
+        ? opts.startMediaIds
+        : [opts.startMediaId];
+      
+      const prompts = Array.isArray(opts.prompts) ? opts.prompts : [];
+      const modelKey = resolveVideoModel(paygateTier, opts.aspectRatio, opts.videoQuality);
+      const now = Date.now();
+
+      const requests = sources.map((mid, i) => ({
+        aspectRatio: opts.aspectRatio || 'VIDEO_ASPECT_RATIO_LANDSCAPE',
+        seed: (now + i * 9973) % 1000000,
+        textInput: { structuredPrompt: { parts: [{ text: typeof prompts[i] === 'string' && prompts[i] ? prompts[i] : prompt }] } },
+        videoModelKey: modelKey,
+        startImage: { mediaId: mid },
+        metadata: { sceneId: crypto.randomUUID() }
+      }));
+
+      const body = {
+        clientContext: ctx,
+        mediaGenerationContext: { batchId: crypto.randomUUID() },
+        requests,
+        useV2ModelConfig: true,
+      };
+
+      const resp = await fetch(VIDEO_I2V_URL, {
+        method: 'POST',
+        headers: {
+          'content-type': 'text/plain;charset=UTF-8',
+          'accept': '*/*',
+          'origin': 'https://labs.google',
+          'referer': 'https://labs.google/',
+          'authorization': this.bearerHeader(),
+        },
+        credentials: 'include',
+        body: JSON.stringify(body),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(`generateVideo HTTP ${resp.status}`);
+      return { raw: data };
+    }
+
+    async generateVideoOmni(prompt, projectId, options) {
+      const opts = options || {};
+      const paygateTier = opts.paygateTier || this.paygateTier;
+      const ctx = clientContext(projectId, paygateTier);
+      const captchaToken = await this.solveCaptcha?.(CAPTCHA_VIDEO);
+      if (!captchaToken) throw new Error('Missing reCAPTCHA token');
+      ctx.recaptchaContext.token = captchaToken;
+
+      const refMediaIds = Array.isArray(opts.refMediaIds) ? opts.refMediaIds.filter(Boolean) : [];
+      const modelKey = resolveOmniFlashModel(opts.duration_s);
+
+      const requestItem = {
+        aspectRatio: opts.aspectRatio || 'VIDEO_ASPECT_RATIO_PORTRAIT',
+        textInput: { structuredPrompt: { parts: [{ text: prompt }] } },
+        videoModelKey: modelKey,
+        seed: Date.now() % 1000000,
+        metadata: {},
+        referenceImages: refMediaIds.map((mid) => ({
+          mediaId: mid,
+          imageUsageType: 'IMAGE_USAGE_TYPE_ASSET',
+        })),
+      };
+
+      const body = {
+        mediaGenerationContext: {
+          batchId: crypto.randomUUID(),
+          audioFailurePreference: 'BLOCK_SILENCED_VIDEOS',
+        },
+        clientContext: ctx,
+        requests: [requestItem],
+        useV2ModelConfig: true,
+      };
+
+      const resp = await fetch(VIDEO_OMNI_URL, {
+        method: 'POST',
+        headers: {
+          'content-type': 'text/plain;charset=UTF-8',
+          'accept': '*/*',
+          'origin': 'https://labs.google',
+          'referer': 'https://labs.google/',
+          'authorization': this.bearerHeader(),
+        },
+        credentials: 'include',
+        body: JSON.stringify(body),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(`generateVideoOmni HTTP ${resp.status}`);
+      return { raw: data };
+    }
+
+    async checkVideoOperations(operationNames, projectId) {
+      const body = {
+        operations: operationNames.map((name) => ({ operation: { name } })),
+      };
+      const resp = await fetch(VIDEO_POLL_URL, {
+        method: 'POST',
+        headers: {
+          'content-type': 'text/plain;charset=UTF-8',
+          'accept': '*/*',
+          'origin': 'https://labs.google',
+          'referer': 'https://labs.google/',
+          'authorization': this.bearerHeader(),
+        },
+        credentials: 'include',
+        body: JSON.stringify(body),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(`checkVideoOperations HTTP ${resp.status}`);
+      return { raw: data };
+    }
+
+    async getMediaWorkflow(mediaId) {
+      const resp = await fetch(`${FLOW_API_BASE}/v1/media/${mediaId}?clientContext.tool=PINHOLE`, {
+        method: 'GET',
+        headers: {
+          'accept': '*/*',
+          'origin': 'https://labs.google',
+          'referer': 'https://labs.google/',
+          'authorization': this.bearerHeader(),
+        },
+        credentials: 'include',
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(`getMediaWorkflow HTTP ${resp.status}`);
+      return { raw: data };
     }
   }
 

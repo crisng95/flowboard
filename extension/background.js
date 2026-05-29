@@ -1084,91 +1084,317 @@ async function runCloudFlowJob(cloud, job) {
     }
 
     let generated;
-    const isEditTask = job.task_type === 'edit_image' || !!sourceMediaId;
+    const isVideoTask = taskType === 'img2vid' || taskType === 'txt2vid_omni';
+    const isEditTask = !isVideoTask && (job.task_type === 'edit_image' || !!sourceMediaId);
 
-    if (isEditTask) {
-      if (!sourceMediaId || typeof sourceMediaId !== 'string') {
-        throw stageError('ERR_STAGE_GENERATE', new Error('Missing source_media_id for edit_image / variant task'));
-      }
-      // Use edit path for gen_variant, gen_part, edit_image / refine — source must be BASE_IMAGE
-      generated = await withStage(
-        'ERR_STAGE_GENERATE',
-        () => flowApi.editImage(prompt, project.projectId, {
-          paygateTier: inputData.paygate_tier || cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
-          imageModel: inputData.image_model || cloudConfig?.imageModel || null,
-          aspectRatio: inputData.aspect_ratio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
-          variantCount: inputData.variant_count || 1,
-          prompts: Array.isArray(inputData.prompts) ? inputData.prompts : undefined,
-          sourceMediaId,
-          refMediaIds,
-        }),
-        'Google Flow edit/image generation failed'
-      );
-    } else {
-      // Pure generation (txt2img or img2vid cases without base image)
-      generated = await withStage(
-        'ERR_STAGE_GENERATE',
-        () => flowApi.generateImage(prompt, project.projectId, {
-          paygateTier: inputData.paygate_tier || cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
-          imageModel: inputData.image_model || cloudConfig?.imageModel || null,
-          aspectRatio: inputData.aspect_ratio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
-          variantCount: inputData.variant_count || 1,
-          prompts: Array.isArray(inputData.prompts) ? inputData.prompts : undefined,
-          refMediaIds,
-        }),
-        'Google Flow generation failed'
-      );
-    }
-    const entries = generated.mediaEntries || [];
-    if (!entries.length) throw stageError('ERR_STAGE_GENERATE', new Error('Flow API returned no media entries'));
-    try {
-      await cloud.progress(requestId, 'uploading', 80);
-    } catch (error) {
-      throw new Error('progress/uploading failed: ' + formatWorkerError(error));
-    }
-    const assets = [];
-    const mediaUrls = entries.map((entry) => entry.url).filter(Boolean);
-    for (let i = 0; i < entries.length; i++) {
-      if (!entries[i]?.url) {
-        console.warn('[Flowboard] Media entry has no fifeUrl; completing with media id only', { requestId, index: i });
-        continue;
-      }
-      try {
-        const mediaAsset = await withStage(
-          'ERR_STAGE_DOWNLOAD',
-          () => fetchMediaBytesWithRetry(entries[i].url),
-          'Media download failed'
+    if (isVideoTask) {
+      if (taskType === 'img2vid') {
+        let startMediaIds = [];
+        if (Array.isArray(inputData.start_media_ids) && inputData.start_media_ids.length > 0) {
+          startMediaIds = inputData.start_media_ids;
+        } else if (inputData.start_media_id) {
+          startMediaIds = [inputData.start_media_id];
+        }
+        if (startMediaIds.length > 0) {
+          startMediaIds = await withStage(
+            'ERR_STAGE_GENERATE',
+            () => resolveCloudRefMediaIds(flowApi, startMediaIds, project.projectId),
+            'Base video images preparation failed'
+          );
+        } else {
+          throw stageError('ERR_STAGE_GENERATE', new Error('Missing start_media_id/start_media_ids for img2vid'));
+        }
+        generated = await withStage(
+          'ERR_STAGE_GENERATE',
+          () => flowApi.generateVideo(prompt, project.projectId, {
+            paygateTier: inputData.paygate_tier || cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
+            aspectRatio: inputData.aspect_ratio || 'VIDEO_ASPECT_RATIO_LANDSCAPE',
+            videoQuality: inputData.video_quality || 'fast',
+            startMediaIds,
+            prompts: Array.isArray(inputData.prompts) ? inputData.prompts : undefined,
+          }),
+          'Google Flow video generation failed'
         );
-        assets.push(await withStage(
-          'ERR_STAGE_R2_PUT',
-          () => FlowboardAssetUtils.uploadGeneratedAsset(cloud, mediaAsset, userId, requestId, i, prompt),
-          'Asset upload failed'
-        ));
-      } catch (error) {
-        console.warn('[Flowboard] Generated media upload skipped; falling back to Flow media URL', {
-          requestId,
-          index: i,
-          error: error?.message || String(error),
-        });
+      } else {
+        // txt2vid_omni
+        generated = await withStage(
+          'ERR_STAGE_GENERATE',
+          () => flowApi.generateVideoOmni(prompt, project.projectId, {
+            paygateTier: inputData.paygate_tier || cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
+            aspectRatio: inputData.aspect_ratio || 'VIDEO_ASPECT_RATIO_PORTRAIT',
+            duration_s: inputData.duration_s || 4,
+            refMediaIds,
+          }),
+          'Google Flow omni video generation failed'
+        );
       }
+
+      const rawData = generated.raw?.data || generated.raw;
+      let workflows = [];
+      let opNames = [];
+      if (Array.isArray(rawData.workflows)) {
+        workflows = rawData.workflows.map(wf => ({
+          name: wf.name,
+          primary_media_id: wf.metadata?.primaryMediaId || wf.primary_media_id || wf.primaryMediaId
+        })).filter(wf => wf.name && wf.primary_media_id);
+        opNames = workflows.map(wf => wf.name);
+      } else if (Array.isArray(rawData.operations)) {
+        opNames = rawData.operations.map(op => op.name || op.operation?.name).filter(Boolean);
+      }
+      
+      if (opNames.length === 0) {
+        throw stageError('ERR_STAGE_GENERATE', new Error('Flow API returned no operation names or workflows'));
+      }
+
+      await cloud.progress(requestId, 'generating', 50);
+      
+      let pollAttempts = 60; // up to 10 mins
+      let finalOps = [];
+      let finishedCount = 0;
+      
+      while (pollAttempts > 0) {
+        await cloud.heartbeat(requestId, leaseDurationSec).catch(() => {});
+        
+        if (workflows.length > 0) {
+          const currentOps = [];
+          for (const wf of workflows) {
+            try {
+              const pollRes = await flowApi.getMediaWorkflow(wf.primary_media_id);
+              const wData = pollRes.raw?.data || pollRes.raw;
+              const video = wData.video;
+              if (video && (video.encodedVideo || video.fifeUrl)) {
+                currentOps.push({
+                  name: wf.name,
+                  done: true,
+                  media_id: wf.primary_media_id,
+                  fifeUrl: video.fifeUrl || null,
+                  encodedVideo: video.encodedVideo || null,
+                });
+              } else {
+                currentOps.push({ name: wf.name, done: false });
+              }
+            } catch (e) {
+              console.warn(`[Flowboard] Failed to check workflow ${wf.name}`, e);
+              currentOps.push({ name: wf.name, done: false });
+            }
+          }
+          finalOps = currentOps;
+          finishedCount = finalOps.filter(o => o.done).length;
+        } else {
+          const pollRes = await flowApi.checkVideoOperations(opNames, project.projectId);
+          const pData = pollRes.raw?.data || pollRes.raw;
+          const operations = Array.isArray(pData.operations) ? pData.operations : [];
+          
+          const currentOps = [];
+          for (const opReqName of opNames) {
+            const found = operations.find(o => (o.name === opReqName || o.operation?.name === opReqName));
+            if (found) {
+              const inner = found.operation || found;
+              const isDone = found.status === 'MEDIA_GENERATION_STATUS_SUCCESSFUL' || inner.done === true;
+              const isFailed = found.status === 'MEDIA_GENERATION_STATUS_FAILED' || inner.error;
+              
+              if (isFailed) {
+                const errMsg = inner.error?.message || 'MEDIA_GENERATION_STATUS_FAILED';
+                throw stageError('ERR_STAGE_GENERATE', new Error(`Video generation operation failed: ${errMsg}`));
+              }
+              
+              if (isDone) {
+                const video = inner.metadata?.video || inner.video;
+                const fifeUrl = video?.fifeUrl;
+                if (fifeUrl) {
+                  const match = fifeUrl.match(/\/video\/([^?\/]+)/);
+                  const mediaId = match ? match[1] : (video.mediaId || video.mediaGenerationId);
+                  currentOps.push({
+                    name: opReqName,
+                    done: true,
+                    media_id: mediaId,
+                    fifeUrl,
+                  });
+                } else {
+                  currentOps.push({ name: opReqName, done: false });
+                }
+              } else {
+                currentOps.push({ name: opReqName, done: false });
+              }
+            } else {
+              currentOps.push({ name: opReqName, done: false });
+            }
+          }
+          finalOps = currentOps;
+          finishedCount = finalOps.filter(o => o.done).length;
+        }
+        
+        if (finishedCount === opNames.length) {
+          break;
+        }
+        
+        pollAttempts--;
+        if (pollAttempts > 0) {
+          await delay(10000);
+        }
+      }
+      
+      if (finishedCount < opNames.length) {
+        throw stageError('ERR_STAGE_GENERATE', new Error('Video generation timed out'));
+      }
+
+      try {
+        await cloud.progress(requestId, 'uploading', 85);
+      } catch (error) {
+        throw new Error('progress/uploading failed: ' + formatWorkerError(error));
+      }
+
+      const assets = [];
+      const mediaUrls = [];
+      const mediaIds = [];
+
+      for (let i = 0; i < finalOps.length; i++) {
+        const op = finalOps[i];
+        if (op.encodedVideo) {
+          try {
+            const bytes = base64ToBytes(op.encodedVideo);
+            const mimeType = FlowboardAssetUtils.sniffMime(bytes, 'video/mp4') || 'video/mp4';
+            const checksum = await FlowboardAssetUtils.sha256Hex(bytes);
+            const mediaAsset = {
+              bytes,
+              mimeType,
+              byteSize: bytes.byteLength,
+              checksum,
+              extension: FlowboardAssetUtils.extensionForMime(mimeType),
+            };
+            const uploaded = await withStage(
+              'ERR_STAGE_R2_PUT',
+              () => FlowboardAssetUtils.uploadGeneratedAsset(cloud, mediaAsset, userId, requestId, i, prompt),
+              'Asset upload failed'
+            );
+            assets.push(uploaded);
+            mediaIds.push(op.media_id);
+            if (op.fifeUrl) mediaUrls.push(op.fifeUrl);
+          } catch (error) {
+            console.warn('[Flowboard] Workflow video upload failed', error);
+          }
+        } else if (op.fifeUrl) {
+          mediaUrls.push(op.fifeUrl);
+          mediaIds.push(op.media_id);
+          try {
+            const mediaAsset = await withStage(
+              'ERR_STAGE_DOWNLOAD',
+              () => fetchMediaBytesWithRetry(op.fifeUrl),
+              'Video download failed'
+            );
+            assets.push(await withStage(
+              'ERR_STAGE_R2_PUT',
+              () => FlowboardAssetUtils.uploadGeneratedAsset(cloud, mediaAsset, userId, requestId, i, prompt),
+              'Asset upload failed'
+            ));
+          } catch (error) {
+            console.warn('[Flowboard] Video download/upload skipped', error);
+          }
+        }
+      }
+
+      if (!assets.length && !mediaUrls.length) {
+        throw stageError('ERR_STAGE_DOWNLOAD', new Error('Generated videos had no downloadable URLs or raw bytes'));
+      }
+
+      await withStage(
+        'ERR_STAGE_COMPLETE',
+        () => completeCloudRequestWithRetry(cloud, requestId, {
+          provider: 'flow',
+          media_count: mediaUrls.length || assets.length,
+          project_id: project.projectId,
+          media_ids: mediaIds,
+          media_urls: mediaUrls,
+        }, assets),
+        'Complete request failed'
+      );
+      metrics.successCount++;
+      metrics.lastError = null;
+      chrome.storage.local.set({ metrics });
+    } else {
+      // Pure or Edit Image Generation
+      if (isEditTask) {
+        if (!sourceMediaId || typeof sourceMediaId !== 'string') {
+          throw stageError('ERR_STAGE_GENERATE', new Error('Missing source_media_id for edit_image / variant task'));
+        }
+        generated = await withStage(
+          'ERR_STAGE_GENERATE',
+          () => flowApi.editImage(prompt, project.projectId, {
+            paygateTier: inputData.paygate_tier || cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
+            imageModel: inputData.image_model || cloudConfig?.imageModel || null,
+            aspectRatio: inputData.aspect_ratio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+            variantCount: inputData.variant_count || 1,
+            prompts: Array.isArray(inputData.prompts) ? inputData.prompts : undefined,
+            sourceMediaId,
+            refMediaIds,
+          }),
+          'Google Flow edit/image generation failed'
+        );
+      } else {
+        generated = await withStage(
+          'ERR_STAGE_GENERATE',
+          () => flowApi.generateImage(prompt, project.projectId, {
+            paygateTier: inputData.paygate_tier || cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
+            imageModel: inputData.image_model || cloudConfig?.imageModel || null,
+            aspectRatio: inputData.aspect_ratio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+            variantCount: inputData.variant_count || 1,
+            prompts: Array.isArray(inputData.prompts) ? inputData.prompts : undefined,
+            refMediaIds,
+          }),
+          'Google Flow generation failed'
+        );
+      }
+      const entries = generated.mediaEntries || [];
+      if (!entries.length) throw stageError('ERR_STAGE_GENERATE', new Error('Flow API returned no media entries'));
+      try {
+        await cloud.progress(requestId, 'uploading', 80);
+      } catch (error) {
+        throw new Error('progress/uploading failed: ' + formatWorkerError(error));
+      }
+      const assets = [];
+      const mediaUrls = entries.map((entry) => entry.url).filter(Boolean);
+      for (let i = 0; i < entries.length; i++) {
+        if (!entries[i]?.url) {
+          console.warn('[Flowboard] Media entry has no fifeUrl; completing with media id only', { requestId, index: i });
+          continue;
+        }
+        try {
+          const mediaAsset = await withStage(
+            'ERR_STAGE_DOWNLOAD',
+            () => fetchMediaBytesWithRetry(entries[i].url),
+            'Media download failed'
+          );
+          assets.push(await withStage(
+            'ERR_STAGE_R2_PUT',
+            () => FlowboardAssetUtils.uploadGeneratedAsset(cloud, mediaAsset, userId, requestId, i, prompt),
+            'Asset upload failed'
+          ));
+        } catch (error) {
+          console.warn('[Flowboard] Generated media upload skipped; falling back to Flow media URL', {
+            requestId,
+            index: i,
+            error: error?.message || String(error),
+          });
+        }
+      }
+      if (!assets.length && !mediaUrls.length) {
+        throw stageError('ERR_STAGE_DOWNLOAD', new Error('Generated media had no downloadable URLs'));
+      }
+      await withStage(
+        'ERR_STAGE_COMPLETE',
+        () => completeCloudRequestWithRetry(cloud, requestId, {
+          provider: 'flow',
+          media_count: mediaUrls.length || assets.length,
+          project_id: project.projectId,
+          media_ids: entries.map((entry) => entry.media_id).filter(Boolean),
+          media_urls: mediaUrls,
+        }, assets),
+        'Complete request failed'
+      );
+      metrics.successCount++;
+      metrics.lastError = null;
+      chrome.storage.local.set({ metrics });
     }
-    if (!assets.length && !mediaUrls.length) {
-      throw stageError('ERR_STAGE_DOWNLOAD', new Error('Generated media had no downloadable URLs'));
-    }
-    await withStage(
-      'ERR_STAGE_COMPLETE',
-      () => completeCloudRequestWithRetry(cloud, requestId, {
-        provider: 'flow',
-        media_count: mediaUrls.length || assets.length,
-        project_id: project.projectId,
-        media_ids: entries.map((entry) => entry.media_id).filter(Boolean),
-        media_urls: mediaUrls,
-      }, assets),
-      'Complete request failed'
-    );
-    metrics.successCount++;
-    metrics.lastError = null;
-    chrome.storage.local.set({ metrics });
   } catch (error) {
     await cloud.fail(requestId, error?.message || 'Flow cloud worker failed').catch(() => {});
     metrics.failedCount++;
