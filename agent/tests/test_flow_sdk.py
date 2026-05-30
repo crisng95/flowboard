@@ -455,6 +455,39 @@ async def test_gen_video_batch_with_multiple_start_media_ids():
 
 
 @pytest.mark.asyncio
+async def test_gen_video_batch_pairs_per_variant_prompts():
+    """Zip/cross batch modes hand gen_video a `prompts` list so each i2v
+    source gets its own text. Missing/short entries fall back to the shared
+    prompt. Without this every clip would reuse the first prompt."""
+    c = RecordingClient()
+    c.api_response = {
+        "status": 200,
+        "data": {
+            "operations": [
+                {"operation": {"name": "op-1"}},
+                {"operation": {"name": "op-2"}},
+                {"operation": {"name": "op-3"}},
+            ]
+        },
+    }
+    sdk = FlowSDK(client=c)  # type: ignore[arg-type]
+    out = await sdk.gen_video(
+        prompt="fallback",
+        project_id="proj-1",
+        start_media_ids=["src-1", "src-2", "src-3"],
+        prompts=["alpha", "beta"],
+        aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE",
+        paygate_tier="PAYGATE_TIER_ONE",
+    )
+    assert out["operation_names"] == ["op-1", "op-2", "op-3"]
+
+    items = c.api_calls[0]["body"]["requests"]
+    texts = [it["textInput"]["structuredPrompt"]["parts"][0]["text"] for it in items]
+    # prompts[0]->src-1, prompts[1]->src-2, short list falls back for src-3
+    assert texts == ["alpha", "beta", "fallback"]
+
+
+@pytest.mark.asyncio
 async def test_gen_video_falls_back_to_single_start_media_id():
     """Single source still works through the legacy path."""
     c = RecordingClient()

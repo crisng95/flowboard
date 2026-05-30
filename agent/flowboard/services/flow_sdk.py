@@ -345,6 +345,7 @@ class FlowSDK:
         scene_id: Optional[str] = None,
         start_media_ids: Optional[list[str]] = None,
         video_quality: Optional[str] = None,
+        prompts: Optional[list[str]] = None,
     ) -> dict[str, Any]:
         """Kick off i2v operation(s). Returns ``{raw, operation_names}`` on
         success or ``{raw, error}`` on failure. Operations are async — the
@@ -391,6 +392,18 @@ class FlowSDK:
         if not sources:
             return {"raw": None, "error": "missing_start_media_id"}
 
+        # Per-variant prompts: when the caller provides ``prompts``, pair
+        # prompts[i] with source[i] so each i2v clip uses its own text.
+        # Missing/short lists fall back to the shared ``prompt``. This is
+        # what makes zip/cross batch modes emit distinct clips instead of
+        # N copies of the first prompt.
+        per_item_prompts: list[str] = []
+        for i in range(len(sources)):
+            if prompts and i < len(prompts) and isinstance(prompts[i], str) and prompts[i]:
+                per_item_prompts.append(prompts[i])
+            else:
+                per_item_prompts.append(prompt)
+
         ts = int(time.time() * 1000)
         ctx = _client_context(project_id, paygate_tier)
         items: list[dict[str, Any]] = []
@@ -399,7 +412,7 @@ class FlowSDK:
                 "aspectRatio": aspect_ratio,
                 # Distinct seed per item so Flow doesn't dedupe.
                 "seed": (ts + i * 9973) % 1_000_000,
-                "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
+                "textInput": {"structuredPrompt": {"parts": [{"text": per_item_prompts[i]}]}},
                 "videoModelKey": model_key,
                 "startImage": {"mediaId": mid},
                 "metadata": {"sceneId": scene_id or str(uuid.uuid4())},

@@ -160,6 +160,27 @@ async def test_gen_video_applies_same_resolution_chain():
 
 
 @pytest.mark.asyncio
+async def test_gen_video_forwards_per_variant_prompts():
+    """Batch (zip/cross) video must hand the SDK a `prompts` list so each
+    i2v clip gets its own text instead of reusing the first prompt."""
+    flow_client._paygate_tier = "PAYGATE_TIER_TWO"
+
+    with patch("flowboard.worker.processor.get_flow_sdk") as m:
+        m.return_value.gen_video = AsyncMock(return_value={
+            "operation_names": [],
+        })
+        await proc._handle_gen_video({
+            "prompt": "alpha",
+            "project_id": "8b62385c-4916-4abd-b01f-b28173d8eb04",
+            "start_media_ids": ["src-1", "src-2"],
+            "prompts": ["alpha", "beta"],
+        })
+        kwargs = m.return_value.gen_video.call_args.kwargs
+        assert kwargs["prompts"] == ["alpha", "beta"]
+        assert kwargs["start_media_ids"] == ["src-1", "src-2"]
+
+
+@pytest.mark.asyncio
 async def test_edit_image_applies_same_resolution_chain():
     """Third handler — same chain, same expectation."""
     flow_client._paygate_tier = "PAYGATE_TIER_TWO"

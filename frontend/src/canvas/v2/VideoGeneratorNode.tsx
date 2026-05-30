@@ -13,7 +13,7 @@ import {
 
 import { cn } from "../../lib/utils";
 import { type FlowNode, useBoardStore } from "../../store/board";
-import { collectSelectedListMediaItems, useGenerationStore } from "../../store/generation";
+import { collectSelectedListMediaItems, collectSelectedListTextPrompts, useGenerationStore } from "../../store/generation";
 import {
   OMNI_FLASH_CREDIT_COST,
   type OmniFlashDuration,
@@ -28,6 +28,7 @@ import { PickerDropdown } from "./shared/PickerDropdown";
 import { edgeHandleClass, EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET } from "./shared/edgeHandle";
 import { mediaUrl } from "./shared/useUploadFlow";
 import { useNodeWidth } from "./shared/useNodeWidth";
+import { FluidGradientStyles } from "./GoogleFlowStudio";
 
 const MIN_WIDTH = 520;
 const MAX_WIDTH = 760;
@@ -183,18 +184,25 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
   const hasTextConnection = edges.some((e) => e.target === rfId && e.targetHandle === "target-text");
   const upstreamTextEdge = edges.find((e) => e.target === rfId && e.targetHandle === "target-text");
   const upstreamTextNode = upstreamTextEdge ? allNodes.find((n) => n.id === upstreamTextEdge.source) : null;
-  const upstreamText = ((upstreamTextNode?.data.prompt as string) ?? "").trim();
+  // A Prompt list keeps its text in listItems[] (data.prompt stays empty),
+  // so read selected text items from list sources and only fall back to
+  // data.prompt for plain text nodes. Without this the Generate gate sees an
+  // empty prompt and silently returns when a Prompt list is connected.
+  const upstreamTextPrompts = upstreamTextNode
+    ? (upstreamTextNode.data.type === "list"
+        ? collectSelectedListTextPrompts(upstreamTextNode as { id: string; data: Record<string, unknown> })
+        : [((upstreamTextNode.data.prompt as string | undefined) ?? "").trim()].filter(Boolean))
+    : [];
+  const upstreamText = upstreamTextPrompts.join("\n");
 
   const batchMode = (data.batchMode as "zip" | "cross") || "cross";
 
   const promptCount = (() => {
     if (!upstreamTextNode) return 1;
-    const items = upstreamTextNode.data.listItems;
-    if (Array.isArray(items)) {
-      if (Array.isArray(upstreamTextNode.data.listSelectedIndexes) && upstreamTextNode.data.listSelectedIndexes.length > 0) {
-        return upstreamTextNode.data.listSelectedIndexes.length;
-      }
-      return items.length;
+    if (upstreamTextNode.data.type === "list") {
+      // Count the actual text prompts the dispatch engine will use so the
+      // batch badge matches execution exactly.
+      return Math.max(1, upstreamTextPrompts.length);
     }
     return 1;
   })();
@@ -356,7 +364,7 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
           "relative overflow-visible transition-all duration-300 ease-out",
           "border-[3px] border-white/[0.14] shadow-[0_8px_28px_-10px_rgba(0,0,0,0.6)]",
           selected && "ring-2 ring-accent/50",
-          isRunning && "ring-2 ring-accent/30 animate-pulse",
+          isRunning && "ring-2 ring-accent/30",
         )}
         style={{ borderRadius: BORDER_RADIUS, backgroundColor: "#1a1a1a" }}
       >
@@ -447,15 +455,39 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
             </div>
           )}
 
+          {/* Google Flow Shifting Fluid Organic Loading Overlay.
+              Organic metallic liquid blobs moving dynamically, mix-blended
+              with blur and dither. Mirrors the image generator node. */}
           {isRunning && !showVariantGrid && (
             <div
-              className="absolute inset-0 z-[4] overflow-hidden flow-generating-sheen animate-fade-in"
+              className="absolute inset-0 z-[4] overflow-hidden"
               style={{ borderRadius: BORDER_RADIUS - 3 }}
             >
-              <Video size={16} className="absolute top-3 left-3 text-white/35" />
-              <span className="absolute top-3 right-3 text-2xs font-semibold font-mono text-white/45">
-                {simulatedProgress}%
-              </span>
+              <FluidGradientStyles speedModifier={1} />
+              <div className="absolute inset-0 bg-[#16171a]" />
+
+              {/* Shifting fluid blobs */}
+              <div className="absolute inset-0 filter blur-[60px] mix-blend-screen opacity-[0.95]">
+                <div className="absolute -bottom-[20%] -left-[15%] w-[75%] h-[75%] rounded-full bg-gradient-to-tr from-[#8a8c94] to-[#3a3c40] animate-fluid-1 opacity-80" />
+                <div className="absolute -top-[15%] -right-[10%] w-[65%] h-[65%] rounded-full bg-[#404248] animate-fluid-2 opacity-60" />
+                <div className="absolute top-[25%] left-[20%] w-[55%] h-[55%] rounded-full bg-[#242528] animate-fluid-3 opacity-50" />
+              </div>
+
+              <div className="absolute inset-0 bg-[radial-gradient(#27272a_0.6px,transparent_1px)] bg-[length:2.5px_2.5px] opacity-[0.22] pointer-events-none mix-blend-overlay" />
+              <div className="absolute inset-0 bg-gradient-to-tr from-black/20 via-transparent to-black/10 pointer-events-none" />
+
+              {/* Minimal top overlays */}
+              <div className="absolute inset-0 flex flex-col justify-between p-4 pointer-events-none">
+                <div className="flex items-start justify-between">
+                  <div className="text-white/60 p-0.5">
+                    <Video size={18} strokeWidth={1.5} className="opacity-80" />
+                  </div>
+
+                  <div className="text-white/60 font-sans text-xs font-semibold tracking-tight opacity-95">
+                    {Math.floor(simulatedProgress)}%
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 

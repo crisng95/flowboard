@@ -257,6 +257,28 @@ export function collectSelectedListMediaItems(node: { id: string; data: Record<s
   return mediaItems;
 }
 
+/**
+ * Collect the text prompts from a list node, honoring `listSelectedIndexes`
+ * when the user has narrowed the selection. A Prompt list keeps its text in
+ * `listItems[]` (kind === "text"); `data.prompt` stays empty for lists, which
+ * is why generator nodes that read `data.prompt` directly see nothing. Use
+ * this so node UI and the dispatch engine agree on the exact prompts (and the
+ * exact count shown by the batch badge).
+ */
+export function collectSelectedListTextPrompts(node: { id: string; data: Record<string, unknown> }): string[] {
+  const listItems = collectListItemsFromNode(node);
+  const selectedIndexes = Array.isArray(node.data.listSelectedIndexes)
+    ? node.data.listSelectedIndexes.map(Number).filter((value) => Number.isInteger(value) && value >= 0)
+    : [];
+  const source = selectedIndexes.length > 0
+    ? listItems.filter((_, index) => selectedIndexes.includes(index))
+    : listItems;
+  return source
+    .filter((item) => item.kind === "text")
+    .map((item) => String(item.text || item.title || "").trim())
+    .filter(Boolean);
+}
+
 function isMediaSourceType(type: string | undefined): boolean {
   return type === "reference" || type === "variant" || type === "video" || type === "upload" || type === "list" || type === "add_reference";
 }
@@ -500,6 +522,31 @@ async function runNodeDirect(
     const intakeMode = (node.data.listIntakeMode as string | undefined) === "keep" ? "keep" : "replace";
     const incomingEdges = board.edges.filter((edge) => edge.target === rfId);
     const existingItems = dedupeListItems(collectListItemsFromNode(node as { id: string; data: Record<string, unknown> }));
+
+    // Leaf source list: no incoming edges but already populated (e.g. a
+    // manually-curated Prompt list or an uploaded Image list). Rebuilding
+    // from incoming edges here would produce an empty set and WIPE the
+    // user's items. Just mark it done and keep what's there. Without this,
+    // running a downstream generator auto-runs this list and erases its
+    // prompts/images before dispatch can read them.
+    if (incomingEdges.length === 0 && existingItems.length > 0) {
+      const mediaItems = collectSelectedListMediaItems(node as { id: string; data: Record<string, unknown> });
+      const leafMediaIds = mediaItems
+        .map((item) => item.mediaId)
+        .filter((value): value is string => typeof value === "string" && value.length > 0);
+      const leafFlowMediaIds = mediaItems
+        .map((item) => item.flowMediaId ?? item.mediaId)
+        .filter((value): value is string => typeof value === "string" && value.length > 0);
+      useBoardStore.getState().updateNodeData(rfId, {
+        status: "done",
+        mediaIds: leafMediaIds,
+        mediaId: leafMediaIds[0] ?? undefined,
+        flowMediaIds: leafFlowMediaIds,
+        flowMediaId: leafFlowMediaIds[0] ?? undefined,
+        error: undefined,
+      });
+      return;
+    }
     const existingSelectedIndexes = Array.isArray(node.data.listSelectedIndexes)
       ? node.data.listSelectedIndexes
           .map((value) => Number(value))
@@ -618,10 +665,7 @@ async function runNodeDirect(
     const textSourceNode = textEdge ? board.nodes.find((n) => n.id === textEdge.source) : null;
     const upstreamPrompts = textSourceNode
       ? (textSourceNode.data.type === "list"
-          ? collectListItemsFromNode(textSourceNode as any)
-              .filter((item) => item.kind === "text")
-              .map((item) => String(item.text || item.title || "").trim())
-              .filter(Boolean)
+          ? collectSelectedListTextPrompts(textSourceNode as { id: string; data: Record<string, unknown> })
           : [((textSourceNode.data.prompt as string | undefined) ?? "").trim()].filter(Boolean))
       : [];
 
@@ -751,10 +795,7 @@ async function runNodeDirect(
     const textSourceNode = textEdge ? board.nodes.find((n) => n.id === textEdge.source) : null;
     const upstreamPrompts = textSourceNode
       ? (textSourceNode.data.type === "list"
-          ? collectListItemsFromNode(textSourceNode as any)
-              .filter((item) => item.kind === "text")
-              .map((item) => String(item.text || item.title || "").trim())
-              .filter(Boolean)
+          ? collectSelectedListTextPrompts(textSourceNode as { id: string; data: Record<string, unknown> })
           : [((textSourceNode.data.prompt as string | undefined) ?? "").trim()].filter(Boolean))
       : [];
 
@@ -1468,6 +1509,13 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             videoParams.start_media_ids = startMediaIds;
           } else {
             videoParams.start_media_id = startMediaId;
+          }
+          // Per-variant prompts: in batch (zip/cross) mode each i2v clip
+          // gets its own prompt. Without this the worker reuses the single
+          // `prompt` for every source image, collapsing distinct batch
+          // prompts into one. The worker pairs prompts[i] with source[i].
+          if (opts.prompts && opts.prompts.length > 0) {
+            videoParams.prompts = opts.prompts;
           }
           console.log("[Flowboard][video-request-create]", {
             rfId,

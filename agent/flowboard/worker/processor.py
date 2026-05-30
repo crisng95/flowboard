@@ -190,6 +190,17 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
         cleaned = [m for m in raw_starts if isinstance(m, str) and m.strip()]
         start_media_ids = [m.strip() for m in cleaned] or None
 
+    # Per-variant prompts (optional). When provided, each i2v source image
+    # gets its own prompt instead of all sources sharing `prompt`. The SDK
+    # pairs prompts[i] with source[i]; missing/short lists fall back to the
+    # single prompt. This is what makes zip/cross batch modes emit distinct
+    # clips rather than N copies of the first prompt.
+    raw_video_prompts = params.get("prompts")
+    per_variant_prompts: Optional[list[str]] = None
+    if isinstance(raw_video_prompts, list):
+        cleaned_prompts = [p for p in raw_video_prompts if isinstance(p, str) and p.strip()]
+        per_variant_prompts = cleaned_prompts or None
+
     if not isinstance(prompt, str) or not prompt.strip():
         return {}, "missing_prompt"
     if not isinstance(project_id, str) or not project_id.strip():
@@ -224,6 +235,7 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
         aspect_ratio=aspect,
         paygate_tier=tier,
         video_quality=video_quality,
+        prompts=per_variant_prompts,
     )
     if dispatch.get("error"):
         return dispatch, str(dispatch["error"])[:200]

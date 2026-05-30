@@ -702,13 +702,26 @@ async fn process_request(
         let Some(model_key) = resolve_video_model(paygate_tier, aspect_ratio, quality) else {
             return Err("no_video_model_for_requested_tier_quality_aspect".to_string());
         };
+        // Per-variant prompts: pair prompts[i] with source[i] so zip/cross
+        // batch modes emit distinct clips. Missing/short lists fall back to
+        // the shared prompt.
+        let video_prompts = params.get("prompts").and_then(|p| p.as_array());
         let mut requests_arr = Vec::new();
         for (i, mid) in sources.iter().enumerate() {
             let seed = (ts + (i as u128) * 9973) % 1_000_000;
+            let item_prompt = if let Some(p_arr) = video_prompts {
+                if i < p_arr.len() {
+                    p_arr[i].as_str().unwrap_or(prompt)
+                } else {
+                    prompt
+                }
+            } else {
+                prompt
+            };
             requests_arr.push(json!({
                 "aspectRatio": aspect_ratio,
                 "seed": seed,
-                "textInput": { "structuredPrompt": { "parts": [{"text": prompt}] } },
+                "textInput": { "structuredPrompt": { "parts": [{"text": item_prompt}] } },
                 "videoModelKey": model_key,
                 "startImage": { "mediaId": mid },
                 "metadata": { "sceneId": uuid::Uuid::new_v4().to_string() }

@@ -4,7 +4,7 @@ import { ImageUp, Play, RefreshCw, Settings, Type } from "lucide-react";
 
 import { type FlowNode } from "../../store/board";
 import { useBoardStore } from "../../store/board";
-import { useGenerationStore } from "../../store/generation";
+import { collectSelectedListTextPrompts, useGenerationStore } from "../../store/generation";
 import { cn } from "../../lib/utils";
 import { mediaUrl } from "./shared/useUploadFlow";
 import { persistNodeData } from "./shared/persistNodeData";
@@ -125,7 +125,16 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
   const upstreamTextNode = hasPromptSource
     ? allNodes.find((n) => n.id === upstreamTextEdge!.source)
     : null;
-  const upstreamText = ((upstreamTextNode?.data.prompt as string) ?? "").trim();
+  // A Prompt list keeps its text in listItems[] (data.prompt stays empty),
+  // so read selected text items from list sources and only fall back to
+  // data.prompt for plain text nodes. This is what lets the prompt preview
+  // render and the Generate gate pass when a list is connected.
+  const upstreamTextPrompts = upstreamTextNode
+    ? (upstreamTextNode.data.type === "list"
+        ? collectSelectedListTextPrompts(upstreamTextNode as { id: string; data: Record<string, unknown> })
+        : [((upstreamTextNode.data.prompt as string | undefined) ?? "").trim()].filter(Boolean))
+    : [];
+  const upstreamText = upstreamTextPrompts.join("\n");
 
   const currentModel = MODEL_OPTIONS.find((m) => m.key === modelKey) ?? MODEL_OPTIONS[0];
 
@@ -138,12 +147,10 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
 
   const promptCount = (() => {
     if (!upstreamTextNode) return 1;
-    const items = upstreamTextNode.data.listItems;
-    if (Array.isArray(items)) {
-      if (Array.isArray(upstreamTextNode.data.listSelectedIndexes) && upstreamTextNode.data.listSelectedIndexes.length > 0) {
-        return upstreamTextNode.data.listSelectedIndexes.length;
-      }
-      return items.length;
+    if (upstreamTextNode.data.type === "list") {
+      // Count the actual text prompts the dispatch engine will use so the
+      // batch badge matches execution exactly.
+      return Math.max(1, upstreamTextPrompts.length);
     }
     return 1;
   })();
