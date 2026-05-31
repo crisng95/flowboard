@@ -27,13 +27,14 @@ from typing import Any, Optional
 
 import httpx
 
+from flowboard.config import FLOW_API_KEY as _FLOW_API_KEY
+
 logger = logging.getLogger(__name__)
 
 
 # Google Flow's public API key — appears verbatim in every aisandbox-pa
-# request URL Flow web emits. Not a secret; documented here so we don't
-# need to plumb it through from the extension on every call.
-_FLOW_API_KEY = "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY"
+# request URL Flow web emits. Not a private secret, but sourced from config
+# (env-overridable via FLOW_API_KEY) so it can be rotated without a code change.
 _FLOW_CREDITS_URL = "https://aisandbox-pa.googleapis.com/v1/credits"
 # Minimum gap between paygate-tier refreshes when the same Bearer token
 # is re-delivered. Tier rarely changes; 60 s is fine for AccountPanel

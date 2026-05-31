@@ -50,32 +50,3 @@ def get_media_status(media_id: str):
             content={"available": False, "has_url": False, "reason": "invalid_id"},
         )
     return media_service.status(media_id)
-
-
-@api_router.get("/_debug/assets")
-def debug_assets():
-    """Dev-only dump of every Asset row so we can see what URLs the extension
-    has actually pushed to the agent. Remove once media flow is stable.
-    """
-    from sqlmodel import select as _select
-
-    from flowboard.db import get_session
-    from flowboard.db.models import Asset
-
-    with get_session() as s:
-        rows = s.exec(_select(Asset)).all()
-        return {
-            "count": len(rows),
-            "rows": [
-                {
-                    "id": r.id,
-                    "media_id": r.uuid_media_id,
-                    "has_url": bool(r.url),
-                    "url_head": (r.url or "")[:80] if r.url else None,
-                    "mime": r.mime,
-                    "cached": bool(r.local_path),
-                    "node_id": r.node_id,
-                }
-                for r in rows
-            ],
-        }

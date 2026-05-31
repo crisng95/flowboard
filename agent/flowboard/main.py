@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Header, Request as FastAPIRequest
 from fastapi.middleware.cors import CORSMiddleware
 
-from flowboard.config import WS_HOST
+from flowboard.config import WS_HOST, CORS_ALLOWED_ORIGINS
 from flowboard.db import get_session, init_db
 from flowboard.db.models import Request
 from flowboard.routes import activity, auth, boards, chat, edges, llm, media, nodes, plans, projects, prompt, upload, vision, control_plane
@@ -76,9 +76,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Flowboard Agent", version="0.0.2", lifespan=lifespan)
 
+# Restrict cross-origin access to an explicit allowlist (configurable via
+# FLOWBOARD_CORS_ORIGINS). The previous wildcard `["*"]` combined with
+# allow_credentials=True is invalid per the CORS spec and broadens the attack
+# surface, so we pin specific origins and keep credentials enabled only for
+# those.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
