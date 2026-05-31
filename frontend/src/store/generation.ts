@@ -7,6 +7,7 @@ import {
   createEdge,
   getRequest,
   patchNode,
+  type RequestDTO,
 } from "../api/client";
 import { useBoardStore, type FlowNode } from "./board";
 import { supabase } from "../cloud/supabase";
@@ -31,6 +32,106 @@ function commitNodeData(rfId: string, patch: Record<string, unknown>): void {
   patchNode(dbId, { data: patch }).catch((err) => {
     console.warn(`[Flowboard] failed to persist node data for ${rfId}`, err);
   });
+}
+
+// Shared poll-loop constants/behaviour. The poll interval and network-retry
+// cap used to be duplicated (with subtly different values + a zombie loop in
+// refineImage). Centralising them keeps every poller cancellable and bounded.
+const POLL_INTERVAL_MS = 1500;
+const POLL_MAX_NETWORK_RETRIES = 8;
+
+type PollStoreApi = {
+  get: () => GenerationState;
+  set: (
+    update: Partial<GenerationState> | ((s: GenerationState) => Partial<GenerationState>),
+  ) => void;
+};
+
+/**
+ * pollRequest — one cancellable, retry-capped poll loop shared by the
+ * edit-derived (Part/Variant) and refine flows. Fixes the previous
+ * refineImage "zombie" loop (no cancel guard, no retry cap) and the
+ * edit-derived loop that mapped `canceled` → error instead of idle.
+ *
+ * Lifecycle / guarantees:
+ *   - registers `active[rfId]` before the first tick and clears it on any
+ *     terminal outcome (so cancelGeneration / node deletion stops it);
+ *   - every tick first checks `active[rfId]` and bails if the entry was
+ *     removed (cancel/delete) — no resurrection;
+ *   - caps consecutive network errors at POLL_MAX_NETWORK_RETRIES;
+ *   - `done` is delegated to `onDone(req)`; `failed`/`timeout` → onError;
+ *     `canceled` → node idle (NOT error); `queued`/`running` → keep polling.
+ *
+ * `onDone` owns clearing `active[rfId]` for the success path (callers persist
+ * node-specific result shapes there). All non-success terminal paths clear it
+ * here.
+ */
+function pollRequest(
+  store: PollStoreApi,
+  rfId: string,
+  requestId: number,
+  handlers: {
+    onDone: (req: RequestDTO) => void;
+    onError: (errMsg: string) => void;
+    firstDelayMs?: number;
+  },
+): void {
+  const { get, set } = store;
+  let networkRetries = 0;
+
+  const clearActive = () =>
+    set((s) => {
+      const next = { ...s.active };
+      delete next[rfId];
+      return { active: next };
+    });
+
+  const reschedule = (delay: number) => {
+    const timerId = setTimeout(tick, delay);
+    set((s) => ({ active: { ...s.active, [rfId]: { requestId, timerId } } }));
+  };
+
+  async function tick() {
+    // Cancelled (or node deleted) while we slept → stop, don't resurrect.
+    if (get().active[rfId] === undefined) return;
+    try {
+      const req = await getRequest(requestId);
+      networkRetries = 0;
+      if (req.status === "running" || req.status === "queued") {
+        useBoardStore.getState().updateNodeData(rfId, { status: "running" });
+        reschedule(POLL_INTERVAL_MS);
+      } else if (req.status === "done") {
+        handlers.onDone(req);
+      } else if (req.status === "canceled") {
+        // User cancel — clear in-flight state, leave the node idle (NOT error).
+        commitNodeData(rfId, { status: "idle" });
+        clearActive();
+      } else {
+        // failed | timeout
+        const errMsg =
+          req.status === "timeout"
+            ? `Timed out after 5 minutes (${req.error ?? "video_timeout"})`
+            : (req.error ?? "generation_failed");
+        commitNodeData(rfId, { status: "error", error: errMsg });
+        handlers.onError(errMsg);
+        clearActive();
+      }
+    } catch (err) {
+      networkRetries += 1;
+      if (networkRetries >= POLL_MAX_NETWORK_RETRIES) {
+        const msg = err instanceof Error ? err.message : "network error";
+        commitNodeData(rfId, { status: "error", error: msg });
+        handlers.onError(msg);
+        clearActive();
+        return;
+      }
+      reschedule(POLL_INTERVAL_MS);
+    }
+  }
+
+  // Register active BEFORE the first tick so the guard sees a live entry.
+  set((s) => ({ active: { ...s.active, [rfId]: { requestId, timerId: null } } }));
+  reschedule(handlers.firstDelayMs ?? POLL_INTERVAL_MS);
 }
 
 interface GenerationState {
@@ -1674,89 +1775,48 @@ async function dispatchEditDerived(
   // the top of poll() bails if the entry is undefined, which is the
   // bug we hit first time we wired dispatchMultiview.
   const requestId = reqDto.id;
-  set((s) => ({
-    active: { ...s.active, [rfId]: { requestId, timerId: null } },
-  }));
 
-  const MAX_RETRIES = 8;
-  let retries = 0;
-
-  const poll = async () => {
-    if (get().active[rfId] === undefined) return;
-    try {
-      const req = await getRequest(requestId);
-      retries = 0;
-      if (req.status === "running" || req.status === "queued") {
-        useBoardStore.getState().updateNodeData(rfId, { status: "running" });
-        const t = setTimeout(poll, 1500);
-        set((s) => ({
-          active: { ...s.active, [rfId]: { requestId, timerId: t } },
-        }));
-      } else if (req.status === "done") {
-        const result = (req.result ?? {}) as Record<string, unknown>;
-        const mapped = mapResult(result);
-        useBoardStore.getState().updateNodeData(rfId, {
+  pollRequest({ get, set }, rfId, requestId, {
+    firstDelayMs: 800,
+    onDone: (req) => {
+      const result = (req.result ?? {}) as Record<string, unknown>;
+      const mapped = mapResult(result);
+      const renderedAt = new Date().toISOString();
+      useBoardStore.getState().updateNodeData(rfId, {
+        status: "done",
+        mediaId: mapped.mediaId,
+        mediaIds: mapped.mediaIds,
+        slotErrors: mapped.slotErrors,
+        aspectRatio,
+        renderedAt,
+        error: mapped.partialError ?? undefined,
+        ...mapped.extra,
+      });
+      const dbId = parseInt(rfId, 10);
+      if (!isNaN(dbId)) {
+        patchNode(dbId, {
           status: "done",
-          mediaId: mapped.mediaId,
-          mediaIds: mapped.mediaIds,
-          slotErrors: mapped.slotErrors,
-          aspectRatio,
-          renderedAt: new Date().toISOString(),
-          error: mapped.partialError ?? undefined,
-          ...mapped.extra,
-        });
-        const dbId = parseInt(rfId, 10);
-        if (!isNaN(dbId)) {
-          patchNode(dbId, {
-            status: "done",
-            data: {
-              mediaId: mapped.mediaId ?? null,
-              mediaIds: mapped.mediaIds,
-              slotErrors: mapped.slotErrors ?? null,
-              aspectRatio,
-              renderedAt: new Date().toISOString(),
-              error: mapped.partialError ?? null,
-              ...mapped.extra,
-            },
-          }).catch(() => {});
-        }
-        set((s) => {
-          const next = { ...s.active };
-          delete next[rfId];
-          return { active: next };
-        });
-      } else {
-        commitNodeData(rfId, {
-          status: "error",
-          error: req.error ?? `${requestType}_failed`,
-        });
-        set((s) => {
-          const next = { ...s.active };
-          delete next[rfId];
-          return { active: next, error: req.error ?? "Dispatch failed" };
-        });
+          data: {
+            mediaId: mapped.mediaId ?? null,
+            mediaIds: mapped.mediaIds,
+            slotErrors: mapped.slotErrors ?? null,
+            aspectRatio,
+            renderedAt,
+            error: mapped.partialError ?? null,
+            ...mapped.extra,
+          },
+        }).catch(() => {});
       }
-    } catch {
-      retries++;
-      if (retries >= MAX_RETRIES) {
-        commitNodeData(rfId, {
-          status: "error",
-          error: "network_unavailable",
-        });
-        set((s) => {
-          const next = { ...s.active };
-          delete next[rfId];
-          return { active: next, error: "Network unavailable" };
-        });
-        return;
-      }
-      const t = setTimeout(poll, 1500);
-      set((s) => ({
-        active: { ...s.active, [rfId]: { requestId, timerId: t } },
-      }));
-    }
-  };
-  setTimeout(poll, 800);
+      set((s) => {
+        const next = { ...s.active };
+        delete next[rfId];
+        return { active: next };
+      });
+    },
+    onError: (errMsg) => {
+      set({ error: errMsg });
+    },
+  });
 }
 
 export const useGenerationStore = create<GenerationState>((set, get) => ({
@@ -2430,98 +2490,53 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       return;
     }
 
-    // Reuse the same poll loop by manually wiring active entry; copy-paste of
-    // dispatchGeneration's poller would be loud, so we do a minimal wait here.
+    // One cancellable, retry-capped poll loop (shared helper). This replaces
+    // the previous bespoke loop that had NO cancel guard and NO retry cap —
+    // a zombie that resurrected itself on every getRequest resolve and leaked
+    // timers on a deleted node.
     const requestId = reqDto.id;
-    set((s) => ({
-      active: { ...s.active, [rfId]: { requestId, timerId: null } },
-    }));
-
-    const poll = async () => {
-      try {
-        const req = await getRequest(requestId);
-        if (req.status === "running" || req.status === "queued") {
-          useBoardStore.getState().updateNodeData(rfId, { status: req.status });
-          const t = setTimeout(poll, 1500);
-          set((s) => ({
-            active: { ...s.active, [rfId]: { requestId, timerId: t } },
-          }));
-          return;
-        }
-        if (req.status === "done") {
-          const mediaIds = (req.result["media_ids"] as string[] | undefined) ?? [];
-          const mediaId = mediaIds[0];
-          // edit_image still routes through the user's image model setting.
-          const stampedImageModel = req.params["image_model"] as string | undefined;
-          useBoardStore.getState().updateNodeData(rfId, {
-            status: "done",
-            mediaId,
-            mediaIds,
-            aspectRatio: opts.aspectRatio,
-            renderedAt: new Date().toISOString(),
-            ...(stampedImageModel ? { imageModel: stampedImageModel } : {}),
-          });
-          const dbId = parseInt(rfId, 10);
-          if (!isNaN(dbId) && mediaId) {
-            // Backend merges `data` — ship the new state including
-            // prompt so it survives reload (regression fix: pre-Phase 20
-            // the patchNode payload included prompt; the "only deltas"
-            // refactor dropped it on the assumption prompt was already
-            // persisted, but the dispatch flow never wrote it to backend).
-            patchNode(dbId, {
-              data: {
-                prompt: opts.prompt,
-                mediaId,
-                mediaIds,
-                variantCount: 1,
-                aspectRatio: opts.aspectRatio,
-                renderedAt: new Date().toISOString(),
-                ...(stampedImageModel ? { imageModel: stampedImageModel } : {}),
-              },
-            }).catch(() => {});
-          }
-          set((s) => {
-            const next = { ...s.active };
-            delete next[rfId];
-            return { active: next };
-          });
-          return;
-        }
-        if (req.status === "canceled") {
-          useBoardStore.getState().updateNodeData(rfId, { status: "idle" });
-          set((s) => {
-            const next = { ...s.active };
-            delete next[rfId];
-            return { active: next };
-          });
-          return;
-        }
-        // failed | timeout — treat as a hard error on the node card so
-        // the user sees something happened. 'timeout' is the auto-cancel
-        // after the 5-minute video-gen budget; tag the message so the
-        // user can tell auto-timeout apart from a real failure.
-        const errMsg =
-          req.status === "timeout"
-            ? `Timed out after 5 minutes (${req.error ?? "video_timeout"})`
-            : (req.error ?? "refine failed");
-        commitNodeData(rfId, {
-          status: "error",
-          error: errMsg,
+    pollRequest({ get, set }, rfId, requestId, {
+      firstDelayMs: 800,
+      onDone: (req) => {
+        const mediaIds = (req.result["media_ids"] as string[] | undefined) ?? [];
+        const mediaId = mediaIds[0];
+        // edit_image still routes through the user's image model setting.
+        const stampedImageModel = req.params["image_model"] as string | undefined;
+        const renderedAt = new Date().toISOString();
+        useBoardStore.getState().updateNodeData(rfId, {
+          status: "done",
+          mediaId,
+          mediaIds,
+          aspectRatio: opts.aspectRatio,
+          renderedAt,
+          ...(stampedImageModel ? { imageModel: stampedImageModel } : {}),
         });
+        const dbId = parseInt(rfId, 10);
+        if (!isNaN(dbId) && mediaId) {
+          // Backend merges `data` — ship the new state including prompt so it
+          // survives reload.
+          patchNode(dbId, {
+            data: {
+              prompt: opts.prompt,
+              mediaId,
+              mediaIds,
+              variantCount: 1,
+              aspectRatio: opts.aspectRatio,
+              renderedAt,
+              ...(stampedImageModel ? { imageModel: stampedImageModel } : {}),
+            },
+          }).catch(() => {});
+        }
         set((s) => {
           const next = { ...s.active };
           delete next[rfId];
-          return { active: next, error: errMsg };
+          return { active: next };
         });
-      } catch (err) {
-        const t = setTimeout(poll, 1500);
-        set((s) => ({
-          active: { ...s.active, [rfId]: { requestId, timerId: t } },
-        }));
-        console.warn("refine poll failed", err);
-      }
-    };
-    setTimeout(poll, 800);
+      },
+      onError: (errMsg) => {
+        set({ error: errMsg });
+      },
+    });
   },
 
 
