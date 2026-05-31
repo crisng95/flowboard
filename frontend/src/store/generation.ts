@@ -1,12 +1,14 @@
 import { create } from "zustand";
+import type { Edge } from "@xyflow/react";
 import {
   ensureBoardProject,
   createRequest,
   createNode,
+  createEdge,
   getRequest,
   patchNode,
 } from "../api/client";
-import { useBoardStore } from "./board";
+import { useBoardStore, type FlowNode } from "./board";
 import { supabase } from "../cloud/supabase";
 import { normalizeImageModelKey, useSettingsStore, type ImageModelKey } from "./settings";
 
@@ -509,6 +511,417 @@ export function resolveEdgeMediaSelection(targetRfId: string, edgeId: string): {
   return { mediaId: null, variantIdx: null, allVariants: [] };
 }
 
+/**
+ * Pure pairing logic for the Video-node batch fan-out. Extracted from
+ * `runNodeDirect` so it can be unit/property tested in isolation (the
+ * original inline version depends on board state, which is hard to test).
+ *
+ * Behaviour is intentionally identical to the previous inline code:
+ *   - `zip`:   pairs by position, producing `min(P, M)` pairs where
+ *              pair k = (prompts[k], refs[k]).
+ *   - `cross`: nested loop with prompts on the outer axis and refs on the
+ *              inner axis, producing `P * M` pairs where pair `i * M + j`
+ *              = (prompts[i], refs[j]).
+ *
+ * The returned `prompts`/`refs` arrays are always equal length. Callers
+ * apply any prompt post-processing (e.g. appending a camera instruction)
+ * AFTER calling this — order of operations is preserved from the original.
+ */
+export function buildVideoBatchPairs(
+  prompts: string[],
+  refs: string[],
+  mode: "zip" | "cross",
+): { prompts: string[]; refs: string[] } {
+  const finalPrompts: string[] = [];
+  const finalRefs: string[] = [];
+
+  if (mode === "zip") {
+    const minLength = Math.min(prompts.length, refs.length);
+    return {
+      prompts: prompts.slice(0, minLength),
+      refs: refs.slice(0, minLength),
+    };
+  }
+
+  for (const p of prompts) {
+    for (const r of refs) {
+      finalPrompts.push(p);
+      finalRefs.push(r);
+    }
+  }
+  return { prompts: finalPrompts, refs: finalRefs };
+}
+
+/**
+ * Shape of a single item in a List_Node's `data.listItems` for video results.
+ * Kept compatible with `normalizeListItemRecord` (same field set) so a
+ * placeholder/result item round-trips through normalization unchanged.
+ *
+ *   - `status: "pending"` → placeholder slot waiting for its render.
+ *   - `status: "done"`    → a successfully rendered video.
+ *   - `status: "error"`   → a failed slot (kept in place, `mediaId === null`).
+ */
+export type VideoListItem = {
+  id: string;
+  kind: "video";
+  title: string;
+  text: string | null;
+  mediaId: string | null;
+  flowMediaId: string | null;
+  mediaUrl: string | null;
+  imageUrl: string | null;
+  mime: "video/mp4";
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  status: "pending" | "done" | "error";
+  error?: string | null;
+};
+
+/**
+ * Result of building the `data` patch for a Batch_Result_List. The `listItems`
+ * array always has exactly `variantCount` entries (one per video slot).
+ */
+export type VideoResultListData = {
+  listItems: VideoListItem[];
+  listSelectedIndexes: number[];
+  mediaIds: string[];
+  flowMediaIds: string[];
+  variantCount: number;
+};
+
+/**
+ * Pure logic helper: build the placeholder `data` for a Batch_Result_List at
+ * the moment Generate is pressed in batch mode, BEFORE any video has rendered.
+ *
+ * Returns exactly `count` placeholder slots (`status: "pending"`, no media)
+ * that preserve order with the N prompts. The result fully replaces any prior
+ * `listItems` when reusing an existing list (Req 6.2) — it never appends.
+ *
+ * Extracted from `spawnVideoResultList` so it can be property-tested without
+ * touching the board store or React (mirrors `buildVideoBatchPairs`).
+ */
+export function buildPlaceholderListItems(
+  count: number,
+  titles: string[],
+): VideoResultListData {
+  const slotCount = Math.max(0, Math.trunc(count));
+  const listItems: VideoListItem[] = [];
+  for (let i = 0; i < slotCount; i += 1) {
+    listItems.push({
+      id: `video-slot-${i}`,
+      kind: "video",
+      title: titles[i] ?? `Video ${i + 1}`,
+      text: null,
+      mediaId: null,
+      flowMediaId: null,
+      mediaUrl: null,
+      imageUrl: null,
+      mime: "video/mp4",
+      width: null,
+      height: null,
+      duration: null,
+      status: "pending",
+    });
+  }
+  return {
+    listItems,
+    listSelectedIndexes: [],
+    mediaIds: [],
+    flowMediaIds: [],
+    variantCount: slotCount,
+  };
+}
+
+/**
+ * Pure logic helper: turn the worker's positional result arrays into the
+ * `data` patch for a Batch_Result_List once every video slot has resolved.
+ *
+ * The iteration is strictly positional over `mediaIds` — we NEVER pre-filter,
+ * so `listItems[i]` always lines up with `prompts[i]` (Req 3.1, 3.2). A slot
+ * is considered failed when `mediaIds[i]` is null/empty OR `slotErrors[i]` is
+ * non-null; such slots stay in place as `status: "error"` items rather than
+ * collapsing the list (Req 3.3, 3.4). The output therefore always has exactly
+ * `mediaIds.length` entries with `variantCount === mediaIds.length`, so the
+ * list is never empty when N ≥ 1 (Req 3.5, 3.6, 3.7). The returned
+ * `mediaIds`/`flowMediaIds` arrays carry ONLY the successful slots for
+ * downstream consumers / intake re-runs.
+ *
+ * Output depends solely on the positional contract, not on the video model,
+ * so Veo and Omni Flash produce identical results for identical input
+ * (Req 7.3). Extracted from the `dispatchGeneration` done-handler so it can be
+ * property-tested in isolation (mirrors `buildVideoBatchPairs`).
+ */
+export function buildVideoResultListItems(input: {
+  mediaIds: (string | null)[];
+  flowMediaIds: (string | null)[];
+  assetIds: (string | null)[];
+  slotErrors: (string | null)[] | null;
+  prompts: string[];
+}): VideoResultListData {
+  const { mediaIds, flowMediaIds, slotErrors } = input;
+  const listItems: VideoListItem[] = [];
+  const successMediaIds: string[] = [];
+  const successFlowMediaIds: string[] = [];
+
+  for (let i = 0; i < mediaIds.length; i += 1) {
+    const title = `Video ${i + 1}`;
+    const rawMediaId = mediaIds[i];
+    const mediaId =
+      typeof rawMediaId === "string" && rawMediaId.length > 0 ? rawMediaId : null;
+    const rawFlowMediaId = flowMediaIds[i];
+    const flowMediaId =
+      typeof rawFlowMediaId === "string" && rawFlowMediaId.length > 0
+        ? rawFlowMediaId
+        : null;
+    const slotError =
+      slotErrors && typeof slotErrors[i] === "string" && slotErrors[i]!.length > 0
+        ? slotErrors[i]
+        : null;
+
+    // A slot fails when it has no media OR the worker flagged it. Either way
+    // we keep the index so downstream slots don't shift (Req 3.3).
+    if (mediaId === null || slotError !== null) {
+      listItems.push({
+        id: `video-slot-${i}`,
+        kind: "video",
+        title,
+        text: null,
+        mediaId: null,
+        flowMediaId: null,
+        mediaUrl: null,
+        imageUrl: null,
+        mime: "video/mp4",
+        width: null,
+        height: null,
+        duration: null,
+        status: "error",
+        error: slotError,
+      });
+      continue;
+    }
+
+    // Successful slot: unique id prefers the flow media id, then the media id,
+    // then a positional fallback so dedupe/normalization never collapses two
+    // distinct slots (Req 3.5).
+    const id = flowMediaId ?? mediaId ?? `video-slot-${i}`;
+    listItems.push({
+      id,
+      kind: "video",
+      title,
+      text: null,
+      mediaId,
+      flowMediaId: flowMediaId ?? mediaId,
+      mediaUrl: mediaId,
+      imageUrl: null,
+      mime: "video/mp4",
+      width: null,
+      height: null,
+      duration: null,
+      status: "done",
+    });
+    successMediaIds.push(mediaId);
+    successFlowMediaIds.push(flowMediaId ?? mediaId);
+  }
+
+  return {
+    listItems,
+    listSelectedIndexes: [],
+    mediaIds: successMediaIds,
+    flowMediaIds: successFlowMediaIds,
+    variantCount: mediaIds.length,
+  };
+}
+
+/**
+ * Pure logic helper: find an existing Batch_Result_List that should be reused
+ * for a fresh batch run, instead of spawning a duplicate (Req 6.1, 6.3).
+ *
+ * Scans `edges` for the connection a batch run creates — `source === videoRfId`
+ * AND `sourceHandle === "source-video"` — whose `target` resolves to a node of
+ * type `list`. Returns that list node's rfId on the first match, or `null` when
+ * no such connection exists (so the caller creates a new list instead).
+ *
+ * The node type is read from `node.data.type` (the board model's canonical
+ * field), falling back to ReactFlow's `node.type`, mirroring `primaryNodeType`.
+ * Extracted from `spawnVideoResultList` so it can be property-tested without
+ * touching the board store or React (mirrors `buildVideoBatchPairs`).
+ */
+export function findReusableVideoResultList(
+  edges: Edge[],
+  videoRfId: string,
+  nodes: FlowNode[],
+): string | null {
+  for (const edge of edges) {
+    if (edge.source !== videoRfId) continue;
+    if (edge.sourceHandle !== "source-video") continue;
+    const target = nodes.find((node) => node.id === edge.target);
+    if (!target) continue;
+    if (primaryNodeType(target) === "list") return target.id;
+  }
+  return null;
+}
+
+/**
+ * Pure gating predicate: decide whether a Generate_Action should spawn a
+ * Batch_Result_List for the video branch.
+ *
+ * This mirrors EXACTLY the `hasBatchInputs` condition used in the video branch
+ * of `runNodeDirect` (`upstreamPrompts.length > 1 && startMediaIds.length > 1`)
+ * and is the single source of truth for that decision. A batch run (N > 1)
+ * requires BOTH more than one upstream prompt AND more than one start media id;
+ * any single-input configuration (which yields N = 1) returns `false`, so no
+ * list/edge is created and `batchResultListId` stays unset (Req 4.2, 4.3).
+ *
+ * Extracted so it can be property-tested without touching the board store or
+ * React (mirrors `buildVideoBatchPairs`).
+ */
+export function shouldSpawnVideoResultList(
+  upstreamPromptsLength: number,
+  startMediaIdsLength: number,
+): boolean {
+  return upstreamPromptsLength > 1 && startMediaIdsLength > 1;
+}
+
+// Layout constants for the auto-spawned Batch_Result_List. The list is dropped
+// just to the right of the Video_Node (whose default footprint is 620px wide)
+// with a small gutter so the two cards don't overlap on the canvas (Req 2.3).
+const VIDEO_NODE_DEFAULT_WIDTH = 620;
+const VIDEO_RESULT_LIST_GAP = 80;
+
+/**
+ * I/O orchestration helper: create (or reuse) the Batch_Result_List for a batch
+ * video run. Called from `runNodeDirect`'s `hasBatchInputs` branch IMMEDIATELY
+ * BEFORE `dispatchGeneration`, when N (`count`) is already known.
+ *
+ * Returns the rfId of the Batch_Result_List so the done-handler knows where to
+ * pour results. Throws when the list/edge cannot be created (no board, or a
+ * failed `createNode`/`createEdge`) so the caller can surface an explicit error
+ * and abort the dispatch (Req 2.7, 2.8).
+ *
+ * Behaviour (mirrors design "Components and Interfaces → (a)"):
+ *   1. Read `boardId`/`nodes`/`edges` from the board store; throw if no board.
+ *   2. Reuse (Req 6.1): if a `source-video` edge already wires the Video_Node
+ *      to a `list` node, reuse it — skip node/edge creation.
+ *   3/4. Otherwise create a `list` node beside the Video_Node and an edge
+ *      `source-video → target-video` (handles passed explicitly because
+ *      `createEdge` defaults `source_handle` to "source"), appending both to
+ *      the store (Req 2.1, 2.3, 2.4).
+ *   5. Replace the list's items with N fresh placeholders via
+ *      `buildPlaceholderListItems` → `updateNodeData` (immediate UI) +
+ *      `patchNode` (persist, non-fatal) (Req 2.2, 2.5, 6.2).
+ */
+export async function spawnVideoResultList(
+  videoRfId: string,
+  count: number,
+  titles: string[],
+): Promise<string> {
+  const board = useBoardStore.getState();
+  const { boardId, nodes, edges } = board;
+  if (boardId === null) {
+    throw new Error("spawn_video_result_list_no_board");
+  }
+
+  // Pure placeholder payload — built once and used to seed the new node and to
+  // replace items on reuse (full replacement, never append; Req 6.2).
+  const placeholderData = buildPlaceholderListItems(count, titles);
+  const listTitle = "Video Results";
+
+  // Step 2: reuse an existing Batch_Result_List wired via `source-video`.
+  let listRfId = findReusableVideoResultList(edges, videoRfId, nodes);
+
+  if (listRfId === null) {
+    // Step 3: create the list node beside the Video_Node.
+    const videoNode = nodes.find((entry) => entry.id === videoRfId);
+    const baseX = videoNode?.position.x ?? 0;
+    const baseY = videoNode?.position.y ?? 0;
+    const listX = Math.round(baseX + VIDEO_NODE_DEFAULT_WIDTH + VIDEO_RESULT_LIST_GAP);
+    const listY = Math.round(baseY);
+
+    const listDto = await createNode({
+      board_id: boardId,
+      type: "list",
+      x: listX,
+      y: listY,
+      data: {
+        type: "list",
+        title: listTitle,
+        lockedType: "video",
+        listViewMode: "grid",
+        listIntakeMode: "replace",
+        listSelectionMode: false,
+        nodeWidth: 580,
+        status: "running",
+        ...placeholderData,
+      },
+    });
+    listRfId = String(listDto.id);
+
+    useBoardStore.getState().setNodes([
+      ...useBoardStore.getState().nodes,
+      {
+        id: listRfId,
+        type: listDto.type,
+        position: { x: listDto.x, y: listDto.y },
+        data: {
+          type: listDto.type,
+          shortId: listDto.short_id,
+          title: (listDto.data["title"] as string | undefined) ?? listTitle,
+          status: "running",
+          listViewMode: "grid",
+          listIntakeMode: "replace",
+          listSelectionMode: false,
+          nodeWidth: 580,
+          ...placeholderData,
+        },
+      },
+    ]);
+
+    // Step 4: wire `source-video → target-video`. Handles MUST be passed
+    // explicitly — `createEdge` otherwise defaults `source_handle` to "source".
+    const videoDbId = parseInt(videoRfId, 10);
+    const listDbId = listDto.id;
+    if (isNaN(videoDbId)) {
+      throw new Error("spawn_video_result_list_bad_video_id");
+    }
+    const edgeDto = await createEdge({
+      board_id: boardId,
+      source_id: videoDbId,
+      target_id: listDbId,
+      kind: "video",
+      source_handle: "source-video",
+      target_handle: "target-video",
+    });
+    useBoardStore.getState().setEdges([
+      ...useBoardStore.getState().edges,
+      {
+        id: String(edgeDto.id),
+        source: String(edgeDto.source_id),
+        target: String(edgeDto.target_id),
+        sourceHandle: edgeDto.source_handle ?? "source-video",
+        targetHandle: edgeDto.target_handle ?? "target-video",
+        data: { sourceVariantIdx: edgeDto.source_variant_idx ?? null },
+      },
+    ]);
+  }
+
+  // Step 5: lay down (or replace) the N placeholder slots — immediate UI update
+  // plus a non-fatal persist so they survive an in-session reload (Req 2.2,
+  // 2.5, 6.2).
+  useBoardStore.getState().updateNodeData(listRfId, {
+    status: "running",
+    ...placeholderData,
+  });
+  const listDbId = parseInt(listRfId, 10);
+  if (!isNaN(listDbId)) {
+    patchNode(listDbId, { status: "running", data: { ...placeholderData } }).catch(() => {
+      // Non-fatal for the session: the in-memory store is already correct.
+    });
+  }
+
+  return listRfId;
+}
+
 async function runNodeDirect(
   get: () => GenerationState,
   rfId: string,
@@ -850,31 +1263,50 @@ async function runNodeDirect(
     const cameraMode = ((node.data.cameraMode as string | undefined) ?? "static") as keyof typeof VIDEO_CAMERA_INSTRUCTIONS;
     const cameraInstruction = VIDEO_CAMERA_INSTRUCTIONS[cameraMode] ?? "";
 
-    const hasBatchInputs = upstreamPrompts.length > 1 && startMediaIds.length > 1;
+    const hasBatchInputs = shouldSpawnVideoResultList(
+      upstreamPrompts.length,
+      startMediaIds.length,
+    );
     const forceArraySource = startNode?.data.type === "list" && startMediaIds.length > 0;
     const batchMode = (node.data.batchMode as "zip" | "cross") || "cross";
 
     if (hasBatchInputs) {
-      let finalPrompts: string[] = [];
-      let finalRefs: string[] = [];
-
-      if (batchMode === "zip") {
-        const minLength = Math.min(upstreamPrompts.length, startMediaIds.length);
-        finalPrompts = upstreamPrompts.slice(0, minLength);
-        finalRefs = startMediaIds.slice(0, minLength);
-      } else {
-        for (const p of upstreamPrompts) {
-          for (const r of startMediaIds) {
-            finalPrompts.push(p);
-            finalRefs.push(r);
-          }
-        }
-      }
+      const { prompts: finalPrompts, refs: finalRefs } = buildVideoBatchPairs(
+        upstreamPrompts,
+        startMediaIds,
+        batchMode,
+      );
 
       // Add camera instruction to prompts
       const formattedPrompts = cameraInstruction 
         ? finalPrompts.map(p => `${p}. ${cameraInstruction}`)
         : finalPrompts;
+
+      // Create (or reuse) the Batch_Result_List BEFORE dispatching so the N
+      // placeholder slots show a pending state while the videos render
+      // (Req 2.1, 2.6). N = formattedPrompts.length is known precisely here.
+      let batchResultListId: string;
+      try {
+        const titles = formattedPrompts.map((_, i) => `Video ${i + 1}`);
+        batchResultListId = await spawnVideoResultList(
+          rfId,
+          formattedPrompts.length,
+          titles,
+        );
+      } catch {
+        // Req 2.7, 2.8: surface an explicit error and abort the run so we never
+        // dispatch a batch whose results have nowhere to land.
+        useBoardStore.getState().updateNodeData(rfId, {
+          status: "error",
+          error:
+            "Không tạo được danh sách kết quả (Batch Result List). Đã hủy lần sinh.",
+        });
+        return;
+      }
+
+      // Remember the target list so the done-handler knows where to pour the
+      // results (Req 4.3). Stored on the Video_Node before dispatch.
+      useBoardStore.getState().updateNodeData(rfId, { batchResultListId });
 
       await get().dispatchGeneration(rfId, {
         prompt: formattedPrompts[0],
@@ -1423,7 +1855,19 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
 
     // Optimistically update node — record variantCount so the placeholder
     // grid matches the eventual variant count even before generation finishes.
-    const variantCount = Math.max(1, Math.min(opts.variantCount ?? 1, 99));
+    // Video batch fan-out: one video per source image, so the placeholder
+    // count must equal N (the number of sources) rather than the generic
+    // image clamp. `batchSourceList` is narrowed to string[] in the truthy
+    // branch, so no non-null assertion is needed.
+    const batchSourceList =
+      opts.kind === "video" &&
+      Array.isArray(opts.sourceMediaIds) &&
+      opts.sourceMediaIds.length > 1
+        ? opts.sourceMediaIds
+        : undefined;
+    const variantCount = batchSourceList
+      ? Math.max(1, batchSourceList.length)
+      : Math.max(1, Math.min(opts.variantCount ?? 1, 99));
     useBoardStore.getState().updateNodeData(rfId, {
       status: "queued",
       prompt: opts.prompt,
@@ -1453,7 +1897,17 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           const ingredients = videoInputs.referenceImages.length > 0
             ? videoInputs.referenceImages
             : (videoInputs.startImage ? [videoInputs.startImage] : []);
-          if (ingredients.length === 0) {
+          // Batch fan-out: when the caller supplied a list of source images
+          // (list-node x N), forward them as start_media_ids so the backend
+          // SDK fans out one video per source — symmetric with the Veo path.
+          const batchSources =
+            Array.isArray(opts.sourceMediaIds) && opts.sourceMediaIds.length > 0
+              ? opts.sourceMediaIds
+              : undefined;
+          // Only block dispatch when there is no source at all: not batching
+          // AND no ingredient. In batch mode the SDK accepts empty
+          // ref_media_ids as long as start_media_ids is non-empty.
+          if (!batchSources && ingredients.length === 0) {
             useBoardStore.getState().updateNodeData(rfId, {
               status: "error",
               error: "no ingredients",
@@ -1464,19 +1918,28 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             });
             return;
           }
+          const omniParams: Record<string, unknown> = {
+            prompt: opts.prompt,
+            project_id: projectId,
+            ref_media_ids: ingredients,
+            duration_s: settings.omniFlashDuration,
+            aspect_ratio:
+              opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_PORTRAIT",
+            paygate_tier:
+              opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
+          };
+          if (batchSources) {
+            // Per-source images: the worker pairs start_media_ids[i] with
+            // prompts[i], producing N distinct videos.
+            omniParams.start_media_ids = batchSources;
+            if (opts.prompts && opts.prompts.length > 0) {
+              omniParams.prompts = opts.prompts;
+            }
+          }
           reqDto = await createRequest({
             type: "gen_video_omni",
             node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
-            params: {
-              prompt: opts.prompt,
-              project_id: projectId,
-              ref_media_ids: ingredients,
-              duration_s: settings.omniFlashDuration,
-              aspect_ratio:
-                opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_PORTRAIT",
-              paygate_tier:
-                opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
-            },
+            params: omniParams,
           });
         } else {
           // Veo i2v path — still validates "must have a single source
@@ -1737,6 +2200,38 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               }).catch(() => {
                 // Non-fatal: the in-memory state is still correct for this session.
               });
+            }
+            // Batch video: pour the positional results into the
+            // Batch_Result_List spawned at Generate time (Req 3.1-3.7,
+            // 7.1-7.2). The target list id was stamped onto the Video_Node
+            // before dispatch; read the CURRENT node so we pick up the
+            // latest data after the updateNodeData above. The fill is
+            // model-independent — it consumes only the positional
+            // media_ids / slot_errors contract shared by Veo and Omni Flash.
+            const rootNodeNow = useBoardStore.getState().nodes.find((x) => x.id === rfId);
+            const batchResultListId = rootNodeNow?.data.batchResultListId as string | undefined;
+            if ((opts.kind ?? "image") === "video" && batchResultListId) {
+              const listData = buildVideoResultListItems({
+                mediaIds,
+                flowMediaIds,
+                assetIds,
+                slotErrors,
+                prompts: opts.prompts ?? [opts.prompt],
+              });
+              useBoardStore.getState().updateNodeData(batchResultListId, {
+                status: "done",
+                ...listData,
+                renderedAt,
+              });
+              const listDbId = parseInt(batchResultListId, 10);
+              if (!isNaN(listDbId)) {
+                patchNode(listDbId, {
+                  status: "done",
+                  data: { ...listData, renderedAt },
+                }).catch(() => {
+                  // Non-fatal: the in-memory state is still correct for this session.
+                });
+              }
             }
             if ((opts.kind ?? "image") === "image" && mediaIds.length > 1 && !(opts as any).skipSpawningNodes) {
               const board = useBoardStore.getState();

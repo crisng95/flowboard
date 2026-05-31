@@ -11,7 +11,8 @@ import {
   Video,
   RefreshCw,
   Plus,
-  ChevronDown
+  ChevronDown,
+  AlertTriangle
 } from "lucide-react";
 
 import { type FlowNode } from "../../store/board";
@@ -31,6 +32,73 @@ const MAX_WIDTH = 700;
 const DEFAULT_WIDTH = 580;
 const BORDER_RADIUS = 16; // Smooth outer border radius: 16px (ReactFlow V12 Canvas V2 gold standard)
 const HOVER_LEAVE_DELAY = 200;
+
+/**
+ * VideoListThumb renders a playable video thumbnail for List_Item entries with
+ * kind === "video" (Req 5.1). It shows a poster/first frame before playback
+ * (Req 5.2), plays on hover (Req 5.3), and pauses + resets back to the poster
+ * when the cursor leaves WHILE playing (Req 5.4). When the cursor leaves while
+ * the video is not playing, it is a no-op (Req 5.5).
+ *
+ * The element is absolutely positioned to fill its (relative) parent container,
+ * so it can drop into both the grid view (aspect-square tile) and the list view
+ * (40px thumbnail) used by ListNode.
+ */
+export function VideoListThumb({
+  src,
+  poster,
+  fit,
+}: {
+  src: string;
+  poster?: string;
+  fit: "cover" | "contain";
+}) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [playing, setPlaying] = useState(false);
+
+  const handleMouseEnter = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Req 5.3: begin playback on hover. play() may return a promise in browsers;
+    // guard for environments (tests) where it does not.
+    const result = el.play();
+    if (result && typeof result.then === "function") {
+      result.then(() => setPlaying(true)).catch(() => {});
+    } else {
+      setPlaying(true);
+    }
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    // Req 5.5: only stop/reset to poster WHEN currently playing; otherwise no-op.
+    if (!playing) return;
+    const el = ref.current;
+    if (!el) return;
+    // Req 5.4: pause and rewind to the poster frame.
+    el.pause();
+    el.currentTime = 0;
+    setPlaying(false);
+  }, [playing]);
+
+  return (
+    <video
+      ref={ref}
+      src={src}
+      poster={poster}
+      muted
+      loop
+      playsInline
+      preload="metadata"
+      draggable={false}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      className={cn(
+        "absolute inset-0 size-full transition-all duration-200",
+        fit === "contain" ? "object-contain bg-black/40" : "object-cover"
+      )}
+    />
+  );
+}
 
 export function ListNode(props: NodeProps<FlowNode>) {
   const { id: rfId, data, selected } = props;
@@ -588,6 +656,11 @@ export function ListNode(props: NodeProps<FlowNode>) {
                 const url = isMedia && item.mediaId ? mediaUrl(String(item.mediaId)) : (item.mediaUrl as string);
                 const hasActiveSelections = listSelectedIndexes.length > 0;
                 const shouldDim = hasActiveSelections && !isSelected;
+                const itemStatus = typeof item.status === "string" ? item.status : undefined;
+                // Req 3.4: an errored video slot (status "error" or a non-pending slot
+                // that never produced a mediaId) renders an error frame instead of video.
+                const isVideoError = isItemVideo && itemStatus !== "pending" && (itemStatus === "error" || item.mediaId == null);
+                const videoPoster = typeof item.imageUrl === "string" ? item.imageUrl : undefined;
 
                 return (
                   <div
@@ -610,23 +683,37 @@ export function ListNode(props: NodeProps<FlowNode>) {
                           : "border-white/[0.04] hover:border-white/[0.12]"
                     )}
                   >
-                    {isMedia && url ? (
+                    {isVideoError ? (
+                      /* Req 3.4: error frame for a failed video slot, keeps the video badge */
                       <>
-                        <img
-                          src={url}
-                          alt={String(item.title)}
-                          draggable={false}
-                          className={cn(
-                            "absolute inset-0 size-full transition-all duration-200",
-                            imageFit === "contain" ? "object-contain bg-black/40" : "object-cover"
-                          )}
-                        />
-                        {isItemVideo && (
-                          <div className="absolute top-1 right-1 p-0.5 rounded bg-black/60 text-white/90">
-                            <Video size={10} />
-                          </div>
-                        )}
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-2 bg-[#1d1d1d] text-red-400/80">
+                          <AlertTriangle size={18} />
+                          <span className="text-[9px] text-white/50 text-center leading-snug line-clamp-2">
+                            {String(item.error || "Failed")}
+                          </span>
+                        </div>
+                        <div className="absolute top-1 right-1 p-0.5 rounded bg-black/60 text-white/90">
+                          <Video size={10} />
+                        </div>
                       </>
+                    ) : isItemVideo && url ? (
+                      /* Req 5.1: playable video thumbnail; Req 5.6: keep the video badge */
+                      <>
+                        <VideoListThumb src={url} poster={videoPoster} fit={imageFit} />
+                        <div className="absolute top-1 right-1 p-0.5 rounded bg-black/60 text-white/90">
+                          <Video size={10} />
+                        </div>
+                      </>
+                    ) : isMedia && url ? (
+                      <img
+                        src={url}
+                        alt={String(item.title)}
+                        draggable={false}
+                        className={cn(
+                          "absolute inset-0 size-full transition-all duration-200",
+                          imageFit === "contain" ? "object-contain bg-black/40" : "object-cover"
+                        )}
+                      />
                     ) : (
                       <div className="absolute inset-0 p-2 flex flex-col justify-between">
                         <Type size={12} className="text-white/40" />
@@ -664,6 +751,10 @@ export function ListNode(props: NodeProps<FlowNode>) {
                 const hasActiveSelections = listSelectedIndexes.length > 0;
                 const shouldDim = hasActiveSelections && !isSelected;
                 const isTextItem = item.kind === "text" || lockedType === "text";
+                const itemStatus = typeof item.status === "string" ? item.status : undefined;
+                // Req 3.4: an errored video slot renders an error frame instead of video.
+                const isVideoError = isItemVideo && itemStatus !== "pending" && (itemStatus === "error" || item.mediaId == null);
+                const videoPoster = typeof item.imageUrl === "string" ? item.imageUrl : undefined;
 
                 // Resolution mock/logic
                 const res = item.width && item.height 
@@ -715,7 +806,23 @@ export function ListNode(props: NodeProps<FlowNode>) {
                       /* Media (Image / Video) Layout */
                       <>
                         {/* Thumbnail */}
-                        {isMedia && url ? (
+                        {isVideoError ? (
+                          /* Req 3.4: error frame for a failed video slot, keeps the video badge */
+                          <div className="relative size-[40px] rounded-[6px] overflow-hidden bg-black/25 shrink-0 border border-white/[0.06] flex items-center justify-center text-red-400/80">
+                            <AlertTriangle size={16} />
+                            <div className="absolute bottom-0.5 right-0.5 p-0.5 rounded bg-black/60 text-white/90">
+                              <Video size={8} />
+                            </div>
+                          </div>
+                        ) : isItemVideo && url ? (
+                          /* Req 5.1: playable video thumbnail; Req 5.6: keep the video badge */
+                          <div className="relative size-[40px] rounded-[6px] overflow-hidden bg-black/25 shrink-0 border border-white/[0.06]">
+                            <VideoListThumb src={url} poster={videoPoster} fit={imageFit} />
+                            <div className="absolute bottom-0.5 right-0.5 p-0.5 rounded bg-black/60 text-white/90">
+                              <Video size={8} />
+                            </div>
+                          </div>
+                        ) : isMedia && url ? (
                           <div className="relative size-[40px] rounded-[6px] overflow-hidden bg-black/25 shrink-0 border border-white/[0.06]">
                             <img
                               src={url}
@@ -726,11 +833,6 @@ export function ListNode(props: NodeProps<FlowNode>) {
                                 imageFit === "contain" ? "object-contain bg-black/40" : "object-cover"
                               )}
                             />
-                            {isItemVideo && (
-                              <div className="absolute bottom-0.5 right-0.5 p-0.5 rounded bg-black/60 text-white/90">
-                                <Video size={8} />
-                              </div>
-                            )}
                           </div>
                         ) : (
                           <div className="size-[40px] rounded-[6px] bg-white/[0.04] flex items-center justify-center shrink-0 border border-white/[0.06]">

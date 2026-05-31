@@ -306,7 +306,11 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
     return showControls || hasEdge || connection.inProgress;
   };
 
-  const showVariantGrid = mediaIds.length > 1;
+  // Req 1.1, 1.2, 1.5: the video node always uses the single-video layout and
+  // only shows the first video (mediaIds[0]/mediaId), matching ImageGeneratorNode.
+  // mediaIds still retains all N entries in node.data (see derivation above) so
+  // the Batch_Result_List and downstream consumers keep access to every result.
+  const showVariantGrid = false;
   const visibleSlots = showVariantGrid ? mediaIds.length : 1;
   const currentModel = MODEL_OPTIONS.find((option) => option.key === videoModel) ?? MODEL_OPTIONS[0];
   const modeLabel = videoModel === "veo" ? QUALITY_LABELS[videoQuality] : `${omniFlashDuration}s`;

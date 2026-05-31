@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "lint": "tsc -b --noEmit"
+    "lint": "tsc -b --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
@@ -30,13 +32,18 @@
     "@tailwindcss/typography": "^0.5.19",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/cli": "^2.11.2",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.1.0",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.2",
     "autoprefixer": "^10.5.0",
+    "fast-check": "^3.23.2",
+    "jsdom": "^25.0.1",
     "postcss": "^8.5.14",
     "tailwindcss": "^3.4.19",
     "typescript": "^5.6.2",
-    "vite": "^5.4.9"
+    "vite": "^5.4.9",
+    "vitest": "^2.1.9"
   }
 }

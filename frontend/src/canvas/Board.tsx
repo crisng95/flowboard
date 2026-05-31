@@ -395,6 +395,12 @@ export function Board({
   const TEXT_SOURCE_TYPES = new Set(["text", "list"]);
   const IMAGE_SOURCE_TYPES = new Set(["upload", "reference", "variant", "add_reference", "list"]);
   const VIDEO_IMAGE_SOURCE_TYPES = new Set(["upload", "reference", "variant", "add_reference", "list", "video"]);
+  // Sources that can actually deliver video items to a List's `target-video`
+  // intake: a Video_Node (via `source-video`) emits video items, and a `list`
+  // may hold video items the intake filters by `kind === "video"`. Any other
+  // source type's intake filter would yield nothing for a video target, so we
+  // block that connection up front to avoid a dead edge (Req 8.5).
+  const VIDEO_TARGET_SOURCE_TYPES = new Set(["video", "list"]);
 
   const isValidConnection = useCallback(
     (connection: Connection | Edge) => {
@@ -410,6 +416,12 @@ export function Board({
       }
       if (targetHandle === "target-image") {
         return IMAGE_SOURCE_TYPES.has(sourceType);
+      }
+      if (targetHandle === "target-video") {
+        // Only allow sources whose intake would actually receive video items
+        // (Req 8.3/8.4). Other sources (e.g. text/note) would filter down to
+        // nothing, so reject to prevent a dead connection (Req 8.5).
+        return VIDEO_TARGET_SOURCE_TYPES.has(sourceType);
       }
       if (
         targetHandle === "target-start-image" ||
