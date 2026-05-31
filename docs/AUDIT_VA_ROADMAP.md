@@ -202,7 +202,7 @@ Quy ước mức độ: **P0** = blocker an toàn/bảo mật/pháp lý · **P1*
 | 1.3 | **Sửa ánh xạ ID** — dùng ID server-authoritative hoặc full-width; `resolveToUuid` *throw* khi miss; thêm phát hiện va chạm; unit test adapter | M | Cao | ✅ Xong (Batch C, `8c19f1c`) |
 | 1.4 | Hàng đợi bền vững: re-enqueue row `queued` khi boot; reaper job `running` quá hạn; retry có backoff cho lỗi tạm thời | M | Cao |
 | 1.4 | Hàng đợi bền vững: re-enqueue row `queued` khi boot; reaper job `running` quá hạn; retry có backoff cho lỗi tạm thời | M | Cao | ⬜ Chưa (Batch D) |
-| 1.5 | `refreshBoardState` **merge thay vì full-replace**; giữ undo stack; pipeline chỉ refresh delta trạng thái | M | Cao | ⬜ Chưa (Batch D) |
+| 1.5 | `refreshBoardState` **merge thay vì full-replace**; giữ undo stack; pipeline chỉ refresh delta trạng thái | M | Cao | ✅ Xong (`d4fe684`) — bảo toàn node đang poll + giữ undo history; có test |
 | 1.6 | Thêm `boto3`/`botocore` vào manifest + chạy presign qua threadpool | S | Cao | ✅ Xong (Batch A, `40de013`) — dep đã thêm; presign là crypto cục bộ (không cần threadpool), đã cache client |
 | 1.7 | Đưa **Alembic/Supabase CLI migrations** + version table; thêm CHECK/enum cho status/type; đồng bộ vocabulary node-type giữa `routes/nodes.py` và `pipeline_executor` | M | Cao | ⬜ Chưa (Batch D) |
 | 1.8 | Persist `batchResultListId`; thêm retry cap + surface lỗi cho `pipeline.ts` | S | TB | ✅ Xong (Batch A+B) |
