@@ -80,7 +80,7 @@ extensionRoutes.post('/extension/claim', async (c) => {
   if (!requestId) return c.json(job);
 
   const hydrated = await db.get<Record<string, unknown>[]>('/rest/v1/requests', {
-    id: eq.,
+    id: `eq.${requestId}`,
     select: '*',
     limit: 1,
   });
