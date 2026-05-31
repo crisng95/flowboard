@@ -24,11 +24,15 @@ Worker là Control Plane chính thức (production). FastAPI control-plane sẽ 
 
 ## Việc còn lại (chưa làm — cần phối hợp deploy/quyết định)
 
-3. **Xác nhận ngữ nghĩa `create_or_reset_request`**: hoặc thêm route Worker gọi RPC này, hoặc xác nhận `POST /api/requests` (INSERT thẳng) là đủ và bỏ ngữ nghĩa reset job lỗi/hủy. → cần quyết định sản phẩm.
-4. **Trỏ Tauri desktop build về Worker**: `api/client.ts` hiện gọi `127.0.0.1:8101` khi chạy Tauri. Phải đổi nhánh này (hoặc bỏ build Tauri theo ADR-0001 cloud-first). → bước lớn nhất.
+3. **Xác nhận ngữ nghĩa `create_or_reset_request`**: ✅ ĐÃ XONG — Worker `POST /api/requests` giờ gọi RPC `create_or_reset_request` (giữ ngữ nghĩa reset job lỗi/hủy keyed trên `(user_id, idempotency_key)`), parity hoàn toàn với FastAPI. Ownership check + project-id hydration giữ nguyên.
+4. **Trỏ Tauri desktop build về Worker**: `api/client.ts` khi chạy Tauri gọi Rust `invoke()` (backend desktop trong `src-tauri/`, KHÔNG phải FastAPI) + fallback fetch `127.0.0.1:8101`. **Đây là quyết định kiến trúc desktop, không phải đổi base URL đơn thuần** — ép gọi Worker ngay sẽ phá desktop. Để lại cho giai đoạn khai tử agent / quyết định có giữ bản Tauri. Web build đã độc lập Worker.
 5. **Chuyển extension khỏi local-bridge**: đảm bảo người dùng dùng cloud-worker mode (URL `api.flowboard.bond`).
 6. **Gỡ router control-plane khỏi FastAPI** (sau khi traffic = 0): xoá `app.include_router(control_plane.router)` + import ở `main.py:12`; xoá `routes/control_plane.py`, `services/control_plane.py`, tests liên quan. Giữ lại `routes/media.py`, `routes/upload.py`, `services/media.py`, worker/processor, extension_worker, WS server, `/api/ext/callback` (không phụ thuộc control_plane_service).
-7. **Deploy Worker**: `wrangler deploy` + set secrets (`wrangler secret put SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / R2_ENDPOINT / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY`). Sau khi rotate key ở ADR-0001, dùng giá trị mới.
+7. **Deploy Worker**: `wrangler deploy` + set secrets (`wrangler secret put SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / R2_ENDPOINT / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY`). Sau khi rotate key ở ADR-0001, dùng giá trị mới. Cron Trigger đã khai báo trong `wrangler.toml` nên `wrangler deploy` sẽ tự đăng ký.
+
+## Trạng thái parity hiện tại
+
+Sau các fix trong nhánh này, Cloudflare Worker đã **parity đầy đủ** với FastAPI control-plane (claim/heartbeat/progress/complete/fail, pairing register/rotate, sign-read/sign-upload/upload, create_or_reset_request, cron recover-stale) và còn **vượt** (upload qua R2 binding + head-verify, confirm-upload, extension/project). Worker compile sạch (`tsc --noEmit` exit 0) và test xanh (5/5). → Worker đã sẵn sàng làm Control Plane production độc lập; phần còn lại thuần là deploy + chuyển client + dọn FastAPI.
 
 ## Lưu ý kỹ thuật
 
