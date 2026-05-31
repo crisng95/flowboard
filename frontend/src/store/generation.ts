@@ -14,6 +14,25 @@ import { normalizeImageModelKey, useSettingsStore, type ImageModelKey } from "./
 
 type PollEntry = { requestId: number; timerId: ReturnType<typeof setTimeout> | null };
 
+/**
+ * commitNodeData — pair an in-memory node-data update with a best-effort
+ * backend persist so the two don't silently diverge. Use this for state that
+ * MUST survive a page reload (notably terminal error/timeout states, which
+ * the original poll loops only wrote in-memory and thus lost on reload).
+ *
+ * The persist is fire-and-forget (the in-memory store is the source of truth
+ * for the live session); failures are logged rather than swallowed silently so
+ * divergence is at least observable in the console.
+ */
+function commitNodeData(rfId: string, patch: Record<string, unknown>): void {
+  useBoardStore.getState().updateNodeData(rfId, patch);
+  const dbId = parseInt(rfId, 10);
+  if (Number.isNaN(dbId)) return;
+  patchNode(dbId, { data: patch }).catch((err) => {
+    console.warn(`[Flowboard] failed to persist node data for ${rfId}`, err);
+  });
+}
+
 interface GenerationState {
   active: Record<string, PollEntry>;
   openDialog: { rfId: string | null; prompt: string };
@@ -1287,8 +1306,10 @@ async function runNodeDirect(
       }
 
       // Remember the target list so the done-handler knows where to pour the
-      // results (Req 4.3). Stored on the Video_Node before dispatch.
-      useBoardStore.getState().updateNodeData(rfId, { batchResultListId });
+      // results (Req 4.3). Persisted (not just in-memory) so a reload/refresh
+      // between dispatch and completion doesn't orphan the batch video results
+      // with nowhere to land.
+      commitNodeData(rfId, { batchResultListId });
 
       await get().dispatchGeneration(rfId, {
         prompt: formattedPrompts[0],
@@ -1639,7 +1660,7 @@ async function dispatchEditDerived(
       params,
     });
   } catch (err) {
-    useBoardStore.getState().updateNodeData(rfId, {
+    commitNodeData(rfId, {
       status: "error",
       error: err instanceof Error ? err.message : "dispatch_failed",
     });
@@ -1705,7 +1726,7 @@ async function dispatchEditDerived(
           return { active: next };
         });
       } else {
-        useBoardStore.getState().updateNodeData(rfId, {
+        commitNodeData(rfId, {
           status: "error",
           error: req.error ?? `${requestType}_failed`,
         });
@@ -1718,7 +1739,7 @@ async function dispatchEditDerived(
     } catch {
       retries++;
       if (retries >= MAX_RETRIES) {
-        useBoardStore.getState().updateNodeData(rfId, {
+        commitNodeData(rfId, {
           status: "error",
           error: "network_unavailable",
         });
@@ -2038,7 +2059,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         });
       }
     } catch (err) {
-      useBoardStore.getState().updateNodeData(rfId, { status: "error", error: err instanceof Error ? err.message : "request failed" });
+      commitNodeData(rfId, { status: "error", error: err instanceof Error ? err.message : "request failed" });
       set({ error: err instanceof Error ? err.message : "Generation failed" });
       return;
     }
@@ -2298,7 +2319,10 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               req.status === "timeout"
                 ? `Timed out after 5 minutes (${req.error ?? "video_timeout"})`
                 : (req.error ?? "unknown");
-            useBoardStore.getState().updateNodeData(rfId, { status: "error", error: errMsg });
+            // Persist the terminal error so it survives reload — the old
+            // in-memory-only update reverted to the last-persisted state on
+            // refresh, making a failed run look like it never happened.
+            commitNodeData(rfId, { status: "error", error: errMsg });
             set((s) => {
               const next = { ...s.active };
               delete next[rfId];
@@ -2307,8 +2331,9 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           } else if (req.status === "canceled") {
             // User-initiated cancel from the activity bell. Don't
             // stamp the node as 'error' — clear the in-flight state
-            // and leave whatever the node was showing before.
-            useBoardStore.getState().updateNodeData(rfId, { status: "idle" });
+            // and leave whatever the node was showing before. Persist so a
+            // reload doesn't resurrect a stale "running"/"queued" status.
+            commitNodeData(rfId, { status: "idle" });
             set((s) => {
               const next = { ...s.active };
               delete next[rfId];
@@ -2328,7 +2353,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           networkRetries += 1;
           if (networkRetries >= MAX_NETWORK_RETRIES) {
             const msg = err instanceof Error ? err.message : "network error";
-            useBoardStore.getState().updateNodeData(rfId, { status: "error", error: msg });
+            commitNodeData(rfId, { status: "error", error: msg });
             set((s) => {
               const next = { ...s.active };
               delete next[rfId];
@@ -2397,7 +2422,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         },
       });
     } catch (err) {
-      useBoardStore.getState().updateNodeData(rfId, {
+      commitNodeData(rfId, {
         status: "error",
         error: err instanceof Error ? err.message : "refine failed",
       });
@@ -2479,7 +2504,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           req.status === "timeout"
             ? `Timed out after 5 minutes (${req.error ?? "video_timeout"})`
             : (req.error ?? "refine failed");
-        useBoardStore.getState().updateNodeData(rfId, {
+        commitNodeData(rfId, {
           status: "error",
           error: errMsg,
         });
