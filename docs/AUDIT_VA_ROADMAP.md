@@ -197,9 +197,9 @@ Quy ước mức độ: **P0** = blocker an toàn/bảo mật/pháp lý · **P1*
 
 | # | Hạng mục | Effort | Impact | Trạng thái |
 |---|----------|--------|--------|-----------|
-| 1.1 | **Hợp nhất 3 vòng poll** thành một `pollRequest()` cancellable, có retry cap + terminal switch dùng chung (sửa zombie `refineImage` + ngữ nghĩa canceled/timeout) | M | Cao | ⬜ Chưa (Batch C) |
+| 1.1 | **Hợp nhất 3 vòng poll** thành một `pollRequest()` cancellable, có retry cap + terminal switch dùng chung (sửa zombie `refineImage` + ngữ nghĩa canceled/timeout) | M | Cao | ✅ Xong (Batch C, `f0d2bd8`) — refineImage + dispatchEditDerived dùng `pollRequest`; dispatchGeneration giữ loop riêng có chủ đích |
 | 1.2 | **Persist trạng thái lỗi/timeout** qua `patchNode`; bọc `updateNodeData` critical bằng `commitNodeData` (set + patch + surface lỗi) | M | Cao | ✅ Xong (Batch B, `276a812`) |
-| 1.3 | **Sửa ánh xạ ID** — dùng ID server-authoritative hoặc full-width; `resolveToUuid` *throw* khi miss; thêm phát hiện va chạm; unit test adapter | M | Cao | ⬜ Chưa (Batch C) |
+| 1.3 | **Sửa ánh xạ ID** — dùng ID server-authoritative hoặc full-width; `resolveToUuid` *throw* khi miss; thêm phát hiện va chạm; unit test adapter | M | Cao | ✅ Xong (Batch C, `8c19f1c`) |
 | 1.4 | Hàng đợi bền vững: re-enqueue row `queued` khi boot; reaper job `running` quá hạn; retry có backoff cho lỗi tạm thời | M | Cao |
 | 1.4 | Hàng đợi bền vững: re-enqueue row `queued` khi boot; reaper job `running` quá hạn; retry có backoff cho lỗi tạm thời | M | Cao | ⬜ Chưa (Batch D) |
 | 1.5 | `refreshBoardState` **merge thay vì full-replace**; giữ undo stack; pipeline chỉ refresh delta trạng thái | M | Cao | ⬜ Chưa (Batch D) |
