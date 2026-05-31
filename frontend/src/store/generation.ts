@@ -1229,24 +1229,6 @@ async function runNodeDirect(
     const prompt = upstreamPrompts[0] || ((node.data.prompt as string | undefined) ?? "").trim();
     if (!prompt) throw new Error("video_node_missing_prompt");
 
-    console.log("[Flowboard][video-dispatch-ui]", {
-      rfId,
-      startEdgeId: startEdge?.id ?? null,
-      startNodeType: startNode ? primaryNodeType(startNode) : null,
-      startMediaIds,
-      startMediaId: startMediaIds[0] ?? null,
-      selectedIndexes: startNode?.data.type === "list" ? startNode.data.listSelectedIndexes ?? [] : null,
-      selectedListItems: startNode?.data.type === "list"
-        ? collectSelectedListMediaItems(startNode as { id: string; data: Record<string, unknown> }).map((item) => ({
-            id: item.id,
-            kind: item.kind,
-            mediaId: item.mediaId,
-            flowMediaId: item.flowMediaId,
-            title: item.title,
-          }))
-        : null,
-    });
-
     const videoModel = ((node.data.videoModel as string | undefined) ?? "veo") as "veo" | "omni_flash";
     const settings = useSettingsStore.getState();
     settings.setVideoModel(videoModel);
@@ -1980,13 +1962,6 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           if (opts.prompts && opts.prompts.length > 0) {
             videoParams.prompts = opts.prompts;
           }
-          console.log("[Flowboard][video-request-create]", {
-            rfId,
-            hasMulti,
-            startMediaId: startMediaId ?? null,
-            startMediaIds: startMediaIds ?? null,
-            videoParams,
-          });
           reqDto = await createRequest({
             type: "gen_video",
             node_id: isNaN(nodeDbId) ? undefined : nodeDbId,

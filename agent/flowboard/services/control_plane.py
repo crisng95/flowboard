@@ -39,8 +39,13 @@ class ControlPlaneService:
         return hashlib.sha256(secret.encode("utf-8")).hexdigest()
 
     def _get_s3_client(self):
-        """Build a boto3 client pointing at Cloudflare R2 using S3v4 signature protocol."""
-        return boto3.client(
+        """Build (once) a boto3 client pointing at Cloudflare R2 using the
+        S3v4 signature protocol. Cached on the instance — boto3 clients are
+        thread-safe for presign and rebuilding one per call is wasteful."""
+        cached = getattr(self, "_s3_client", None)
+        if cached is not None:
+            return cached
+        client = boto3.client(
             "s3",
             endpoint_url=R2_ENDPOINT,
             aws_access_key_id=R2_ACCESS_KEY_ID,
@@ -48,6 +53,8 @@ class ControlPlaneService:
             config=Config(signature_version="s3v4"),
             region_name="auto"
         )
+        self._s3_client = client
+        return client
 
     async def close(self):
         """Ensure connection client is cleanly closed on shutdown."""
