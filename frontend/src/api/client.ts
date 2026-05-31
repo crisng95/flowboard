@@ -2,9 +2,31 @@ import { invoke } from "@tauri-apps/api/core";
 import { supabase, cloudApiBaseUrl } from "../cloud/supabase";
 import * as localDb from "./localStorageDb";
 
-// --- stateless/deterministic 48-bit UUID-to-Numeric ID Mapping Adapter ---
+// --- UUID ↔ Numeric ID mapping adapter ---------------------------------------
+//
+// The cloud backend uses UUID ids, but the canvas/store layer keys everything
+// by numeric ids (React Flow node ids, request ids, etc.). This adapter assigns
+// a stable numeric id to each UUID and remembers both directions.
+//
+// History/bug: the original version hashed the first 12 hex chars of the UUID
+// (48 bits) with NO collision handling, so two UUIDs sharing a 12-hex prefix
+// would map to the same number and silently overwrite each other's mapping —
+// `resolveToUuid(num)` could then target the WRONG server entity (poll the
+// wrong request, patch the wrong node). It also returned the bare number as a
+// UUID on a missing reverse lookup, producing 404s after a localStorage clear.
+//
+// This version keeps a deterministic 48-bit hash as the *preferred* numeric id
+// (so ids stay stable across sessions for the common, collision-free case) but:
+//   1. tracks the forward map (uuid → num) too, so a UUID always resolves to
+//      the same number it was first assigned;
+//   2. on a hash collision (candidate already owned by a different UUID),
+//      linearly probes for the next free slot instead of clobbering;
+//   3. makes `resolveToUuid` THROW on a missing reverse lookup instead of
+//      emitting the numeric id as a fake UUID.
 const numericToUuidMap = new Map<number, string>();
+const uuidToNumericMap = new Map<string, number>();
 const ID_MAP_KEY = "flowboard.cloud.idMap.v1";
+let _idMapLoaded = false;
 
 function loadPersistedIdMap(): Record<string, string> {
   if (typeof localStorage === "undefined") return {};
@@ -13,6 +35,21 @@ function loadPersistedIdMap(): Record<string, string> {
     return raw ? (JSON.parse(raw) as Record<string, string>) : {};
   } catch {
     return {};
+  }
+}
+
+// Hydrate the in-memory maps from localStorage exactly once. The persisted
+// format stays num → uuid (backward compatible); the forward map is rebuilt
+// from it.
+function ensureIdMapLoaded(): void {
+  if (_idMapLoaded) return;
+  _idMapLoaded = true;
+  const persisted = loadPersistedIdMap();
+  for (const [numStr, uuid] of Object.entries(persisted)) {
+    const num = parseInt(numStr, 10);
+    if (Number.isNaN(num) || typeof uuid !== "string" || !uuid) continue;
+    if (!numericToUuidMap.has(num)) numericToUuidMap.set(num, uuid);
+    if (!uuidToNumericMap.has(uuid)) uuidToNumericMap.set(uuid, num);
   }
 }
 
@@ -28,31 +65,74 @@ function persistIdMapping(num: number, uuid: string): void {
 }
 
 export function registerIdMapping(num: number, uuid: string): void {
+  ensureIdMapLoaded();
   numericToUuidMap.set(num, uuid);
+  uuidToNumericMap.set(uuid, num);
   persistIdMapping(num, uuid);
 }
 
 export function getUuidFromNumericId(num: number): string | undefined {
-  return numericToUuidMap.get(num) ?? loadPersistedIdMap()[String(num)];
+  ensureIdMapLoaded();
+  return numericToUuidMap.get(num);
 }
 
-export function uuidToNumericId(uuid: string): number {
-  if (!uuid) return 0;
-  // Deterministic 48-bit hash of UUID that fits inside Number.MAX_SAFE_INTEGER
+// Deterministic 48-bit hash of a UUID (first 12 hex chars), used as the
+// preferred numeric id. Fits well inside Number.MAX_SAFE_INTEGER.
+function hashUuidTo48Bit(uuid: string): number {
   const clean = uuid.replace(/-/g, "");
   return parseInt(clean.slice(0, 12), 16);
 }
 
+export function uuidToNumericId(uuid: string): number {
+  if (!uuid) return 0;
+  ensureIdMapLoaded();
+  // A UUID always resolves to the number it was first assigned.
+  const existing = uuidToNumericMap.get(uuid);
+  if (existing !== undefined) return existing;
+
+  // Assign the deterministic hash if free; otherwise linearly probe for the
+  // next unused slot so two UUIDs never share a number.
+  let candidate = hashUuidTo48Bit(uuid);
+  if (Number.isNaN(candidate)) candidate = 0;
+  let guard = 0;
+  while (true) {
+    const owner = numericToUuidMap.get(candidate);
+    if (owner === undefined || owner === uuid) break;
+    candidate += 1;
+    guard += 1;
+    // Pathological safety valve: fall back to a fresh high id space.
+    if (guard > 1_000_000) {
+      candidate = Number.MAX_SAFE_INTEGER - uuidToNumericMap.size;
+      break;
+    }
+  }
+  registerIdMapping(candidate, uuid);
+  return candidate;
+}
+
 export function resolveToUuid(id: string | number): string {
+  ensureIdMapLoaded();
   if (typeof id === "string") {
+    // Already a UUID (uuids contain dashes; our numeric ids never do).
     if (id.includes("-")) return id;
     const num = parseInt(id, 10);
-    if (!isNaN(num)) {
-      return getUuidFromNumericId(num) ?? id;
+    if (!Number.isNaN(num)) {
+      const uuid = numericToUuidMap.get(num);
+      if (uuid !== undefined) return uuid;
+      throw new Error(
+        `resolveToUuid: no UUID mapping for numeric id ${num} ` +
+          "(stale or evicted id map). Reload the board to rebuild mappings.",
+      );
     }
+    // Non-numeric, non-UUID string — pass through unchanged (e.g. a slug).
     return id;
   }
-  return getUuidFromNumericId(id) ?? String(id);
+  const uuid = numericToUuidMap.get(id);
+  if (uuid !== undefined) return uuid;
+  throw new Error(
+    `resolveToUuid: no UUID mapping for numeric id ${id} ` +
+      "(stale or evicted id map). Reload the board to rebuild mappings.",
+  );
 }
 
 function mapBoardId(uuid: string): number {
