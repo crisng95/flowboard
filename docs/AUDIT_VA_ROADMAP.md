@@ -190,6 +190,8 @@ Quy ước mức độ: **P0** = blocker an toàn/bảo mật/pháp lý · **P1*
 - Lưu ý: `agent/.env.staging` chưa từng bị commit (đã kiểm tra git history) nên **không cần scrub git history**.
 
 > **Hạng mục kiến trúc mới (từ ADR-0001, đưa vào Phase riêng):** Tách Control Plane (`routes/control_plane.py` + `services/control_plane.py`) khỏi Local Agent rồi **retire Local Agent**. KHÔNG xóa thẳng vì đường cloud còn phụ thuộc Control Plane.
+>
+> **Cập nhật 2026-06-01 (xem `ADR-0002`):** Control Plane **đã tách sẵn** thành Cloudflare Worker `cloudflare/control-plane-worker/` (deploy `api.flowboard.bond`); web frontend + extension cloud-worker đã trỏ vào đó. Đã sửa: (1) bug chặn compile Worker (`extension.ts` claim hydration `id: eq.,`) — trước đó Worker không deploy được; (2) bù parity cron recover-stale (`scheduled()` + `[triggers]`). Còn lại: trỏ Tauri build về Worker, xác nhận `create_or_reset_request`, gỡ router control-plane khỏi FastAPI, deploy Worker.
 
 ### Phase 1 — Nền tảng tin cậy & dữ liệu (2–4 tuần)
 
