@@ -614,7 +614,7 @@ canvasRoutes.post('/requests', async (c) => {
   if (body.node_id !== undefined && body.node_id !== null && (typeof body.node_id !== 'string' || !body.node_id.trim())) {
     throw new ApiError(400, 'NODE_ID_INVALID', 'Request node_id must be a valid node id');
   }
-  
+
   await ensureBoardOwner(db, userId, body.board_id);
   if (body.node_id) {
     await ensureNodeOwner(db, userId, body.node_id);
@@ -625,21 +625,25 @@ canvasRoutes.post('/requests', async (c) => {
     const boundProjectId = await findBoundFlowProjectId(db, userId, body.board_id);
     if (boundProjectId) inputData.project_id = boundProjectId;
   }
-  
-  const payload = {
-    board_id: body.board_id,
-    node_id: body.node_id ?? null,
-    provider: body.provider ?? 'flow',
-    task_type: body.task_type ?? 'txt2img',
-    expected_output: body.expected_output ?? 'image',
-    status: body.status ?? 'queued',
-    input_data: inputData,
-    idempotency_key: stableRequestKey(userId, body),
-    user_id: userId,
-  };
-  
-  const requests = await db.post<any[]>('/rest/v1/requests', payload);
-  return c.json(requests[0] || null);
+
+  // Use the create_or_reset_request RPC (not a raw INSERT) so re-running a
+  // failed/canceled node reuses its existing row — atomically reset back to
+  // queued (run_count + 1) instead of piling up duplicate requests. The RPC
+  // also returns a completed row as-is for idempotent replays. Reset is keyed
+  // on (user_id, idempotency_key): callers that send a stable idempotency_key
+  // get reset semantics; callers that omit it get a fresh row each time
+  // (stableRequestKey generates a unique key in that case).
+  const rows = await db.post<any[]>('/rest/v1/rpc/create_or_reset_request', {
+    p_user_id: userId,
+    p_board_id: body.board_id,
+    p_node_id: body.node_id ?? null,
+    p_provider: body.provider ?? 'flow',
+    p_task_type: body.task_type ?? 'txt2img',
+    p_input_data: inputData,
+    p_idempotency_key: stableRequestKey(userId, body),
+    p_expected_output: body.expected_output ?? 'image',
+  });
+  return c.json(rows[0] || null);
 });
 
 canvasRoutes.get('/requests/:id', async (c) => {
