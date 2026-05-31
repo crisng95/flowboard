@@ -3,13 +3,14 @@ import { cors } from 'hono/cors';
 import { ZodError } from 'zod';
 import { isAllowedOrigin, validateEnv } from './lib/env';
 import { ApiError, jsonError } from './lib/errors';
+import { SupabaseRest } from './lib/supabase';
 import { assetRoutes } from './routes/assets';
 import { betaRoutes } from './routes/beta';
 import { canvasRoutes } from './routes/canvas';
 import { extensionRoutes } from './routes/extension';
 import { healthRoutes } from './routes/health';
 import { pairingRoutes } from './routes/pairing';
-import type { AppBindings } from './types';
+import type { AppBindings, Env } from './types';
 
 const app = new Hono<AppBindings>();
 
@@ -54,4 +55,30 @@ app.route('/api', canvasRoutes);
 app.route('/api', pairingRoutes);
 app.route('/api', extensionRoutes);
 
-export default app;
+// Cloudflare Cron Trigger entrypoint. Replaces the FastAPI
+// `POST /api/cron/recover-stale` endpoint: requeues (or fails) jobs whose
+// lease expired because the claiming worker dropped offline. Scheduled via the
+// `[triggers] crons` entry in wrangler.toml. Runs with service-role creds, so
+// no external token guard is needed — only Cloudflare can invoke it.
+async function scheduled(
+  _event: ScheduledController,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<void> {
+  ctx.waitUntil(
+    (async () => {
+      try {
+        validateEnv(env);
+        const db = new SupabaseRest(env);
+        await db.post('/rest/v1/rpc/recover_stale_requests', {});
+      } catch (err) {
+        console.error('[control-plane] recover_stale_requests cron failed', err);
+      }
+    })(),
+  );
+}
+
+export default {
+  fetch: app.fetch,
+  scheduled,
+};

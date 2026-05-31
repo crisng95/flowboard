@@ -6,6 +6,11 @@ routes = [
   { pattern = "api.flowboard.bond", custom_domain = true }
 ]
 
+# Cron Trigger: periodically requeue/fail jobs whose worker lease expired
+# (replaces the FastAPI /api/cron/recover-stale endpoint). Every 2 minutes.
+[triggers]
+crons = ["*/2 * * * *"]
+
 [vars]
 ENVIRONMENT = "production"
 R2_BUCKET_NAME = "flowboard-prod-assets"
