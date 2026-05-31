@@ -1137,16 +1137,49 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     try {
       const detail = await getBoard(boardId);
       const snapshot = snapshotFromDetail(detail);
+
+      // Preserve in-flight optimistic node state. A node with an active
+      // generation poll may have just stamped a done/error result in-memory
+      // that hasn't round-tripped to the server yet; full-replacing with
+      // server truth would clobber it (the bug this fixes — pipeline.ts calls
+      // this every 1.5s during a run). For such nodes we keep the in-memory
+      // version, and we re-append any active node the server doesn't know
+      // about yet (created optimistically, persist still in flight).
+      let activeRfIds = new Set<string>();
+      try {
+        const { useGenerationStore } = await import("./generation");
+        activeRfIds = new Set(Object.keys(useGenerationStore.getState().active));
+      } catch {
+        // generation store unavailable → fall back to a plain replace.
+      }
+
+      let mergedNodes = snapshot.nodes;
+      if (activeRfIds.size > 0) {
+        const currentById = new Map(get().nodes.map((n) => [n.id, n]));
+        const serverIds = new Set(snapshot.nodes.map((n) => n.id));
+        mergedNodes = snapshot.nodes.map((serverNode) =>
+          activeRfIds.has(serverNode.id) && currentById.has(serverNode.id)
+            ? (currentById.get(serverNode.id) as FlowNode)
+            : serverNode,
+        );
+        for (const rfId of activeRfIds) {
+          if (!serverIds.has(rfId) && currentById.has(rfId)) {
+            mergedNodes.push(currentById.get(rfId) as FlowNode);
+          }
+        }
+      }
+
       set({
-        nodes: snapshot.nodes,
+        nodes: mergedNodes,
         edges: snapshot.edges,
-        historyPast: [],
-        historyFuture: [],
-        historyPresent: cloneSnapshot(snapshot),
-        historySuspend: false,
+        // Preserve the user's undo/redo stack across refreshes. The previous
+        // version wiped historyPast/historyFuture on every poll tick, which
+        // destroyed the entire undo history during a pipeline run. We only
+        // re-sync historyPresent so later edits diff against current truth.
+        historyPresent: cloneSnapshot({ nodes: mergedNodes, edges: snapshot.edges }),
       });
     } catch {
-      // ignore ï¿½ leave state alone, next poll will retry
+      // ignore — leave state alone, next poll will retry
     }
   },
 
