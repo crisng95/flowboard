@@ -735,7 +735,7 @@ export function NoteNode(props: NodeProps<FlowNode>) {
         className={cn(
           "relative border flex flex-col p-4 overflow-hidden transition-colors transition-shadow duration-200 ease-out",
           !colorStyle.isTransparent && "shadow-[0_8px_28px_-10px_rgba(0,0,0,0.6)]",
-          selected && "ring-2 ring-accent/60",
+          selected && "ring-2 ring-accent/50",
         )}
         style={{
           borderRadius: 16,

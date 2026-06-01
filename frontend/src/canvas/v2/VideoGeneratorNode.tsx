@@ -294,7 +294,7 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
   }
 
   function handleClass(role: "source" | "target", active: boolean) {
-    return edgeHandleClass({ side: role === "source" ? "right" : "left", visible: active });
+    return edgeHandleClass({ side: role === "source" ? "right" : "left", visible: active, dragActive: role === "target" && connection.inProgress });
   }
 
   const handleVisible = (role: "source" | "target", handleId?: string) => {

@@ -26,6 +26,9 @@ import { ResizeHandle } from "./shared/ResizeHandle";
 import { useNodeWidth } from "./shared/useNodeWidth";
 import { HandleBadge } from "./shared/HandleBadge";
 import { EmptyState } from "./shared/EmptyState";
+import { PickerDropdown } from "./shared/PickerDropdown";
+import { edgeHandleClass } from "./shared/edgeHandle";
+import { targetHandleDropState } from "./shared/handleClassParts";
 
 const MIN_WIDTH = 460;
 const MAX_WIDTH = 700;
@@ -170,7 +173,7 @@ export function ListNode(props: NodeProps<FlowNode>) {
 
   const [hovered, setHovered] = useState(false);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const intakeButtonRef = useRef<HTMLButtonElement>(null);
 
   const [showIntakeDropdown, setShowIntakeDropdown] = useState(false);
 
@@ -185,21 +188,6 @@ export function ListNode(props: NodeProps<FlowNode>) {
   const onMouseLeave = useCallback(() => {
     leaveTimer.current = setTimeout(() => setHovered(false), HOVER_LEAVE_DELAY);
   }, []);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    function handleOutsideClick(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setShowIntakeDropdown(false);
-      }
-    }
-    if (showIntakeDropdown) {
-      document.addEventListener("mousedown", handleOutsideClick);
-    }
-    return () => {
-      document.removeEventListener("mousedown", handleOutsideClick);
-    };
-  }, [showIntakeDropdown]);
 
   // Exit selection mode when the node is deselected on the canvas
   useEffect(() => {
@@ -249,27 +237,27 @@ export function ListNode(props: NodeProps<FlowNode>) {
   const shouldRenderImageHandles = lockedType === null || lockedType === "image";
 
   const isConnectingFrom = connection.inProgress && connection.fromNode?.id === rfId;
-  const anyConnectionInProgress = connection.inProgress;
+  const anyConnectionInProgress = connection.inProgress;  // Target ClassName mapping
+  const targetHandleClassName = (hasConnection: boolean) => {
+    const decision = targetHandleDropState({
+      inProgress: anyConnectionInProgress,
+      hovered,
+      selected: !!selected,
+      hasEdge: hasConnection,
+    });
 
-  // Target ClassName mapping
-  const targetHandleClassName = (hasConnection: boolean) => cn(
-    "!absolute !-left-0 !h-7 !w-7 !border-0 !bg-transparent group/handle",
-    "transition-opacity duration-300 ease-out",
-    anyConnectionInProgress
-      ? "!opacity-100 !pointer-events-auto !z-50"
-      : (showControls || hasConnection)
-      ? "!opacity-100"
-      : "!opacity-0 !pointer-events-none"
-  );
+    return edgeHandleClass({
+      side: "left",
+      visible: decision !== "idle-hidden",
+      dragActive: decision === "droppable",
+    });
+  };
 
   // Source ClassName mapping
-  const sourceHandleClassName = (hasConnection: boolean) => cn(
-    "!absolute !-right-0 !h-7 !w-7 !border-0 !bg-transparent group/handle",
-    "transition-opacity duration-300 ease-out",
-    (showControls || hasConnection || isConnectingFrom)
-      ? "!opacity-100"
-      : "!opacity-0 !pointer-events-none"
-  );
+  const sourceHandleClassName = (hasConnection: boolean) => edgeHandleClass({
+    side: "right",
+    visible: showControls || hasConnection || isConnectingFrom,
+  });
 
   // Actions
   const handleRun = useCallback(() => {
@@ -277,8 +265,7 @@ export function ListNode(props: NodeProps<FlowNode>) {
     void useGenerationStore.getState().runNodeGraph(rfId);
   }, [rfId, isRunning]);
 
-  const handleClear = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleClear = useCallback(() => {
     useBoardStore.getState().updateNodeData(rfId, {
       listItems: [],
       listSelectedIndexes: [],
@@ -309,15 +296,13 @@ export function ListNode(props: NodeProps<FlowNode>) {
     persistNodeData(rfId, { listViewMode: mode });
   }, [rfId]);
 
-  const setIntakeMode = useCallback((mode: "keep" | "replace", e: React.MouseEvent) => {
-    e.stopPropagation();
+  const setIntakeMode = useCallback((mode: "keep" | "replace") => {
     useBoardStore.getState().updateNodeData(rfId, { listIntakeMode: mode });
     persistNodeData(rfId, { listIntakeMode: mode });
     setShowIntakeDropdown(false);
   }, [rfId]);
 
-  const toggleSelectionMode = useCallback((e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
+  const toggleSelectionMode = useCallback(() => {
     const nextMode = !listSelectionMode;
     useBoardStore.getState().updateNodeData(rfId, { 
       listSelectionMode: nextMode
@@ -448,6 +433,7 @@ export function ListNode(props: NodeProps<FlowNode>) {
       return;
     }
 
+
     e.stopPropagation();
 
     let nextIndexes = [...listSelectedIndexes];
@@ -545,7 +531,7 @@ export function ListNode(props: NodeProps<FlowNode>) {
           "relative overflow-visible transition-all duration-300 ease-out flex flex-col",
           "border-[3px] shadow-[0_8px_32px_rgba(0,0,0,0.7)]",
           selected || isConnectingFrom
-            ? "border-accent ring-1 ring-accent/30" 
+            ? "border-accent ring-2 ring-accent/50" 
             : "border-white/[0.14] hover:border-white/[0.22]",
         )}
         style={{ 
@@ -758,8 +744,8 @@ export function ListNode(props: NodeProps<FlowNode>) {
 
                 // Resolution mock/logic
                 const res = item.width && item.height 
-                  ? `${item.width} × ${item.height}` 
-                  : `1119 × ${1660 + (idx * 3) % 20}`; // Fallback resolution matching mockup style
+                  ? `${item.width} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ${item.height}` 
+                  : `1119 ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ${1660 + (idx * 3) % 20}`; // Fallback resolution matching mockup style
 
                 return (
                   <div
@@ -901,45 +887,28 @@ export function ListNode(props: NodeProps<FlowNode>) {
                   <Plus size={13} strokeWidth={2.5} />
                 </button>
                 
-                {/* Intake Selector Dropdown (Mockup Image 2) */}
-                <div className="relative" ref={dropdownRef}>
+                <div className="relative">
                   <button
-                    onClick={() => setShowIntakeDropdown(!showIntakeDropdown)}
+                    ref={intakeButtonRef}
+                    onClick={() => setShowIntakeDropdown((open) => !open)}
                     className="flex h-[26px] items-center gap-1 rounded-full bg-white/[0.06] border border-white/[0.08] px-2.5 text-2xs font-semibold text-white/80 hover:text-white hover:bg-white/[0.12] transition-colors cursor-pointer select-none"
                   >
                     {listIntakeMode === "replace" ? "Replace Items" : "Keep Items"}
                     <ChevronDown size={11} className="text-white/40" />
                   </button>
-
-                  {/* Upward custom dropdown popover styled exactly like mockup */}
-                  {showIntakeDropdown && (
-                    <div 
-                      className="absolute bottom-9 left-0 w-64 rounded-xl border border-white/[0.08] shadow-2xl p-1 z-[9999]"
-                      style={{ backgroundColor: "#1e1e1e" }}
-                    >
-                      <button
-                        onClick={(e) => setIntakeMode("keep", e)}
-                        className={cn(
-                          "w-full flex flex-col items-start px-3 py-2 rounded-lg text-left transition-colors cursor-pointer",
-                          listIntakeMode === "keep" ? "bg-white/[0.06]" : "hover:bg-white/[0.03]"
-                        )}
-                      >
-                        <span className="text-xs font-semibold text-white/90">Keep Items</span>
-                        <span className="text-4xs text-white/40 mt-0.5 leading-tight">New items will be added</span>
-                      </button>
-                      
-                      <button
-                        onClick={(e) => setIntakeMode("replace", e)}
-                        className={cn(
-                          "w-full flex flex-col items-start px-3 py-2 rounded-lg text-left transition-colors cursor-pointer mt-0.5",
-                          listIntakeMode === "replace" ? "bg-white/[0.06]" : "hover:bg-white/[0.03]"
-                        )}
-                      >
-                        <span className="text-xs font-semibold text-white/90">Replace Items</span>
-                        <span className="text-4xs text-white/40 mt-0.5 leading-tight">New items will replace existing</span>
-                      </button>
-                    </div>
-                  )}
+                  <PickerDropdown
+                    anchorRef={intakeButtonRef}
+                    isOpen={showIntakeDropdown}
+                    onClose={() => setShowIntakeDropdown(false)}
+                    items={[
+                      { key: "keep", label: "Keep Items", hint: "New items will be added" },
+                      { key: "replace", label: "Replace Items", hint: "New items will replace existing" },
+                    ]}
+                    activeKey={listIntakeMode}
+                    onPick={(key) => setIntakeMode(key as "keep" | "replace")}
+                    minWidth={256}
+                    matchAnchorWidth={false}
+                  />
                 </div>
               </>
             )}

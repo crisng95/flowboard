@@ -186,7 +186,7 @@ export function NodeShell({
           position={Position.Left}
           id={targetHandle.id}
           style={{ top: EDGE_HANDLE_TOP_OFFSET }}
-          className={edgeHandleClass({ side: "left", visible: showTargetHandle })}
+          className={edgeHandleClass({ side: "left", visible: showTargetHandle, dragActive: connection.inProgress })}
         >
           <HandleBadge
             icon={targetHandle.icon}
