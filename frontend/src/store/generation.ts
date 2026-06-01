@@ -1658,31 +1658,15 @@ async function dispatchEditDerived(
   const projectId = await get().ensureProjectId();
   if (projectId === null) return;
 
-  const isTauri = typeof window !== "undefined" && 
-    (!!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__);
-
   let knownTier: string | null = null;
 
-  if (!isTauri && supabase) {
+  if (supabase) {
     const session = (await supabase.auth.getSession()).data.session;
     if (!session) {
       useBoardStore.getState().setShowAuthModal(true);
       return;
     }
     knownTier = (paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE") as string;
-  } else {
-    knownTier = (paygateTier ?? get().paygateTier) as string | null;
-    if (!knownTier) {
-      set({
-        error:
-          "Open Flow once so the extension can detect your plan, then retry.",
-      });
-      useBoardStore.getState().updateNodeData(rfId, {
-        status: "error",
-        error: "paygate_tier_unknown",
-      });
-      return;
-    }
   }
 
   // Resolve upstream — Part / Variant need exactly one connected
@@ -1847,9 +1831,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     const cached = get().projectId;
     if (cached !== null) return cached;
 
-    const isTauri = typeof window !== "undefined" &&
-      (!!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__);
-    if (!isTauri && supabase) {
+    if (supabase) {
       const session = (await supabase.auth.getSession()).data.session;
       if (!session) {
         useBoardStore.getState().setShowAuthModal(true);
@@ -1884,25 +1866,10 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     prompts?: string[];
     skipSpawningNodes?: boolean;
   }) {
-    const isTauri = typeof window !== "undefined" && 
-      (!!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__);
-
-    if (!isTauri && supabase) {
+    if (supabase) {
       const session = (await supabase.auth.getSession()).data.session;
       if (!session) {
         useBoardStore.getState().setShowAuthModal(true);
-        return;
-      }
-    } else {
-      const knownTier = opts.paygateTier ?? get().paygateTier;
-      if (!knownTier) {
-        set({
-          error: "Open Flow once so the extension can detect your plan, then retry. (See the Tier-unknown banner in the bottom-left.)",
-        });
-        useBoardStore.getState().updateNodeData(rfId, {
-          status: "error",
-          error: "paygate_tier_unknown",
-        });
         return;
       }
     }

@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { supabase, cloudApiBaseUrl } from "../cloud/supabase";
 import * as localDb from "./localStorageDb";
 
@@ -204,148 +203,10 @@ function mapRequestFromServer(r: any): RequestDTO {
 }
 
 export function getBaseUrl(): string {
-  const isTauri = typeof window !== "undefined" && 
-    (!!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__);
-  return isTauri ? "http://127.0.0.1:8101" : "";
+  return "";
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const isTauri = typeof window !== "undefined" && 
-    (!!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__);
-
-  if (isTauri) {
-    if (
-      path.startsWith("/api/upload") ||
-      path.startsWith("/api/upload-url") ||
-      path.startsWith("/api/media/") ||
-      path.startsWith("/media/")
-    ) {
-      const url = `${getBaseUrl()}${path}`;
-      const res = await fetch(url, init);
-      if (!res.ok) {
-        throw new Error(await extractErrorMessage(res));
-      }
-      return res.json() as Promise<T>;
-    }
-
-    const method = init?.method || "GET";
-    let body: any = {};
-    if (init?.body) {
-      try {
-        if (typeof init.body === "string") {
-          body = JSON.parse(init.body);
-        }
-      } catch (e) {}
-    }
-
-    if (path === "/api/boards") {
-      if (method === "GET") {
-        return invoke<T>("list_boards");
-      } else if (method === "POST") {
-        return invoke<T>("create_board", { name: body.name });
-      }
-    }
-
-    if (path.startsWith("/api/boards/")) {
-      const parts = path.split("/");
-      const id = parseInt(parts[3], 10);
-
-      if (parts[4] === "project") {
-        if (method === "GET") {
-          return invoke<T>("get_board_project", { boardId: id });
-        } else if (method === "POST") {
-          return invoke<T>("ensure_board_project", { boardId: id });
-        }
-      } else if (parts.length === 4) {
-        if (method === "GET") {
-          return invoke<T>("get_board", { id });
-        } else if (method === "PATCH") {
-          return invoke<T>("patch_board", { id, name: body.name });
-        } else if (method === "DELETE") {
-          return invoke<T>("delete_board", { id });
-        }
-      }
-    }
-
-    if (path === "/api/nodes") {
-      if (method === "POST") {
-        return invoke<T>("create_node", { input: body });
-      }
-    }
-
-    if (path === "/api/nodes/group") {
-      if (method === "POST") {
-        return invoke<T>("group_nodes", { input: body });
-      }
-    }
-
-    if (path.startsWith("/api/nodes/")) {
-      const parts = path.split("/");
-      const id = parseInt(parts[3], 10);
-      if (parts[4] === "ungroup") {
-        return invoke<T>("ungroup_nodes", { groupId: id });
-      } else if (parts.length === 4) {
-        if (method === "PATCH") {
-          return invoke<T>("patch_node", { id, patch: body });
-        } else if (method === "DELETE") {
-          return invoke<T>("delete_node", { id });
-        }
-      }
-    }
-
-    if (path === "/api/edges") {
-      if (method === "POST") {
-        return invoke<T>("create_edge", { input: body });
-      }
-    }
-
-    if (path.startsWith("/api/edges/")) {
-      const parts = path.split("/");
-      const id = parseInt(parts[3], 10);
-      if (method === "PATCH") {
-        return invoke<T>("patch_edge", { id, sourceVariantIdx: body.source_variant_idx });
-      } else if (method === "DELETE") {
-        return invoke<T>("delete_edge", { id });
-      }
-    }
-
-    if (path === "/api/auth/me") {
-      return invoke<T>("get_auth_me");
-    }
-    if (path === "/api/auth/logout") {
-      return invoke<T>("logout_extension");
-    }
-    if (path === "/api/auth/scan") {
-      return invoke<T>("scan_extension");
-    }
-
-    if (path === "/api/requests") {
-      if (method === "POST") {
-        return invoke<T>("create_request", { input: body });
-      }
-    }
-    if (path.startsWith("/api/requests/")) {
-      const parts = path.split("/");
-      const id = parseInt(parts[3], 10);
-      if (method === "GET") {
-        return invoke<T>("get_request", { id });
-      }
-    }
-
-    const baseUrl = getBaseUrl();
-    const res = await fetch(`${baseUrl}${path}`, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        ...(init?.headers ?? {}),
-      },
-    });
-    if (!res.ok) {
-      throw new Error(await extractErrorMessage(res));
-    }
-    return res.json() as Promise<T>;
-
-  } else {
     const session = supabase ? (await supabase.auth.getSession()).data.session : null;
     const isLoggedIn = !!session;
 
@@ -699,7 +560,6 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     }
 
     return rawData as T;
-  }
 }
 
 function humanizeBackendError(token: string): string | null {
@@ -1258,14 +1118,12 @@ export async function uploadImage(
   projectId: string,
   nodeId?: number,
 ): Promise<UploadResponse> {
-  const isTauri = typeof window !== "undefined" &&
-    (!!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__);
   const form = new FormData();
   form.append("project_id", projectId);
-  if (nodeId !== undefined) form.append("node_id", isTauri ? String(nodeId) : resolveToUuid(nodeId));
+  if (nodeId !== undefined) form.append("node_id", resolveToUuid(nodeId));
   form.append("file", file);
 
-  if (!isTauri && supabase) {
+  if (supabase) {
     const session = (await supabase.auth.getSession()).data.session;
     if (session) {
       const res = await fetch(`${cloudApiBaseUrl}/api/upload`, {

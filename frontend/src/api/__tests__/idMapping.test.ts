@@ -7,9 +7,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fc from "fast-check";
 
-// client.ts imports `invoke` from @tauri-apps/api/core at module load; stub it
-// so importing the module in a node/jsdom test doesn't require the Tauri host.
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("../../cloud/supabase", () => ({
   supabase: null,
   cloudApiBaseUrl: "http://localhost",

@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // --- Module mocks -----------------------------------------------------------
-// supabase must resolve to `null` so dispatchGeneration takes the
-// non-Tauri / non-cloud path that only requires a known paygate tier
-// (otherwise it would attempt a real auth.getSession() network call).
+// supabase must resolve to `null` so dispatchGeneration skips the auth
+// session check (otherwise it would attempt a real auth.getSession()
+// network call). A known paygate tier is still set in beforeEach.
 vi.mock("../../cloud/supabase", () => ({
   supabase: null,
   cloudApiBaseUrl: "http://localhost",

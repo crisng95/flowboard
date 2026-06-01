@@ -40,7 +40,6 @@ import { AddNodePalette } from "./canvas/AddNodePalette";
 import { AppLogo } from "./components/AppLogo";
 import { Toaster } from "./components/Toaster";
 import { ResultViewerV2 } from "./components/ResultViewerV2";
-import { ForcedSetupGate } from "./components/ForcedSetupGate";
 import { AuthGateModal } from "./components/AuthGateModal";
 import { ExtensionGateModal } from "./components/ExtensionGateModal";
 import { supabase } from "./cloud/supabase";
@@ -1176,7 +1175,6 @@ export function App() {
       )}
       <Toaster />
       <ResultViewerV2 />
-      <ForcedSetupGate />
       
       <AuthGateModal 
         isOpen={showAuthModal} 
