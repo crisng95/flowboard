@@ -5,12 +5,12 @@
 HAS_UV := $(shell command -v uv 2>/dev/null)
 
 help:
-	@echo "Flowboard dev commands:"
+	@echo "Flowboard dev commands (cloud-first by default):"
 	@echo "  make install      - install runtime deps (agent + frontend)"
 	@echo "  make install-dev  - install agent with dev extras (ruff, pytest)"
 	@echo "  make update       - upgrade existing deps (agent + frontend)"
-	@echo "  make dev          - hint: run agent + frontend in separate terminals"
-	@echo "  make agent        - run agent only (FastAPI on :8101)"
+	@echo "  make dev          - hint: run frontend; start agent only for legacy local-bridge work"
+	@echo "  make agent        - run legacy local agent only (FastAPI on :8101)"
 	@echo "  make frontend     - run frontend only (Vite on :5173)"
 	@echo "  make extension    - package extension (unpacked: load from ./extension)"
 	@echo "  make clean        - remove build + cache"
@@ -40,7 +40,7 @@ endif
 	cd frontend && npm update
 
 dev:
-	@echo "Run 'make agent' and 'make frontend' in separate terminals."
+	@echo "Run 'make frontend' for the cloud-first UI. Start 'make agent' only for legacy local-bridge work."
 	@echo "Load ./extension as unpacked extension in chrome://extensions."
 
 agent:

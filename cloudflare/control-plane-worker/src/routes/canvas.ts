@@ -127,13 +127,13 @@ function userStorageKey(value: unknown, userId: string, bucketName: string): str
   return fromUrl?.startsWith(`users/${userId}/`) ? fromUrl : null;
 }
 
-async function hydrateNodeMediaUrls(env: AppBindings['Bindings'], userId: string, nodes: any[]): Promise<any[]> {
+async function hydrateNodeMediaUrls(env: AppBindings['Bindings'], baseUrl: string, userId: string, nodes: any[]): Promise<any[]> {
   const bucketName = env.R2_BUCKET_NAME || 'flowboard-prod-assets';
   return Promise.all(nodes.map(async (node) => {
     const data = objectData(node.data);
     const sign = async (value: unknown): Promise<unknown> => {
       const key = userStorageKey(value, userId, bucketName);
-      return key ? presignGet(env, key, 3600) : value;
+      return key ? presignGet(env, baseUrl, key, 3600) : value;
     };
 
     if (typeof data.mediaId === 'string') {
@@ -150,12 +150,35 @@ async function hydrateNodeMediaUrls(env: AppBindings['Bindings'], userId: string
       data.mediaIds = await Promise.all(data.mediaIds.map((value, index) => sign(nextStorageKeys[index] || value)));
     }
 
+    if (Array.isArray(data.listItems)) {
+      data.listItems = await Promise.all(data.listItems.map(async (rawItem) => {
+        if (!rawItem || typeof rawItem !== 'object' || Array.isArray(rawItem)) return rawItem;
+        const item = { ...(rawItem as Record<string, unknown>) };
+        const itemStorageKey = userStorageKey(item.storageKey, userId, bucketName)
+          || userStorageKey(item.mediaId, userId, bucketName)
+          || userStorageKey(item.mediaUrl, userId, bucketName)
+          || userStorageKey(item.imageUrl, userId, bucketName)
+          || undefined;
+        if (itemStorageKey) {
+          item.storageKey = itemStorageKey;
+          const signedValue = await sign(itemStorageKey);
+          if (typeof item.mediaId === 'string') item.mediaId = signedValue;
+          if (typeof item.mediaUrl === 'string') item.mediaUrl = signedValue;
+          if (typeof item.imageUrl === 'string') item.imageUrl = signedValue;
+          if (typeof item.flowMediaId === 'string' && userStorageKey(item.flowMediaId, userId, bucketName)) {
+            item.flowMediaId = signedValue;
+          }
+        }
+        return item;
+      }));
+    }
+
     return { ...node, data };
   }));
 }
 
 async function hydrateNodeMediaUrl(env: AppBindings['Bindings'], userId: string, node: any): Promise<any> {
-  const nodes = await hydrateNodeMediaUrls(env, userId, node ? [node] : []);
+  const nodes = await hydrateNodeMediaUrls(env, 'https://api.flowboard.bond', userId, node ? [node] : []);
   return nodes[0] || null;
 }
 
@@ -264,7 +287,7 @@ canvasRoutes.get('/boards/:id', async (c) => {
     select: '*',
   });
   
-  const hydratedNodes = await hydrateNodeMediaUrls(c.env, userId, nodes);
+  const hydratedNodes = await hydrateNodeMediaUrls(c.env, c.req.url, userId, nodes);
 
   return c.json({
     board,
@@ -515,7 +538,7 @@ canvasRoutes.post('/nodes/group', async (c) => {
     }
   }
   
-  const hydratedChildren = await hydrateNodeMediaUrls(c.env, userId, updatedChildren);
+  const hydratedChildren = await hydrateNodeMediaUrls(c.env, c.req.url, userId, updatedChildren);
   return c.json({ group, children: hydratedChildren });
 });
 
@@ -564,7 +587,7 @@ canvasRoutes.post('/nodes/:id/ungroup', async (c) => {
     id: `eq.${groupId}`,
   });
   
-  const hydratedChildren = await hydrateNodeMediaUrls(c.env, userId, updatedChildren);
+  const hydratedChildren = await hydrateNodeMediaUrls(c.env, c.req.url, userId, updatedChildren);
   return c.json({ deleted_group_id: groupId, children: hydratedChildren });
 });
 
@@ -690,7 +713,7 @@ canvasRoutes.get('/requests/:id', async (c) => {
       select: 'id,storage_key',
       order: 'created_at.asc',
     });
-    const signedUrls = await Promise.all(assets.map((asset) => presignGet(c.env, asset.storage_key, 3600)));
+    const signedUrls = await Promise.all(assets.map((asset) => presignGet(c.env, c.req.url, asset.storage_key, 3600)));
     const output = request.output_result ?? {};
     request.output_result = buildCompletedOutputResult(
       output,

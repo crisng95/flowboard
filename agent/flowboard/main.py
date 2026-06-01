@@ -1,3 +1,10 @@
+"""Flowboard local agent entrypoint.
+
+Legacy note: production web deployments are cloud-first and use the
+Cloudflare Worker control plane plus the Chrome extension in cloud-worker
+mode. This FastAPI app remains for local bridge development, diagnostics,
+and regression coverage; do not treat it as the primary production path.
+"""
 import asyncio
 import hmac
 import logging
@@ -16,6 +23,10 @@ from flowboard.routes import requests as requests_route
 from flowboard.services.flow_client import flow_client
 from flowboard.services.ws_server import run_ws_server
 from flowboard.worker.processor import get_worker
+
+# Legacy guard rail: this process intentionally exposes only the local-agent
+# bridge path over loopback. The production web app uses the Cloudflare Worker
+# control plane instead of this FastAPI service.
 
 # Guard rail: the dedicated WS server is unauthenticated and would expose the
 # callback secret to any process that can reach it. Refuse to boot if someone

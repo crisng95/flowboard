@@ -58,6 +58,14 @@
   Every node is reusable, every edge is a real data-dependency, every variant is independently regenerable.
 </p>
 
+> **Architecture note:** the current production web app is `cloud-first`
+> (`frontend -> Cloudflare Worker control plane -> Chrome extension -> Google Flow`).
+> The Python `agent/` tree remains in this repo as a `legacy local-agent`
+> development path for diagnostics, regression tests, and local bridge mode.
+> When reading video generation code such as `agent/flowboard/worker/processor.py`
+> or `agent/flowboard/services/flow_sdk.py`, do not assume those files describe
+> the primary production execution path.
+
 > **⚠ Hard requirements — read this before cloning:**
 >
 > 1. **Google Flow plan: `Pro` or `Ultra` only.** Veo 3.1 i2v + GEM_PIX_2
@@ -66,8 +74,10 @@
 >    your plan at [labs.google/fx](https://labs.google/fx/tools/flow)
 >    before installing.
 > 2. **Chrome extension is mandatory.** All generation requests are
->    proxied through `extension/` (Chrome MV3) so the agent can ride
->    your authenticated Flow session + reCAPTCHA token. Without the
+>    proxied through `extension/` (Chrome MV3) so Flowboard can ride
+>    your authenticated Flow session + reCAPTCHA token. In production,
+>    the extension works with the Cloudflare Worker control plane; the
+>    Python agent is only for the legacy local-bridge path. Without the
 >    extension loaded and connected to `labs.google/fx/tools/flow`, the
 >    `▶ Generate` button does nothing.
 > 3. **One LLM CLI on `PATH` for auto-prompt / vision / planner.**
@@ -361,7 +371,7 @@ matching vocab from the system prompt.
 
 | Dependency | Why |
 |------------|-----|
-| **Python 3.11** | Agent runtime (FastAPI + SQLModel) |
+| **Python 3.11** | Legacy local-agent runtime and backend test tooling |
 | **Node 20+** | Frontend dev server (Vite) |
 | **Chrome / Chromium** | **Mandatory** — hosts the MV3 extension that proxies every Google Flow API call. The agent has zero direct path to Flow without it. |
 | **One LLM CLI** on `PATH` | Vision describe + auto-prompt + planner. Pick one — defaults to **Claude Code** ([`@anthropic-ai/claude-code`](https://docs.claude.com/claude-code/install)); also supports **Gemini CLI** ([`@google/gemini-cli`](https://github.com/google-gemini/gemini-cli)) and **OpenAI Codex** ([`@openai/codex`](https://github.com/openai/codex), provider implemented but not yet smoke-tested). All use OAuth against your existing AI subscription — no API key needed. |
@@ -378,7 +388,7 @@ Steps 2 + 3:
 make install        # agent venv + frontend deps (uses uv if available, else pip)
 make install-dev    # same, but adds ruff + pytest extras
 make update         # upgrade agent + frontend deps in place
-make agent          # run FastAPI on :8101
+make agent          # run legacy local agent on :8101 (dev only)
 make frontend       # run Vite on :5173
 ```
 
@@ -400,7 +410,11 @@ cd flowboard
 4. The extension's icon should turn coloured once it captures a fresh
    Flow auth token (~5 s).
 
-### Step 2 — start the agent
+> **Default path:** after loading the extension, the production web app uses
+> the Cloudflare Worker control plane. You only need Step 2 when debugging the
+> legacy local-bridge path or running local agent regression work.
+
+### Step 2 — optional: start the legacy local agent (development only)
 
 ```bash
 cd agent
@@ -420,7 +434,7 @@ curl http://127.0.0.1:8101/api/health
 # {"ok":true,"extension_connected":true,"ws_stats":{"connected":true,"flow_key_present":true,...}}
 ```
 
-### Step 3 — start the frontend
+### Step 3 — start the frontend (cloud-first UI)
 
 ```bash
 cd frontend

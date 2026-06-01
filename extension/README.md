@@ -2,6 +2,7 @@
 
 Flowboard Bridge is a Google Chrome extension serving as the core execution worker for Google Flow image and video generation tasks. It leverages the user's active browser session on `labs.google/fx/tools/flow` to generate assets, bypass complex Google UI layers, handle reCAPTCHA Enterprise challenges natively, download secure GCS assets, and upload them back to Flowboard Control Plane.
 
+> Production default is `Cloud Worker` mode. `Local Bridge` remains in the repo as a legacy development path for local diagnostics and regression work; it is not the primary production execution path.
 ## Key Features
 
 - **Dual Modes**: Supports both `Cloud Worker` (production cloud deployment) and `Local Bridge` (local FastAPI agent development).
@@ -27,7 +28,7 @@ Click the extension icon to view the status, check captured token health, review
 - Input your unique **Client ID** and **Pairing Secret** generated from your Flowboard Cloud Dashboard.
 - Click **Save Config**. The service worker will immediately begin polling the cloud queue and processing generation tasks asynchronously.
 
-### 2. Local Bridge Mode (Development Only)
+### 2. Local Bridge Mode (Legacy Development Only)
 - Select **Local Bridge (Dev/Staging)** mode in settings.
 - The extension will automatically connect to `ws://127.0.0.1:9223` and receive commands from your local running Python agent.
 
