@@ -16,7 +16,7 @@
  *
  * Covers tasks:
  *   2.2 — PBT Property 3 (injectCaptchaToken position-correct + idempotent)
- *   2.3 — example: default captcha action IMAGE_GENERATION for generateContent
+ *   2.3 — example: captcha action resolution for generateContent (TEXT_GENERATION)
  *   3.3 — PBT Property 4 (buildTextGenContents)
  *   3.4 — example: text_gen contract (buildTextGenContents feeds generateContent;
  *         fake cloud.complete receives {provider,task_type,text} + [])
@@ -113,24 +113,25 @@ describe('background.js injectCaptchaToken — Property 3 (task 2.2)', () => {
 });
 
 describe('background.js resolveCaptchaAction — default action (task 2.3)', () => {
-  // Validates: Requirement 3.4 — default captcha action for generateContent is
-  // IMAGE_GENERATION when none observed and the job supplies it as requestedAction.
-  it('returns IMAGE_GENERATION for a flow:generateContent URL when none observed/supplied', () => {
+  // Validates: Requirement 3.4 — the captcha action for generateContent is
+  // resolved from the job-supplied action (flow_api defaults it to
+  // TEXT_GENERATION, verified against a live Flow session) when none observed.
+  it('passes through the supplied TEXT_GENERATION action for a flow:generateContent URL when none observed', () => {
     const context = loadBackground();
     context.__test.setObservedCaptchaActions({}); // nothing observed
 
     const url = 'https://aisandbox-pa.googleapis.com/v1/flow:generateContent';
-    // The text_gen job supplies IMAGE_GENERATION as the requested action.
-    expect(context.resolveCaptchaAction(url, 'IMAGE_GENERATION')).toBe('IMAGE_GENERATION');
+    // The text_gen job/flow_api supplies TEXT_GENERATION as the requested action.
+    expect(context.resolveCaptchaAction(url, 'TEXT_GENERATION')).toBe('TEXT_GENERATION');
   });
 
-  it('prefers an observed action for the generateContent href over the default', () => {
+  it('prefers an observed action for the generateContent href over the supplied default', () => {
     const context = loadBackground();
     const url = 'https://aisandbox-pa.googleapis.com/v1/flow:generateContent';
     context.__test.setObservedCaptchaActions({
-      gen: { action: 'TEXT_GENERATION', href: url, observedAt: Date.now() },
+      gen: { action: 'SOME_OBSERVED_ACTION', href: url, observedAt: Date.now() },
     });
-    expect(context.resolveCaptchaAction(url, 'IMAGE_GENERATION')).toBe('TEXT_GENERATION');
+    expect(context.resolveCaptchaAction(url, 'TEXT_GENERATION')).toBe('SOME_OBSERVED_ACTION');
   });
 });
 

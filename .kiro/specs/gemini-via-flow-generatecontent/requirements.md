@@ -18,9 +18,9 @@ Out of scope: a model-list/dropdown endpoint, and the multi-turn agent SSE path 
 
 ### Assumptions (noted, not blockers)
 
-- **A1 — Captcha action string** for `generateContent` is discovered dynamically via the existing `injected.js OBSERVE_EVENT` mechanism (as Omni does). Until confirmed, the image action (`IMAGE_GENERATION`) is used as the configurable default.
-- **A2 — `requestContext.flowSdkInfo` (`appletId`, `appletVersionId`)** source is unknown. Treated as optional; the request is first attempted without it.
-- **A3 — Model identifier** defaults to `gemini-3-flash-preview` and is overridable via configuration.
+- **A1 — Captcha action string** for `generateContent` is **`TEXT_GENERATION`** — verified against a live Flow session (port-9222 CDP E2E): `IMAGE_GENERATION` / `GENERATE_CONTENT` / `GEMINI` / `VIDEO_GENERATION` all return `403 PUBLIC_ERROR_UNUSUAL_ACTIVITY`; only `TEXT_GENERATION` is accepted (HTTP 200). Still overridable via `injected.js OBSERVE_EVENT` if the Flow page ever changes.
+- **A2 — `requestContext.flowSdkInfo` (`appletId`, `appletVersionId`)** is **NOT required** — same E2E succeeds (HTTP 200) with no `requestContext` (Tier 1). The seed/observer fallback is retained defensively but unused in practice.
+- **A3 — Model identifier** defaults to `gemini-3-flash-preview` (E2E-confirmed) and is overridable via configuration.
 
 ## Glossary
 

@@ -669,7 +669,7 @@ function resolveCaptchaAction(url, requestedAction) {
       return null;
     }
   }
-  // For generateContent this falls through to requestedAction (IMAGE_GENERATION
+  // For generateContent this falls through to requestedAction (TEXT_GENERATION
   // default supplied by the job / flow_api) when nothing has been observed.
   return requestedAction || null;
 }

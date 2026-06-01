@@ -122,7 +122,7 @@ Note the deliberate divergence from the image/video methods: `generateContent` b
 // Module-level constants
 const GENERATE_CONTENT_URL = `${FLOW_API_BASE}/v1/flow:generateContent`;
 const DEFAULT_TEXT_MODEL = 'gemini-3-flash-preview';   // Assumption A3, overridable
-const CAPTCHA_TEXT = 'IMAGE_GENERATION';               // Assumption A1, overridable default
+const CAPTCHA_TEXT = 'TEXT_GENERATION';               // Assumption A1 — E2E-VERIFIED accepted action
 
 // Reads candidates[].content.parts[].text and concatenates in document order.
 // Ignores non-text parts. Returns '' when no candidates / parts / text exist.
@@ -515,7 +515,7 @@ This subsection is observer + retry **wiring**, classified EXAMPLE / EDGE_CASE /
   "prompt": "Describe this image.",          // required, non-empty
   "system_prompt": "You are a ...",          // optional (→ systemInstruction)
   "model": "gemini-3-flash-preview",         // optional (default A3)
-  "captcha_action": "IMAGE_GENERATION",      // optional (default A1)
+  "captcha_action": "TEXT_GENERATION",       // optional (default A1 — E2E-verified)
   "attachments": [                            // optional; omitted when empty
     { "mimeType": "image/png", "data": "<base64>" }
   ]
@@ -700,9 +700,9 @@ To make Properties 3 and 4 testable as pure functions, the injection logic and t
 
 | Assumption | Handling | Fallback |
 |---|---|---|
-| **A1** — captcha action for `generateContent` | **Self-discovered** via the `injected.js` `grecaptcha.execute` wrap → `OBSERVE_EVENT` → `observedCaptchaActions` store; `resolveCaptchaAction`/`getBestObservedCaptchaSnapshot` pick the best observed action by the `flow:generateContent` href (component 6a). Captcha-action chain: observed (by href) → `IMAGE_GENERATION` default → on `403`/`CAPTCHA_FAILED`, retry candidate actions and record the winner (component 6c). | default `IMAGE_GENERATION` until an action is observed for that href (Req 3.4) — no longer a pure unknown |
-| **A2** — `requestContext.flowSdkInfo` (`appletId`, `appletVersionId`) | **Self-discovered** via a new passive `window.fetch` observer in `injected.js` (`FLOWBOARD_FLOW_SDK_INFO_OBSERVED` → `observedFlowSdkInfo` store, component 6b). 3-tier request chain (component 6c): **Tier 1** omit `requestContext` (try first; telemetry, likely works) → **Tier 2** retry with observed `observedFlowSdkInfo` on a `flowSdkInfo`-required `400`/`INVALID_ARGUMENT` → **Tier 3** seed constants (`appletId 96d388e5-…`, `appletVersionId fbca04f3-…`) from `cloudConfig.flowSdkInfoSeed`. | Tier 1 omission preserves Req 1.6; seed constants are config-overridable so applet-version bumps need no code change — no longer a pure unknown |
-| **A3** — model identifier | `options.model` / `input_data.model` / `cloudConfig.textModel` | default `gemini-3-flash-preview`, overridable via config (Req 1.2) |
+| **A1** — captcha action for `generateContent` | **RESOLVED — `TEXT_GENERATION`** (live port-9222 CDP E2E: `IMAGE_GENERATION`/`GENERATE_CONTENT`/`GEMINI`/`VIDEO_GENERATION` → `403 PUBLIC_ERROR_UNUSUAL_ACTIVITY`; only `TEXT_GENERATION` → HTTP 200). Hardcoded default in `flow_api.js` (`CAPTCHA_TEXT='TEXT_GENERATION'`); still overridable via the `injected.js` `OBSERVE_EVENT` → `observedCaptchaActions` path (component 6a) if Flow changes it. | `TEXT_GENERATION` default; observer override retained (Req 3.4) |
+| **A2** — `requestContext.flowSdkInfo` (`appletId`, `appletVersionId`) | **RESOLVED — NOT required** (same E2E: HTTP 200 with no `requestContext`, Tier 1). The passive `window.fetch` observer (component 6b) + 3-tier fallback (component 6c) are retained defensively but unused in practice. | Tier 1 omission is the happy path; seed/observer fallback kept for resilience to future Flow changes |
+| **A3** — model identifier | `options.model` / `input_data.model` / `cloudConfig.textModel` | default `gemini-3-flash-preview` (E2E-confirmed), overridable via config (Req 1.2) |
 
 ---
 

@@ -19,7 +19,12 @@
 
   const GENERATE_CONTENT_URL = `${FLOW_API_BASE}/v1/flow:generateContent`;
   const DEFAULT_TEXT_MODEL = 'gemini-3-flash-preview';
-  const CAPTCHA_TEXT = 'IMAGE_GENERATION';
+  // reCAPTCHA action for flow:generateContent. Verified empirically against a
+  // live Flow session (port-9222 CDP E2E): only TEXT_GENERATION is accepted —
+  // IMAGE_GENERATION / GENERATE_CONTENT / GEMINI etc. all return
+  // 403 PUBLIC_ERROR_UNUSUAL_ACTIVITY. The injected.js OBSERVE_EVENT path can
+  // still override this if the Flow page ever uses a different action.
+  const CAPTCHA_TEXT = 'TEXT_GENERATION';
 
   const VIDEO_MODEL_KEYS = {
     PAYGATE_TIER_ONE: {
