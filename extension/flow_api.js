@@ -17,6 +17,10 @@
   const VIDEO_POLL_URL = `${FLOW_API_BASE}/v1/video:batchCheckAsyncVideoGenerationStatus`;
   const CAPTCHA_VIDEO = 'VIDEO_GENERATION';
 
+  const GENERATE_CONTENT_URL = `${FLOW_API_BASE}/v1/flow:generateContent`;
+  const DEFAULT_TEXT_MODEL = 'gemini-3-flash-preview';
+  const CAPTCHA_TEXT = 'IMAGE_GENERATION';
+
   const VIDEO_MODEL_KEYS = {
     PAYGATE_TIER_ONE: {
       lite: {
@@ -151,6 +155,21 @@
         mediaType = 'video';
       }
       out.push({ media_id: mediaId, url, mediaType });
+    }
+    return out;
+  }
+
+  function extractGeneratedText(data) {
+    const source = data?.data || data;
+    const candidates = source?.candidates;
+    if (!Array.isArray(candidates)) return '';
+    let out = '';
+    for (const cand of candidates) {
+      const parts = cand?.content?.parts;
+      if (!Array.isArray(parts)) continue;
+      for (const part of parts) {
+        if (part && typeof part.text === 'string') out += part.text;
+      }
     }
     return out;
   }
@@ -400,19 +419,61 @@
       ctx.recaptchaContext.token = captchaToken;
 
       const refMediaIds = Array.isArray(opts.refMediaIds) ? opts.refMediaIds.filter(Boolean) : [];
+      // Batch fan-out: when the caller supplies a list of source images
+      // (a connected image list × N), emit one request item per source so
+      // Omni produces N distinct videos — symmetric with generateVideo (Veo).
+      // Each item is conditioned on its own source image plus any shared
+      // ingredients (refMediaIds). When no batch sources are supplied we fall
+      // back to a single item conditioned on the shared refMediaIds (the
+      // legacy single-clip behaviour, unchanged).
+      const batchSources = Array.isArray(opts.startMediaIds)
+        ? opts.startMediaIds.filter(Boolean)
+        : [];
+      const prompts = Array.isArray(opts.prompts) ? opts.prompts : [];
       const modelKey = resolveOmniFlashModel(opts.duration_s);
+      const now = Date.now();
+      const aspectRatio = opts.aspectRatio || 'VIDEO_ASPECT_RATIO_PORTRAIT';
 
-      const requestItem = {
-        aspectRatio: opts.aspectRatio || 'VIDEO_ASPECT_RATIO_PORTRAIT',
-        textInput: { structuredPrompt: { parts: [{ text: prompt }] } },
-        videoModelKey: modelKey,
-        seed: Date.now() % 1000000,
-        metadata: {},
-        referenceImages: refMediaIds.map((mid) => ({
-          mediaId: mid,
-          imageUsageType: 'IMAGE_USAGE_TYPE_ASSET',
-        })),
-      };
+      const makeRefImages = (ids) => ids.map((mid) => ({
+        mediaId: mid,
+        imageUsageType: 'IMAGE_USAGE_TYPE_ASSET',
+      }));
+
+      let requests;
+      if (batchSources.length > 0) {
+        // Genuinely-shared ingredients are the refs that are NOT themselves
+        // batch sources. In the common case the upstream image list is wired
+        // as both ref_media_ids and start_media_ids, so this filter leaves
+        // each video conditioned solely on its own source image (mirroring
+        // the Veo path). A genuinely separate ingredient (e.g. a style ref)
+        // still applies to every clip.
+        const sharedRefs = refMediaIds.filter((r) => !batchSources.includes(r));
+        requests = batchSources.map((mid, i) => ({
+          aspectRatio,
+          // Per-variant prompt: pair prompts[i] with source[i]; fall back to
+          // the shared prompt when the list is missing/short/empty.
+          textInput: {
+            structuredPrompt: {
+              parts: [{ text: typeof prompts[i] === 'string' && prompts[i] ? prompts[i] : prompt }],
+            },
+          },
+          videoModelKey: modelKey,
+          // Distinct seed per item so Flow doesn't dedupe identical clips.
+          seed: (now + i * 9973) % 1000000,
+          metadata: {},
+          // This source image leads, followed by any genuinely-shared refs.
+          referenceImages: makeRefImages([mid, ...sharedRefs]),
+        }));
+      } else {
+        requests = [{
+          aspectRatio,
+          textInput: { structuredPrompt: { parts: [{ text: prompt }] } },
+          videoModelKey: modelKey,
+          seed: now % 1000000,
+          metadata: {},
+          referenceImages: makeRefImages(refMediaIds),
+        }];
+      }
 
       const body = {
         mediaGenerationContext: {
@@ -420,7 +481,7 @@
           audioFailurePreference: 'BLOCK_SILENCED_VIDEOS',
         },
         clientContext: ctx,
-        requests: [requestItem],
+        requests,
         useV2ModelConfig: true,
       };
 
@@ -439,6 +500,53 @@
       const data = await resp.json();
       if (!resp.ok) throw new Error(`generateVideoOmni HTTP ${resp.status}`);
       return { raw: data };
+    }
+
+    /**
+     * @param {Array} contents  [{ role, parts: [{text}|{inlineData:{mimeType,data}}] }]
+     * @param {Object} [options] { model, systemInstruction, thinkingConfig,
+     *                             requestContext, captchaAction }
+     * @returns {Promise<{ raw: object, text: string }>}
+     */
+    async generateContent(contents, options) {
+      const opts = options || {};
+      const captchaToken = await this.solveCaptcha?.(opts.captchaAction || CAPTCHA_TEXT);
+      if (!captchaToken) throw new Error('Missing reCAPTCHA token');
+
+      const body = {
+        model: opts.model || DEFAULT_TEXT_MODEL,
+        contents,
+        recaptchaContext: {
+          token: captchaToken,
+          applicationType: 'RECAPTCHA_APPLICATION_TYPE_WEB',
+        },
+      };
+      if (opts.systemInstruction) body.systemInstruction = opts.systemInstruction;
+      if (opts.thinkingConfig)    body.thinkingConfig = opts.thinkingConfig;
+      if (opts.requestContext)    body.requestContext = opts.requestContext;
+      // NOTE: clientContext is intentionally never set for generateContent.
+
+      const resp = await fetch(GENERATE_CONTENT_URL, {
+        method: 'POST',
+        headers: {
+          'content-type': 'text/plain;charset=UTF-8',
+          'accept': '*/*',
+          'origin': 'https://labs.google',
+          'referer': 'https://labs.google/',
+          'authorization': this.bearerHeader(),
+        },
+        credentials: 'include',
+        body: JSON.stringify(body),
+      });
+
+      let data;
+      try {
+        data = await resp.json();
+      } catch (e) {
+        throw new Error('generateContent malformed JSON response');
+      }
+      if (!resp.ok) throw new Error(`generateContent HTTP ${resp.status}`);
+      return { raw: data, text: extractGeneratedText(data) };
     }
 
     async checkVideoOperations(operationNames, projectId) {
@@ -485,5 +593,6 @@
     extractProjectId,
     clientContext,
     resolveImageModel,
+    extractGeneratedText,
   };
 })(self);

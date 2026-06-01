@@ -1,0 +1,15 @@
+{
+  "name": "flowboard-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:legacy": "node tests/run_tests.cjs"
+  },
+  "devDependencies": {
+    "fast-check": "^3.23.2",
+    "vitest": "^2.1.9"
+  }
+}

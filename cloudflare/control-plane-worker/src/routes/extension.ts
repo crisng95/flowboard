@@ -42,7 +42,7 @@ const signUploadSchema = z.object({
   content_type: z.string(),
   expires_in: z.number().int().optional(),
 });
-const completeSchema = z.object({
+export const completeSchema = z.object({
   request_id: z.string().uuid(),
   output_result: z.record(z.unknown()).default({}),
   assets: z.array(z.record(z.unknown())).default([]),
@@ -191,7 +191,7 @@ extensionRoutes.post('/extension/fail', async (c) => {
   return c.json(rows[0] || { ok: true });
 });
 
-function validateAssets(values: Array<Record<string, unknown>>, userId: string, requestId: string): AssetInput[] {
+export function validateAssets(values: Array<Record<string, unknown>>, userId: string, requestId: string): AssetInput[] {
   return values.map((asset, index) => {
     const storageKey = validateStorageKey(asset.storage_key, userId);
     const keyRequestId = parseRequestIdFromStorageKey(storageKey);

@@ -36,20 +36,25 @@ def _reset_provider_caches():
 
 
 def test_list_providers_returns_all_three(client, tmp_secrets_path):
-    """All 3 registered providers (Claude / Gemini / OpenAI) appear with
-    expected fields. xAI Grok was dropped — never shipped a usable CLI."""
+    """All registered providers appear with expected fields. The three CLI
+    providers (Claude / Gemini / OpenAI) ship alongside flow_gemini, which
+    routes text generation through the user's Flow session (spec
+    gemini-via-flow-generatecontent). xAI Grok was dropped — never shipped a
+    usable CLI."""
     with patch.object(
         registry._PROVIDERS["claude"], "is_available", return_value=False
     ), patch.object(
         registry._PROVIDERS["gemini"], "is_available", return_value=False
     ), patch.object(
         registry._PROVIDERS["openai"], "is_available", return_value=False
+    ), patch.object(
+        registry._PROVIDERS["flow_gemini"], "is_available", return_value=False
     ):
         resp = client.get("/api/llm/providers")
     assert resp.status_code == 200
     by_name = {p["name"]: p for p in resp.json()}
-    assert set(by_name) == {"claude", "gemini", "openai"}
-    for name in ("claude", "gemini", "openai"):
+    assert set(by_name) == {"claude", "gemini", "openai", "flow_gemini"}
+    for name in ("claude", "gemini", "openai", "flow_gemini"):
         entry = by_name[name]
         assert "available" in entry
         assert "configured" in entry

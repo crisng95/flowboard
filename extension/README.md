@@ -33,10 +33,20 @@ Click the extension icon to view the status, check captured token health, review
 
 ## Unit Testing
 
-A lightweight, robust unit test suite is included in `extension/tests/run_tests.js`. It runs natively on Node.js without heavy browser overhead by mocking the browser API layer and Web Crypto APIs.
+A lightweight, robust unit test suite is included in `extension/tests/run_tests.cjs`. It runs natively on Node.js without heavy browser overhead by mocking the browser API layer and Web Crypto APIs.
 
-To execute the tests, run:
+To execute the legacy runner, run:
 ```bash
-node extension/tests/run_tests.js
+node extension/tests/run_tests.cjs
 ```
 This tests core request routing, client credentials, Flow project IDs, image and video payload structures, magic byte sniffing, size limits, and R2 signed upload flows.
+
+### Vitest suite (property-based + example tests)
+
+The `extension/` package also ships a [vitest](https://vitest.dev/) suite under `extension/test/` that exercises the
+real shipped code (loaded into a Node `vm` context with browser shims) and uses
+[fast-check](https://fast-check.dev/) for the property-based tests. To run it:
+```bash
+npm install
+npm test
+```

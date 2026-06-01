@@ -26,6 +26,7 @@ let metrics = {
   lastError:       null,
 };
 let observedCaptchaActions = {};
+let observedFlowSdkInfo = null;
 let cloudConfig = null;
 let cloudWorkerBusy = false;
 let cloudWorkerLastPollAt = null;
@@ -37,6 +38,13 @@ const CLOUD_FAST_POLL_SECONDS = 5;
 const CLOUD_FAST_POLL_WINDOW_MS = 90 * 1000;
 const CLOUD_IDLE_BACKOFF_SECONDS = [30, 60, 120, 300];
 const CLOUD_HEARTBEAT_SECONDS = 60;
+// Tier 3 seed for flowSdkInfo: known captured constants, overridable via
+// cloudConfig.flowSdkInfoSeed so an applet-version bump needs no code change.
+// See design 6c.
+const DEFAULT_FLOW_SDK_INFO_SEED = {
+  appletId: '96d388e5-41e3-4661-8102-57479ac91729',
+  appletVersionId: 'fbca04f3-c5cc-4b69-8c91-4c88abb1e9a3',
+};
 
 if (typeof globalThis.FlowboardFlowApi === 'function' && typeof globalThis.FlowboardFlowApi.prototype.editImage !== 'function') {
   globalThis.FlowboardFlowApi.prototype.editImage = async function editImage(prompt, projectId, options) {
@@ -139,11 +147,12 @@ async function init() {
   // extensions on the profile that hold the `storage` permission.
   // The agent replays user_info on every WS reconnect anyway via
   // fetchAndPushUserInfo(token), so persistence buys nothing.
-  const data = await chrome.storage.local.get(['flowKey', 'metrics', 'callbackSecret', 'observedCaptchaActions', 'cloudConfig']);
+  const data = await chrome.storage.local.get(['flowKey', 'metrics', 'callbackSecret', 'observedCaptchaActions', 'observedFlowSdkInfo', 'cloudConfig']);
   if (data.flowKey)        flowKey        = data.flowKey;
   if (data.metrics)        Object.assign(metrics, data.metrics);
   if (data.callbackSecret) callbackSecret = data.callbackSecret;
   if (data.observedCaptchaActions) observedCaptchaActions = data.observedCaptchaActions;
+  if (data.observedFlowSdkInfo) observedFlowSdkInfo = data.observedFlowSdkInfo;
   if (data.cloudConfig) cloudConfig = data.cloudConfig;
   if (cloudConfig?.mode === 'cloud-worker') {
     startCloudWorkerLoop();
@@ -408,6 +417,79 @@ function updateStateFromActiveRequests() {
   }
 }
 
+/**
+ * Inject a solved reCAPTCHA token into every recaptchaContext location that is
+ * present on `body`, covering four locations:
+ *   - top-level `body.recaptchaContext`          (flow:generateContent)
+ *   - `body.clientContext.recaptchaContext`      (image/edit)
+ *   - `body.agentClientContext.recaptchaContext` (Omni)
+ *   - each `body.requests[].clientContext.recaptchaContext` (batch)
+ *
+ * Pure helper: each site is guarded by a presence + typeof object check, so no
+ * recaptchaContext is created where absent, and only the `.token` field is
+ * written — making the operation idempotent (applying twice == applying once).
+ * Mutates and returns the passed `body`; callers that must not mutate their
+ * input should deep-clone before calling.
+ */
+function injectCaptchaToken(body, token) {
+  if (!body || typeof body !== 'object') return body;
+
+  if (body.recaptchaContext && typeof body.recaptchaContext === 'object') {
+    body.recaptchaContext.token = token;
+  }
+  if (body.clientContext && typeof body.clientContext === 'object'
+      && body.clientContext.recaptchaContext && typeof body.clientContext.recaptchaContext === 'object') {
+    body.clientContext.recaptchaContext.token = token;
+  }
+  if (body.agentClientContext && typeof body.agentClientContext === 'object'
+      && body.agentClientContext.recaptchaContext && typeof body.agentClientContext.recaptchaContext === 'object') {
+    body.agentClientContext.recaptchaContext.token = token;
+    console.log('[Bridge] Successfully patched ReCAPTCHA token into agentClientContext for Omni');
+  }
+  if (Array.isArray(body.requests)) {
+    for (const req of body.requests) {
+      if (req && typeof req === 'object'
+          && req.clientContext && typeof req.clientContext === 'object'
+          && req.clientContext.recaptchaContext && typeof req.clientContext.recaptchaContext === 'object') {
+        req.clientContext.recaptchaContext.token = token;
+      }
+    }
+  }
+  return body;
+}
+
+// Expose the pure helper for tests (service-worker global scope).
+globalThis.injectCaptchaToken = injectCaptchaToken;
+
+/**
+ * Build the Gemini-style `contents` array for a `text_gen` job from its
+ * `inputData`. Produces a single `user` content whose `parts` begins with
+ * exactly one `{ text: prompt }` entry, followed by exactly one
+ * `{ inlineData: { mimeType, data } }` entry per attachment that carries a
+ * string `data` (in order). When there are no valid attachments, `parts`
+ * contains only the text entry.
+ *
+ * Pure helper (no side effects): `inputData.attachments` is treated as empty
+ * when it is not an array. Mirrors the parts-building in design component 2b.
+ *
+ * @param {{ prompt?: string, attachments?: Array<{mimeType?: string, data?: string}> }} inputData
+ * @returns {Array<{ role: string, parts: Array<object> }>}
+ */
+function buildTextGenContents(inputData) {
+  const prompt = inputData ? inputData.prompt : undefined;
+  const attachments = inputData && Array.isArray(inputData.attachments) ? inputData.attachments : [];
+  const parts = [{ text: prompt }];
+  for (const att of attachments) {
+    if (att && typeof att.data === 'string' && att.data) {
+      parts.push({ inlineData: { mimeType: att.mimeType || 'image/png', data: att.data } });
+    }
+  }
+  return [{ role: 'user', parts }];
+}
+
+// Expose the pure helper for tests (service-worker global scope).
+globalThis.buildTextGenContents = buildTextGenContents;
+
 async function handleApiRequest(msg) {
   const { id, params } = msg;
   const { url, method, headers, body, captchaAction } = params || {};
@@ -459,24 +541,13 @@ async function handleApiRequest(msg) {
       }
     }
 
-    // Step 2: Inject captcha token into body clone if present
+    // Step 2: Inject captcha token into body clone if present.
+    // Deep-clone first so the caller's object is never mutated, then patch the
+    // token at every present recaptchaContext location via the pure helper.
     let finalBody = body;
     if (captchaToken && finalBody) {
       finalBody = JSON.parse(JSON.stringify(finalBody)); // deep clone
-      if (finalBody.clientContext?.recaptchaContext) {
-        finalBody.clientContext.recaptchaContext.token = captchaToken;
-      }
-      if (finalBody.agentClientContext?.recaptchaContext) {
-        finalBody.agentClientContext.recaptchaContext.token = captchaToken;
-        console.log('[Bridge] Successfully patched ReCAPTCHA token into agentClientContext for Omni');
-      }
-      if (finalBody.requests && Array.isArray(finalBody.requests)) {
-        for (const req of finalBody.requests) {
-          if (req.clientContext?.recaptchaContext) {
-            req.clientContext.recaptchaContext.token = captchaToken;
-          }
-        }
-      }
+      injectCaptchaToken(finalBody, captchaToken);
     }
 
     const fetchHeaders = { ...(headers || {}) };
@@ -586,15 +657,20 @@ function getBestObservedCaptchaSnapshot(url, requestedAction) {
 }
 
 function resolveCaptchaAction(url, requestedAction) {
-  if (url?.includes('flowCreationAgent:streamChat')) {
+  const isStreamChat = url?.includes('flowCreationAgent:streamChat');
+  const isGenerateContent = url?.includes('flow:generateContent');
+  if (isStreamChat || isGenerateContent) {
     const observed = getBestObservedCaptchaSnapshot(url, requestedAction);
     if (observed?.action) {
       return observed.action;
     }
-    if (requestedAction === 'OMNI_DYNAMIC') {
+    // Preserve the OMNI_DYNAMIC "no captcha" behavior for the streamChat path.
+    if (isStreamChat && requestedAction === 'OMNI_DYNAMIC') {
       return null;
     }
   }
+  // For generateContent this falls through to requestedAction (IMAGE_GENERATION
+  // default supplied by the job / flow_api) when nothing has been observed.
   return requestedAction || null;
 }
 
@@ -604,6 +680,33 @@ function resolveCaptchaSiteKey(url, requestedAction) {
     return observed.siteKey;
   }
   console.warn('[Bridge] Dynamic siteKey not found; requesting captcha with tab-side discovery first.');
+  return null;
+}
+
+/**
+ * Resolve the Flow SDK telemetry (`flowSdkInfo`) for the Tier-2/Tier-3 retry of
+ * a `generateContent` request. Precedence (design 6c):
+ *   1. observedFlowSdkInfo — passively captured from the Flow page (component 6b)
+ *   2. cloudConfig.flowSdkInfoSeed — config-overridable seed constants
+ *      (falls back to DEFAULT_FLOW_SDK_INFO_SEED when no override is set)
+ * Returns `{ appletId?, appletVersionId? }` or `null` when nothing is available.
+ */
+function resolveFlowSdkInfo() {
+  // Tier 2 source: passively observed from the Flow page (9.2)
+  if (observedFlowSdkInfo && (observedFlowSdkInfo.appletId || observedFlowSdkInfo.appletVersionId)) {
+    return {
+      appletId: observedFlowSdkInfo.appletId || undefined,
+      appletVersionId: observedFlowSdkInfo.appletVersionId || undefined,
+    };
+  }
+  // Tier 3 seed: config-overridable constants (default seed when no override)
+  const seed = cloudConfig?.flowSdkInfoSeed || DEFAULT_FLOW_SDK_INFO_SEED;
+  if (seed && (seed.appletId || seed.appletVersionId)) {
+    return {
+      appletId: seed.appletId || undefined,
+      appletVersionId: seed.appletVersionId || undefined,
+    };
+  }
   return null;
 }
 // ─── Token Refresh (minimal) ────────────────────────────────
@@ -1300,6 +1403,65 @@ async function runCloudFlowJob(cloud, job) {
     } catch (error) {
       throw new Error('progress/submitting failed: ' + formatWorkerError(error));
     }
+
+    // text_gen: pure text/multimodal generation via flow:generateContent.
+    // Needs no Flow project and no R2 uploads, so it branches early (before
+    // project creation / ref-media resolution) and completes with the
+    // extracted text plus an empty assets array. See design 2b.
+    if (taskType === 'text_gen') {
+      const sysText = typeof inputData.system_prompt === 'string' && inputData.system_prompt
+        ? inputData.system_prompt : null;
+      const contents = buildTextGenContents(inputData);
+      const options = {
+        model: inputData.model || cloudConfig?.textModel || undefined,
+        captchaAction: inputData.captcha_action || undefined,
+      };
+      if (sysText) options.systemInstruction = { parts: [{ text: sysText }] };
+
+      // 3-tier flowSdkInfo fallback chain (design 6c):
+      //  Tier 1 — first attempt WITHOUT requestContext (preserves Req 1.6).
+      //  Tier 2/3 — if the failure indicates flowSdkInfo is required, retry once
+      //  with the resolved value (observed → cloudConfig seed → default seed).
+      //  If the retry also fails (or no flowSdkInfo is available), the original
+      //  error propagates to the existing catch → cloud.fail.
+      const runGenerate = async () => {
+        try {
+          return await flowApi.generateContent(contents, options);
+        } catch (err) {
+          const msg = (err && err.message) || '';
+          const sdk = resolveFlowSdkInfo();
+          if (sdk && /flowSdkInfo|requestContext|applet|INVALID_ARGUMENT|HTTP 400/i.test(msg)) {
+            console.log('[Flowboard] text_gen retry with flowSdkInfo (tier 2/3)');
+            return await flowApi.generateContent(contents, {
+              ...options,
+              requestContext: { flowSdkInfo: sdk },
+            });
+          }
+          throw err;
+        }
+      };
+
+      const result = await withStage(
+        'ERR_STAGE_GENERATE',
+        runGenerate,
+        'Google Flow text generation failed'
+      );
+
+      await withStage(
+        'ERR_STAGE_COMPLETE',
+        () => completeCloudRequestWithRetry(
+          cloud, requestId,
+          { provider: 'flow', task_type: 'text_gen', text: result.text || '' },
+          []
+        ),
+        'Complete request failed'
+      );
+      metrics.successCount++;
+      metrics.lastError = null;
+      chrome.storage.local.set({ metrics });
+      return;
+    }
+
     let project = { projectId: inputData.project_id };
     if (typeof project.projectId !== 'string' || !project.projectId || project.projectId === 'cloud-worker') {
       project = await withStage(
@@ -1385,6 +1547,19 @@ async function runCloudFlowJob(cloud, job) {
         );
       } else {
         // txt2vid_omni
+        // Batch fan-out: when an image list feeds the node (start_media_ids),
+        // resolve each source to a project-local media id (order preserved)
+        // and forward them + per-variant prompts so Omni emits one video per
+        // source — symmetric with the img2vid (Veo) branch above. Without a
+        // batch this falls back to a single clip conditioned on refMediaIds.
+        let omniStartMediaIds = [];
+        if (Array.isArray(inputData.start_media_ids) && inputData.start_media_ids.length > 0) {
+          omniStartMediaIds = await withStage(
+            'ERR_STAGE_GENERATE',
+            () => resolveCloudRefMediaIds(flowApi, inputData.start_media_ids, project.projectId),
+            'Base video images preparation failed'
+          );
+        }
         generated = await withStage(
           'ERR_STAGE_GENERATE',
           () => flowApi.generateVideoOmni(prompt, project.projectId, {
@@ -1392,6 +1567,8 @@ async function runCloudFlowJob(cloud, job) {
             aspectRatio: inputData.aspect_ratio || 'VIDEO_ASPECT_RATIO_PORTRAIT',
             duration_s: inputData.duration_s || 4,
             refMediaIds,
+            startMediaIds: omniStartMediaIds.length > 0 ? omniStartMediaIds : undefined,
+            prompts: Array.isArray(inputData.prompts) ? inputData.prompts : undefined,
           }),
           'Google Flow omni video generation failed'
         );
@@ -1724,18 +1901,31 @@ async function runCloudFlowJob(cloud, job) {
 
 async function resolveCloudRefMediaIds(flowApi, refs, projectId) {
   if (!Array.isArray(refs)) return [];
-  const out = [];
-  for (let i = 0; i < refs.length; i++) {
+
+  // Resolve each ref to a project-local media id. Non-URL ids and cache
+  // hits are free; only genuine URLs need a fetch + uploadImage round-trip
+  // to Google Flow. Those round-trips used to run strictly sequentially, so
+  // an N-image batch took N × (fetch + upload). We now run them with a
+  // bounded concurrency pool (UPLOAD_CONCURRENCY) so a batch resolves in
+  // roughly the time of its slowest image instead of the sum — while
+  // capping parallel uploads to avoid tripping Flow's rate limits on large
+  // batches. Output order is preserved by writing each result into its
+  // original index, independent of completion order (critical for keeping
+  // prompt[i] ↔ source[i] alignment downstream).
+  const UPLOAD_CONCURRENCY = 5;
+  const out = new Array(refs.length).fill(null);
+
+  async function resolveOne(i) {
     const ref = refs[i];
-    if (typeof ref !== 'string' || !ref) continue;
+    if (typeof ref !== 'string' || !ref) return;
     if (!/^https?:\/\//i.test(ref)) {
-      out.push(ref);
-      continue;
+      out[i] = ref;
+      return;
     }
     const cached = await getCachedProjectMediaId(projectId, ref);
     if (cached) {
-      out.push(cached);
-      continue;
+      out[i] = cached;
+      return;
     }
     const asset = await FlowboardAssetUtils.fetchAnyImageBytes(ref);
     const upload = await flowApi.uploadImage(
@@ -1745,9 +1935,27 @@ async function resolveCloudRefMediaIds(flowApi, refs, projectId) {
       `reference-${i + 1}.${asset.extension}`,
     );
     await setCachedProjectMediaId(projectId, ref, upload.mediaId);
-    out.push(upload.mediaId);
+    out[i] = upload.mediaId;
   }
-  return out;
+
+  // Worker-pool pattern: a shared cursor hands the next index to each of
+  // up to UPLOAD_CONCURRENCY workers running concurrently.
+  let cursor = 0;
+  async function worker() {
+    while (cursor < refs.length) {
+      const i = cursor++;
+      await resolveOne(i);
+    }
+  }
+  const workers = [];
+  for (let w = 0; w < Math.min(UPLOAD_CONCURRENCY, refs.length); w++) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+
+  // Drop any slots that produced no id (skipped invalid refs), preserving
+  // the relative order of the survivors.
+  return out.filter((m) => typeof m === 'string' && m);
 }
 
 async function getCachedProjectMediaId(projectId, ref) {
@@ -1811,6 +2019,25 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
         href: observedCaptchaActions[scope].href,
         observedAt: observedCaptchaActions[scope].observedAt,
       });
+    }
+    reply({ ok: true });
+    return true;
+  }
+
+  if (msg.type === 'FLOW_SDK_INFO_OBSERVED') {
+    const appletId = typeof msg.appletId === 'string' ? msg.appletId.trim() : '';
+    const appletVersionId = typeof msg.appletVersionId === 'string' ? msg.appletVersionId.trim() : '';
+    const appletProjectId = typeof msg.appletProjectId === 'string' ? msg.appletProjectId.trim() : '';
+    if (appletId || appletVersionId) {
+      observedFlowSdkInfo = {
+        appletId: appletId || null,
+        appletVersionId: appletVersionId || null,
+        appletProjectId: appletProjectId || null,
+        href: typeof msg.href === 'string' ? msg.href : null,
+        observedAt: typeof msg.observedAt === 'number' ? msg.observedAt : Date.now(),
+      };
+      chrome.storage.local.set({ observedFlowSdkInfo });
+      console.log('[Flowboard] Observed flowSdkInfo', appletId, appletVersionId);
     }
     reply({ ok: true });
     return true;

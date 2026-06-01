@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireUser } from '../lib/auth';
 import { ApiError } from '../lib/errors';
 import { presignGet } from '../lib/r2Presign';
+import { assertTaskType } from '../lib/requestGuards';
 import { SupabaseRest } from '../lib/supabase';
 import type { AppBindings } from '../types';
 
@@ -14,6 +15,27 @@ function shortId(): string {
 
 function objectData(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? { ...(value as Record<string, unknown>) } : {};
+}
+
+// Pure read-back transform for a completed request's output_result. Merges the
+// stored output_result with asset-derived media fields. Critically, the spread
+// of `output` preserves any non-media fields the completion stored (e.g. a
+// text_gen row's `output_result.text`), and when there are no assets
+// `media_urls`/`asset_ids` resolve to empty arrays (Req 5.4).
+export function buildCompletedOutputResult(
+  output: Record<string, unknown> | null | undefined,
+  signedUrls: string[],
+  assetIds: string[],
+): Record<string, unknown> {
+  const base = output ?? {};
+  return {
+    ...base,
+    media_ids: Array.isArray((base as Record<string, unknown>).media_ids)
+      ? (base as Record<string, unknown>).media_ids
+      : signedUrls,
+    media_urls: signedUrls,
+    asset_ids: assetIds,
+  };
 }
 
 function stableRequestKey(userId: string, body: Record<string, unknown>): string {
@@ -626,6 +648,8 @@ canvasRoutes.post('/requests', async (c) => {
     if (boundProjectId) inputData.project_id = boundProjectId;
   }
 
+  const taskType = assertTaskType(body.task_type);
+
   // Use the create_or_reset_request RPC (not a raw INSERT) so re-running a
   // failed/canceled node reuses its existing row — atomically reset back to
   // queued (run_count + 1) instead of piling up duplicate requests. The RPC
@@ -638,10 +662,10 @@ canvasRoutes.post('/requests', async (c) => {
     p_board_id: body.board_id,
     p_node_id: body.node_id ?? null,
     p_provider: body.provider ?? 'flow',
-    p_task_type: body.task_type ?? 'txt2img',
+    p_task_type: taskType,
     p_input_data: inputData,
     p_idempotency_key: stableRequestKey(userId, body),
-    p_expected_output: body.expected_output ?? 'image',
+    p_expected_output: body.expected_output ?? (taskType === 'text_gen' ? 'text' : 'image'),
   });
   return c.json(rows[0] || null);
 });
@@ -668,12 +692,11 @@ canvasRoutes.get('/requests/:id', async (c) => {
     });
     const signedUrls = await Promise.all(assets.map((asset) => presignGet(c.env, asset.storage_key, 3600)));
     const output = request.output_result ?? {};
-    request.output_result = {
-      ...output,
-      media_ids: Array.isArray(output.media_ids) ? output.media_ids : signedUrls,
-      media_urls: signedUrls,
-      asset_ids: assets.map((asset) => asset.id),
-    };
+    request.output_result = buildCompletedOutputResult(
+      output,
+      signedUrls,
+      assets.map((asset) => asset.id),
+    );
   }
   
   return c.json(request);

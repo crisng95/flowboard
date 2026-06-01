@@ -4,6 +4,9 @@ import type { Env, RequestRow } from '../types';
 
 export const ALLOWED_MIMES = new Set(['image/png', 'image/jpeg', 'video/mp4']);
 const ALLOWED_PROGRESS_STAGES = new Set(['preparing', 'submitting', 'waiting_provider', 'extracting', 'uploading', 'completed', 'failed']);
+export const ALLOWED_TASK_TYPES = new Set([
+  'txt2img', 'edit_image', 'img2vid', 'txt2vid_omni', 'text_gen',
+]);
 
 export function clampLease(seconds: unknown): number {
   const value = Number(seconds || 300);
@@ -20,6 +23,14 @@ export function assertProgressStage(stage: unknown): string {
     throw new ApiError(400, 'INVALID_PROGRESS_STAGE', 'Progress must use a known coarse stage');
   }
   return stage;
+}
+
+export function assertTaskType(taskType: unknown): string {
+  const value = typeof taskType === 'string' && taskType ? taskType : 'txt2img';
+  if (!ALLOWED_TASK_TYPES.has(value)) {
+    throw new ApiError(400, 'INVALID_TASK_TYPE', `Unsupported task_type: ${String(taskType)}`);
+  }
+  return value;
 }
 
 export function assertContentType(contentType: unknown): string {

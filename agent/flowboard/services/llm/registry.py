@@ -18,6 +18,7 @@ from .base import LLMError, LLMProvider
 from .claude import ClaudeProvider
 from .gemini import GeminiProvider
 from .openai import OpenAIProvider
+from .flow_gemini import FlowGeminiProvider
 from . import secrets
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ _PROVIDERS: dict[str, LLMProvider] = {
     "claude": ClaudeProvider(),
     "gemini": GeminiProvider(),
     "openai": OpenAIProvider(),
+    "flow_gemini": FlowGeminiProvider(),
 }
 
 

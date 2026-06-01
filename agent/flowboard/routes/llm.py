@@ -53,13 +53,13 @@ class _ConfigBody(BaseModel):
 # but the HTTP surface must reject input that wouldn't route anywhere.
 _VALID_FEATURES = ("auto_prompt", "vision", "planner", "chat")
 _VALID_PROVIDERS_BY_FEATURE = {
-    "auto_prompt": {"claude", "gemini", "openai"},
-    "vision": {"claude", "gemini", "openai"},
-    "planner": {"claude", "gemini", "openai"},
+    "auto_prompt": {"claude", "gemini", "openai", "flow_gemini"},
+    "vision": {"claude", "gemini", "openai", "flow_gemini"},
+    "planner": {"claude", "gemini", "openai", "flow_gemini"},
     "chat": {"claude", "gemini", "openai", "omni"},
 }
 _CONFIG_PROVIDER_NAMES = set().union(*_VALID_PROVIDERS_BY_FEATURE.values())
-_REGISTRY_PROVIDER_NAMES = {"claude", "gemini", "openai"}
+_REGISTRY_PROVIDER_NAMES = {"claude", "gemini", "openai", "flow_gemini"}
 
 
 # ── GET /api/llm/providers ────────────────────────────────────────────

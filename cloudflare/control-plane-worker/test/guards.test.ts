@@ -4,6 +4,7 @@ import { ApiError } from '../src/lib/errors';
 import {
   assertContentType,
   assertProgressStage,
+  assertTaskType,
   clampLease,
   clampUploadTtl,
   parseRequestIdFromStorageKey,
@@ -31,6 +32,32 @@ describe('request guards', () => {
     expect(assertContentType('image/jpeg')).toBe('image/jpeg');
     expect(assertContentType('video/mp4')).toBe('video/mp4');
     expect(() => assertContentType('image/gif')).toThrow(ApiError);
+  });
+
+  // Task 4.3 — task_type validation (Req 5.1, 5.3)
+  it('accepts every recognized task_type and returns it unchanged', () => {
+    expect(assertTaskType('text_gen')).toBe('text_gen');
+    expect(assertTaskType('txt2img')).toBe('txt2img');
+    expect(assertTaskType('edit_image')).toBe('edit_image');
+    expect(assertTaskType('img2vid')).toBe('img2vid');
+    expect(assertTaskType('txt2vid_omni')).toBe('txt2vid_omni');
+  });
+
+  it('defaults missing or empty task_type to txt2img', () => {
+    expect(assertTaskType(undefined)).toBe('txt2img');
+    expect(assertTaskType('')).toBe('txt2img');
+  });
+
+  it('rejects an unrecognized task_type with ApiError 400 INVALID_TASK_TYPE', () => {
+    expect(() => assertTaskType('bogus')).toThrow(ApiError);
+    try {
+      assertTaskType('bogus');
+      throw new Error('expected assertTaskType to throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).status).toBe(400);
+      expect((err as ApiError).code).toBe('INVALID_TASK_TYPE');
+    }
   });
 
   it('validates storage keys by owner prefix and path safety', () => {

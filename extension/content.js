@@ -24,6 +24,22 @@ window.addEventListener('FLOWBOARD_GRECAPTCHA_EXECUTE_OBSERVED', (e) => {
   }).catch(() => {});
 });
 
+window.addEventListener('FLOWBOARD_FLOW_SDK_INFO_OBSERVED', (e) => {
+  const appletId = e.detail?.appletId;
+  const appletVersionId = e.detail?.appletVersionId;
+  const appletProjectId = e.detail?.appletProjectId;
+  // Relay even if only one id is present; background.js skips fully-empty.
+  if (!appletId && !appletVersionId && !appletProjectId) return;
+  chrome.runtime.sendMessage({
+    type: 'FLOW_SDK_INFO_OBSERVED',
+    appletId: appletId || null,
+    appletVersionId: appletVersionId || null,
+    appletProjectId: appletProjectId || null,
+    href: e.detail?.href || window.location.href,
+    observedAt: e.detail?.observedAt || Date.now(),
+  }).catch(() => {});
+});
+
 chrome.runtime.onMessage.addListener((msg, _, reply) => {
   if (msg.type === 'GET_CAPTCHA') {
     const { requestId, pageAction, siteKey } = msg;

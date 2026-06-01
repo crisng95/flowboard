@@ -7,7 +7,68 @@
 const OBSERVE_EVENT = 'FLOWBOARD_GRECAPTCHA_EXECUTE_OBSERVED';
 const FORWARD_FETCH_EVENT = 'FLOWBOARD_FORWARD_OMNI_FETCH';
 const FORWARD_FETCH_RESULT_EVENT = 'FLOWBOARD_FORWARD_OMNI_FETCH_RESULT';
+const FLOW_SDK_INFO_OBSERVE_EVENT = 'FLOWBOARD_FLOW_SDK_INFO_OBSERVED';
 let extensionExecuting = false;
+
+/**
+ * Pure, tolerant field-reader for flowSdkInfo (parallels flow_api.js
+ * extractGeneratedText): present → value, absent/malformed → null.
+ * @param {string|object} rawBody  The outbound request body (string or object).
+ * @returns {{appletId: string|null, appletVersionId: string|null, appletProjectId: string|null}|null}
+ */
+function extractFlowSdkInfo(rawBody) {
+  let body;
+  if (typeof rawBody === 'string') {
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return null;
+    }
+  } else if (rawBody && typeof rawBody === 'object') {
+    body = rawBody;
+  } else {
+    return null;
+  }
+  const sdk = body?.requestContext?.flowSdkInfo;
+  const appletId = sdk?.appletId || body?.agentClientContext?.appletId || null;
+  const appletVersionId = sdk?.appletVersionId || null;
+  const appletProjectId = body?.appletProjectId || body?.agentClientContext?.appletProjectId || null;
+  if (!appletId && !appletVersionId && !appletProjectId) {
+    return null;
+  }
+  return { appletId, appletVersionId, appletProjectId };
+}
+
+// Passively observe outbound window.fetch calls so flowSdkInfo (appletId,
+// appletVersionId, appletProjectId) can be auto-captured from the page's own
+// flow:generateContent / flowAgent:* requests. Wrapped once, always forwards
+// to the original fetch so the page behavior is never changed.
+function ensureFetchObserved() {
+  if (window.fetch.__flowboardSdkObserved) {
+    return;
+  }
+  const originalFetch = window.fetch.bind(window);
+  const wrapped = function(input, init) {
+    try {
+      const url = typeof input === 'string' ? input : (input?.url || '');
+      if (/flow:generateContent|flowAgent:/.test(url)) {
+        const info = extractFlowSdkInfo(init?.body);
+        if (info) {
+          window.dispatchEvent(new CustomEvent(FLOW_SDK_INFO_OBSERVE_EVENT, {
+            detail: {
+              ...info,
+              href: window.location.href,
+              observedAt: Date.now(),
+            },
+          }));
+        }
+      }
+    } catch {}
+    return originalFetch(input, init);
+  };
+  wrapped.__flowboardSdkObserved = true;
+  window.fetch = wrapped;
+}
 
 function collectSiteKeysFromValue(value, found = new Set(), seen = new Set(), depth = 0) {
   if (!value || depth > 6) return found;
@@ -186,6 +247,9 @@ window.addEventListener(FORWARD_FETCH_EVENT, async ({ detail }) => {
 
 // Wrap as early as possible so we can observe the page's own execute() calls.
 void ensureWrapped().catch(() => {});
+
+// Observe the page's own outbound fetches to passively capture flowSdkInfo.
+ensureFetchObserved();
 
 function waitForGrecaptcha(timeout = 10000) {
   return new Promise((resolve, reject) => {
