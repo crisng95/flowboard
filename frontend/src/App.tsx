@@ -4,23 +4,15 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
-  CircleHelp,
-  Code2,
-  CreditCard,
-  Heart,
   Home,
-  Languages,
   LayoutGrid,
   List,
   LogOut,
   Map as MapIcon,
   MoreHorizontal,
-  Palette,
   Plus,
   Pencil,
   Search,
-  Settings,
-  Share2,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -28,9 +20,6 @@ import {
   Upload,
   X,
   Loader2,
-  Globe2,
-  Images,
-  Users,
 } from "lucide-react";
 
 import { getAuthMe, mediaUrl, type AuthMe, createBoard, createNode, createEdge, patchNode } from "./api/client";
@@ -262,11 +251,6 @@ function AccountMenu({ session }: { session: any }) {
 
       {open && isLoggedIn && (
         <div className="flowboard-account-popover" role="menu">
-          <div className="flowboard-account-popover__topbar">
-            <button type="button" className="flowboard-account-popover__pricing">Pricing</button>
-            <div className="flowboard-account-popover__mini-logo"><AppLogo className="size-full" /></div>
-          </div>
-
           <div className="flowboard-account-popover__card">
             <div className="flowboard-account-popover__identity">
               <div className="flowboard-account-popover__avatar">
@@ -278,15 +262,7 @@ function AccountMenu({ session }: { session: any }) {
               </div>
             </div>
 
-            <button type="button" className="flowboard-account-popover__primary">Get a plan</button>
-            <button type="button" className="flowboard-account-popover__secondary"><Users size={16} /> Create your team</button>
-
             <div className="flowboard-account-popover__items">
-              <button type="button" className="flowboard-account-popover__item">
-                <CreditCard size={20} />
-                <span>Plan & billing</span>
-                <em>Free</em>
-              </button>
               <button
                 type="button"
                 className="flowboard-account-popover__item"
@@ -297,38 +273,6 @@ function AccountMenu({ session }: { session: any }) {
               >
                 <ShieldCheck size={20} />
                 <span>Connect extension</span>
-              </button>
-              <button type="button" className="flowboard-account-popover__item">
-                <Settings size={20} />
-                <span>Settings</span>
-              </button>
-              <button type="button" className="flowboard-account-popover__item">
-                <Globe2 size={20} />
-                <span>Creator profile</span>
-              </button>
-              <button type="button" className="flowboard-account-popover__item">
-                <Images size={20} />
-                <span>My collections</span>
-              </button>
-              <button type="button" className="flowboard-account-popover__item flowboard-account-popover__item--select">
-                <Languages size={20} />
-                <span>Language</span>
-                <strong>English</strong>
-                <ChevronDown size={16} />
-              </button>
-              <button type="button" className="flowboard-account-popover__item flowboard-account-popover__item--select">
-                <Palette size={20} />
-                <span>Theme</span>
-                <strong>Dark</strong>
-                <ChevronDown size={16} />
-              </button>
-              <button type="button" className="flowboard-account-popover__item">
-                <Code2 size={20} />
-                <span>Use AI code</span>
-              </button>
-              <button type="button" className="flowboard-account-popover__item">
-                <CircleHelp size={20} />
-                <span>Help center</span>
               </button>
             </div>
 
@@ -464,14 +408,6 @@ function SpacesPage({
             <Home size={16} />
           </button>
         </div>
-        <div className="magnific-rail__bottom">
-          <button type="button" className="magnific-rail__icon" aria-label="Settings">
-            <Settings size={16} />
-          </button>
-          <button type="button" className="magnific-rail__icon" aria-label="Help">
-            <CircleHelp size={16} />
-          </button>
-        </div>
       </aside>
 
       <header className="magnific-spaces__header">
@@ -481,7 +417,6 @@ function SpacesPage({
           <ChevronDown size={14} />
         </button>
         <div className="magnific-header-actions">
-          <button type="button" className="magnific-pricing-link">Pricing</button>
           <AccountMenu session={session} />
         </div>
       </header>
@@ -498,25 +433,11 @@ function SpacesPage({
           <div className="magnific-tabs">
             <button type="button" className={tab === "my" ? "is-active" : ""} onClick={() => setTab("my")}>My spaces</button>
             <button type="button" className={tab === "templates" ? "is-active" : ""} onClick={() => setTab("templates")}>Templates</button>
-            <span className="magnific-coming-soon">Shared · Coming soon</span>
           </div>
           <div className="magnific-spaces__actions">
             <button type="button" className="magnific-primary-button" onClick={() => setNewSpaceOpen(true)}>
               <Plus size={16} />
               New space
-            </button>
-            {isGuest && (
-              <button
-                type="button"
-                className="magnific-secondary-button border border-accent/30 text-accent hover:bg-accent/10 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer"
-                onClick={() => setShowAuthModal(true)}
-              >
-                <Sparkles size={14} />
-                New Cloud Space
-              </button>
-            )}
-            <button type="button" className="magnific-icon-button" aria-label="Favorites">
-              <Heart size={16} />
             </button>
             <button
               type="button"
@@ -776,10 +697,6 @@ function CanvasStatusBar({
     <div className="magnific-canvas__status nowheel nodrag">
       <button type="button" className="magnific-page-pill">Page 1</button>
       <div className="magnific-canvas__status-actions">
-        <button type="button" className="magnific-feedback-link">
-          <CircleHelp size={14} />
-          Give feedback
-        </button>
         <button
           type="button"
           className={`magnific-icon-button ${showMiniMap ? "is-active" : ""}`}
@@ -882,11 +799,6 @@ function CanvasPage({ session }: { session: any }) {
               Save to Cloud
             </button>
           )}
-          <button type="button" className="magnific-share-button">
-            <Share2 size={15} />
-            Share
-          </button>
-          <button type="button" className="magnific-pricing-link">Pricing</button>
           <AccountMenu session={session} />
         </div>
       </header>

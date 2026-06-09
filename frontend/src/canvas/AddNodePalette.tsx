@@ -7,7 +7,6 @@ import {
   MousePointer2,
   Hand,
   Scissors,
-  Settings2,
   Undo2,
   Redo2,
   Search,
@@ -27,8 +26,6 @@ interface NodeEntry {
   type: NodeType;
   icon: typeof Type;
   label: string;
-  disabled?: boolean;
-  badge?: string;
 }
 
 interface Category {
@@ -42,12 +39,6 @@ const CATEGORIES: Category[] = [
     nodes: [
       { type: "text", icon: Type, label: "Text" },
       { type: "note", icon: StickyNote, label: "Note" },
-    ],
-  },
-  {
-    name: "REFERENCES",
-    nodes: [
-      { type: "add_reference", icon: ImageUp, label: "Add Reference", disabled: true, badge: "Soon" },
     ],
   },
   {
@@ -122,9 +113,7 @@ export function AddNodePanel({ onClose, position }: { onClose: () => void; posit
   const filtered = useMemo(
     () => CATEGORIES.map((cat) => ({
       ...cat,
-      nodes: cat.nodes.filter((n) =>
-        n.label.toLowerCase().includes(search.toLowerCase())
-      ),
+      nodes: cat.nodes.filter((n) => n.label.toLowerCase().includes(search.toLowerCase())),
     })).filter((cat) => cat.nodes.length > 0),
     [search],
   );
@@ -158,7 +147,7 @@ export function AddNodePanel({ onClose, position }: { onClose: () => void; posit
         transform: openUp ? "translateY(-100%)" : undefined,
         maxHeight,
       };
-      setFloatingStyle((prev) => samePanelStyle(prev, nextStyle) ? prev : nextStyle);
+      setFloatingStyle((prev) => (samePanelStyle(prev, nextStyle) ? prev : nextStyle));
     };
 
     updatePlacement();
@@ -179,7 +168,6 @@ export function AddNodePanel({ onClose, position }: { onClose: () => void; posit
       )}
       style={panelStyle}
     >
-      {/* Search */}
       <div ref={searchRef} className="flex items-center gap-2 px-3 py-2.5 border-b border-white/[0.06]">
         <Search size={14} strokeWidth={1.5} className="text-white/40 shrink-0" />
         <input
@@ -192,7 +180,6 @@ export function AddNodePanel({ onClose, position }: { onClose: () => void; posit
         />
       </div>
 
-      {/* Node list */}
       <div ref={listRef} className="py-2 min-h-0 overflow-y-auto img-gen-prompt" style={{ maxHeight: listMaxHeight }}>
         {filtered.map((cat) => (
           <div key={cat.name}>
@@ -202,23 +189,12 @@ export function AddNodePanel({ onClose, position }: { onClose: () => void; posit
             {cat.nodes.map((node) => (
               <button
                 key={node.type}
-                onClick={() => !node.disabled && handleAdd(node.type)}
-                disabled={node.disabled}
-                className={cn(
-                  "flex items-center gap-2.5 w-full px-3 py-2 text-sm transition-colors",
-                  node.disabled
-                    ? "text-white/35 cursor-not-allowed"
-                    : "text-white/80 hover:text-white hover:bg-white/[0.06] cursor-pointer",
-                )}
-                title={node.disabled ? `${node.label} is coming soon` : node.label}
+                onClick={() => handleAdd(node.type)}
+                className="flex items-center gap-2.5 w-full px-3 py-2 text-sm transition-colors text-white/80 hover:text-white hover:bg-white/[0.06] cursor-pointer"
+                title={node.label}
               >
                 <node.icon size={16} strokeWidth={1.5} className="shrink-0 text-white/50" />
                 <span className="min-w-0 flex-1 text-left">{node.label}</span>
-                {node.badge && (
-                  <span className="rounded-md border border-white/[0.08] bg-white/[0.04] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/45">
-                    {node.badge}
-                  </span>
-                )}
               </button>
             ))}
           </div>
@@ -344,16 +320,6 @@ export function AddNodePalette() {
         disabled={!canRedo}
       >
         <Redo2 size={16} strokeWidth={1.5} />
-      </button>
-
-      <span className="h-px w-5 bg-white/[0.08] my-0.5" />
-
-      <button
-        type="button"
-        className="flex items-center justify-center w-9 h-9 rounded-full text-white/60 hover:text-white hover:bg-white/[0.08] transition-all duration-150 cursor-pointer"
-        title="Settings"
-      >
-        <Settings2 size={16} strokeWidth={1.5} />
       </button>
     </div>
   );
