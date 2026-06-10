@@ -76,6 +76,15 @@ assetRoutes.get('/assets/read', async (c) => {
   headers.set('cache-control', `private, max-age=${Math.max(0, Math.min(300, query.exp - now))}`);
   headers.set('cross-origin-resource-policy', 'cross-origin');
   headers.set('x-content-type-options', 'nosniff');
+  headers.set('content-length', String(object.size));
+
+  const objectRange = (object as R2ObjectBody & { range?: { offset?: number; length?: number } }).range;
+  if (rangeHeader && objectRange && typeof objectRange.offset === 'number' && typeof objectRange.length === 'number') {
+    const start = objectRange.offset;
+    const end = start + objectRange.length - 1;
+    headers.set('content-length', String(objectRange.length));
+    headers.set('content-range', `bytes ${start}-${end}/${object.size}`);
+  }
 
   return new Response(object.body, {
     status: rangeHeader ? 206 : 200,

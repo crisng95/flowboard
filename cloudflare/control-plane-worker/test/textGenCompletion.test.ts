@@ -73,4 +73,17 @@ describe('read-back transform preserves output_result.text for text_gen rows (Re
     expect(result.media_ids).toEqual(['https://signed/url-0.jpg']);
     expect(result.asset_ids).toEqual(['asset-1']);
   });
+
+  it('preserves provider media_urls when asset upload fallback completed with no assets', () => {
+    const stored = {
+      provider: 'flow',
+      task_type: 'txt2img',
+      media_urls: ['https://flow-content.google/generated.jpg'],
+      media_ids: ['flow-media-id-1'],
+    };
+    const result = buildCompletedOutputResult(stored, [], []);
+    expect(result.media_urls).toEqual(['https://flow-content.google/generated.jpg']);
+    expect(result.media_ids).toEqual(['flow-media-id-1']);
+    expect(result.asset_ids).toEqual([]);
+  });
 });

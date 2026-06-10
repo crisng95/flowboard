@@ -179,6 +179,21 @@
     return out;
   }
 
+  function compactErrorPayload(data) {
+    if (data == null) return '';
+    try {
+      const text = JSON.stringify(data);
+      return text.length > 300 ? `${text.slice(0, 300)}...` : text;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function buildHttpErrorMessage(label, resp, data) {
+    const payload = compactErrorPayload(data);
+    return payload ? `${label} HTTP ${resp.status}: ${payload}` : `${label} HTTP ${resp.status}`;
+  }
+
   function findUploadedMediaId(value, depth = 0) {
     if (!value || typeof value !== 'object' || depth > 8) return null;
     if (typeof value.name === 'string' && value.name) return value.name;
@@ -281,7 +296,7 @@
         body: JSON.stringify(body),
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(`generateImage HTTP ${resp.status}`);
+      if (!resp.ok) throw new Error(buildHttpErrorMessage('generateImage', resp, data));
       return {
         raw: data,
         mediaEntries: extractMediaEntries(data),
@@ -332,7 +347,7 @@
         body: JSON.stringify(body),
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(`editImage HTTP ${resp.status}`);
+      if (!resp.ok) throw new Error(buildHttpErrorMessage('editImage', resp, data));
       return {
         raw: data,
         mediaEntries: extractMediaEntries(data),

@@ -142,6 +142,39 @@ extensionRoutes.post('/extension/sign-upload', async (c) => {
   return c.json({ url: await presignPut(c.env, storageKey, contentType, expiresIn), expires_in: expiresIn });
 });
 
+extensionRoutes.post('/extension/upload-asset', async (c) => {
+  const userId = c.get('clientUserId');
+  if (!c.env.ASSETS_BUCKET) throw new ApiError(500, 'R2_BINDING_MISSING', 'ASSETS_BUCKET binding is not configured');
+
+  const requestId = c.req.header('x-request-id');
+  if (!requestId) throw new ApiError(400, 'REQUEST_ID_REQUIRED', 'x-request-id header is required');
+  const storageKeyHeader = c.req.header('x-storage-key');
+  if (!storageKeyHeader) throw new ApiError(400, 'STORAGE_KEY_REQUIRED', 'x-storage-key header is required');
+  const contentTypeHeader = c.req.header('content-type');
+  if (!contentTypeHeader) throw new ApiError(400, 'CONTENT_TYPE_REQUIRED', 'content-type header is required');
+
+  const storageKey = validateStorageKey(storageKeyHeader, userId);
+  const keyRequestId = parseRequestIdFromStorageKey(storageKey);
+  if (keyRequestId !== requestId) throw new ApiError(400, 'REQUEST_KEY_MISMATCH', 'storage_key request id does not match request_id');
+  await requireClaimedRequest(c.env, requestId, c.get('clientId'), userId);
+
+  const mimeType = assertContentType(contentTypeHeader);
+  const bytes = await c.req.arrayBuffer();
+  const byteSize = assertAssetQuota(bytes.byteLength);
+  const reportedSize = c.req.header('x-byte-size');
+  if (reportedSize && Number.parseInt(reportedSize, 10) !== byteSize) {
+    throw new ApiError(409, 'R2_SIZE_MISMATCH', 'Uploaded object size does not match x-byte-size');
+  }
+
+  const checksum = c.req.header('x-checksum') || undefined;
+  await c.env.ASSETS_BUCKET.put(storageKey, bytes, {
+    httpMetadata: { contentType: mimeType },
+    customMetadata: { user_id: userId, source: 'extension_upload', ...(checksum ? { checksum } : {}) },
+  });
+
+  return c.json({ ok: true, storage_key: storageKey, byte_size: byteSize, mime_type: mimeType });
+});
+
 extensionRoutes.post('/extension/confirm-upload', async (c) => {
   const body = confirmUploadSchema.parse(await c.req.json());
   const userId = c.get('clientUserId');

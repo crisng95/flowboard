@@ -266,3 +266,154 @@ describe('background.js text_gen branch contract (task 3.4)', () => {
     expect(completeCalls[0].assets).toEqual([]);
   });
 });
+
+describe('background.js single-ref promotion guard', () => {
+  it('does not promote a single uploaded reference into source_media_id for txt2img', () => {
+    const { shouldPromoteSingleRefToSourceMediaId } = loadBackground();
+    expect(
+      shouldPromoteSingleRefToSourceMediaId(
+        'txt2img',
+        null,
+        ['https://api.flowboard.bond/api/assets/read?key=users/x/ref.png'],
+        false,
+      ),
+    ).toBe(false);
+  });
+
+  it('still promotes a single ref for legacy edit_image jobs missing source_media_id', () => {
+    const { shouldPromoteSingleRefToSourceMediaId } = loadBackground();
+    expect(
+      shouldPromoteSingleRefToSourceMediaId(
+        'edit_image',
+        null,
+        ['media-123'],
+        false,
+      ),
+    ).toBe(true);
+  });
+
+  it('never promotes for video tasks', () => {
+    const { shouldPromoteSingleRefToSourceMediaId } = loadBackground();
+    expect(
+      shouldPromoteSingleRefToSourceMediaId(
+        'img2vid',
+        null,
+        ['media-123'],
+        true,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('background.js fresh-project retry guard', () => {
+  it('retries txt2img 500s when refs are URL-backed assets', () => {
+    const { shouldRetryImageJobWithFreshProject } = loadBackground();
+    expect(
+      shouldRetryImageJobWithFreshProject(
+        new Error('generateImage HTTP 500'),
+        'txt2img',
+        null,
+        ['https://api.flowboard.bond/api/assets/read?key=users/x/ref.jpg'],
+      ),
+    ).toBe(true);
+  });
+
+  it('does not retry non-500 errors', () => {
+    const { shouldRetryImageJobWithFreshProject } = loadBackground();
+    expect(
+      shouldRetryImageJobWithFreshProject(
+        new Error('generateImage HTTP 400'),
+        'txt2img',
+        null,
+        ['https://api.flowboard.bond/api/assets/read?key=users/x/ref.jpg'],
+      ),
+    ).toBe(false);
+  });
+
+  it('does not retry txt2img 500s without URL-backed source inputs', () => {
+    const { shouldRetryImageJobWithFreshProject } = loadBackground();
+    expect(
+      shouldRetryImageJobWithFreshProject(
+        new Error('generateImage HTTP 500'),
+        'txt2img',
+        null,
+        ['media-123'],
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('background.js video result fallback helpers', () => {
+  it('extracts submit media ids from Flow video submit payloads', () => {
+    const { extractSubmitVideoMediaIds } = loadBackground();
+    expect(
+      extractSubmitVideoMediaIds({
+        media: [
+          { name: 'media/primary-vid-1' },
+          { name: 'primary-vid-2' },
+          { mediaId: 'video/primary-vid-3' },
+        ],
+      }),
+    ).toEqual(['primary-vid-1', 'primary-vid-2', 'primary-vid-3']);
+  });
+
+  it('does not treat mediaGenerationId as a retrievable media id', () => {
+    const { extractOperationMediaId } = loadBackground();
+    expect(
+      extractOperationMediaId({
+        operation: {
+          name: 'op-1',
+          metadata: {
+            video: {
+              mediaGenerationId: 'CAUS-base64-protobuf-token',
+            },
+          },
+        },
+      }, 'op-1'),
+    ).toBe(null);
+  });
+
+  it('resolves completed videos through fallback primary media ids when poll ops omit urls', async () => {
+    const { resolveCompletedVideo } = loadBackground();
+    const flowApi = {
+      async getMediaWorkflow(mediaId) {
+        expect(mediaId).toBe('primary-vid-1');
+        return {
+          raw: {
+            data: {
+              video: {
+                generatedVideo: {
+                  fifeUrl: 'https://flow-content.google/video/primary-vid-1?sig=x',
+                },
+              },
+            },
+          },
+        };
+      },
+    };
+
+    const out = await resolveCompletedVideo(
+      flowApi,
+      {
+        status: 'MEDIA_GENERATION_STATUS_SUCCESSFUL',
+        operation: {
+          name: 'op-1',
+          metadata: {
+            video: {
+              mediaGenerationId: 'CAUS-base64-protobuf-token',
+            },
+          },
+        },
+      },
+      'op-1',
+      'primary-vid-1',
+    );
+
+    expect(out).toEqual({
+      done: true,
+      media_id: 'primary-vid-1',
+      fifeUrl: 'https://flow-content.google/video/primary-vid-1?sig=x',
+      encodedVideo: null,
+    });
+  });
+});

@@ -1193,6 +1193,33 @@ function extractMediaNameToken(value) {
   return /^(?:video|image|media)[-_][a-zA-Z0-9\-_]+$/i.test(trimmed) ? trimmed : null;
 }
 
+function normalizeFlowMediaId(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/^(?:video|image|media)\//i, '') || null;
+}
+
+function extractSubmitVideoMediaIds(value) {
+  const media = Array.isArray(value?.media) ? value.media : [];
+  const ids = [];
+  for (const entry of media) {
+    if (!entry || typeof entry !== 'object') continue;
+    const direct = normalizeFlowMediaId(entry.name);
+    if (direct) {
+      ids.push(direct);
+      continue;
+    }
+    const nested =
+      normalizeFlowMediaId(entry.mediaId)
+      || normalizeFlowMediaId(entry.media_id)
+      || normalizeFlowMediaId(entry.primaryMediaId)
+      || normalizeFlowMediaId(entry.primary_media_id);
+    if (nested) ids.push(nested);
+  }
+  return ids;
+}
+
 function extractVideoArtifact(value) {
   let best = null;
   walkObjects(value, (candidate) => {
@@ -1221,9 +1248,9 @@ function extractVideoArtifact(value) {
       }
     }
 
-    const explicitMediaId = candidate.primaryMediaId || candidate.primary_media_id || candidate.mediaId || candidate.media_id || candidate.mediaGenerationId || null;
+    const explicitMediaId = candidate.primaryMediaId || candidate.primary_media_id || candidate.mediaId || candidate.media_id || null;
     const mediaId =
-      (typeof explicitMediaId === 'string' && explicitMediaId ? explicitMediaId : null)
+      normalizeFlowMediaId(explicitMediaId)
       || extractMediaNameToken(candidate.name)
       || null;
     if (!encodedVideo && !url && !mediaId) return;
@@ -1238,8 +1265,10 @@ function extractOperationMediaId(value, fallbackName) {
   let mediaId = null;
   walkObjects(value, (candidate) => {
     if (mediaId) return;
-    const explicit = candidate.primaryMediaId || candidate.primary_media_id || candidate.mediaId || candidate.media_id || candidate.mediaGenerationId || null;
-    if (typeof explicit === 'string' && explicit) {
+    const explicit = normalizeFlowMediaId(
+      candidate.primaryMediaId || candidate.primary_media_id || candidate.mediaId || candidate.media_id || null
+    );
+    if (explicit) {
       mediaId = explicit;
       return;
     }
@@ -1358,6 +1387,25 @@ async function runEditImageWithFallback(flowApi, prompt, projectId, options) {
     mediaEntries: extractMediaEntries(data),
   };
 }
+
+function shouldPromoteSingleRefToSourceMediaId(taskType, sourceMediaId, refMediaIds, isVideoTask) {
+  if (isVideoTask) return false;
+  if (taskType !== 'edit_image') return false;
+  if (typeof sourceMediaId === 'string' && sourceMediaId) return false;
+  return Array.isArray(refMediaIds) && refMediaIds.length === 1;
+}
+
+globalThis.shouldPromoteSingleRefToSourceMediaId = shouldPromoteSingleRefToSourceMediaId;
+
+function shouldRetryImageJobWithFreshProject(error, taskType, rawSourceMediaId, rawRefMediaIds) {
+  const message = String(error?.message || error || '');
+  if (!/Image HTTP 500/i.test(message)) return false;
+  if (taskType !== 'txt2img' && taskType !== 'edit_image') return false;
+  if (typeof rawSourceMediaId === 'string' && /^https?:\/\//i.test(rawSourceMediaId)) return true;
+  return Array.isArray(rawRefMediaIds) && rawRefMediaIds.some((ref) => typeof ref === 'string' && /^https?:\/\//i.test(ref));
+}
+
+globalThis.shouldRetryImageJobWithFreshProject = shouldRetryImageJobWithFreshProject;
 
 async function runCloudFlowJob(cloud, job) {
   const requestId = job.id;
@@ -1486,7 +1534,8 @@ async function runCloudFlowJob(cloud, job) {
       'Reference preparation failed'
     );
 
-    let sourceMediaId = inputData.source_media_id || inputData.sourceMediaId || null;
+    const rawSourceMediaId = inputData.source_media_id || inputData.sourceMediaId || null;
+    let sourceMediaId = rawSourceMediaId;
     console.log('[Flowboard][cloud-video-input]', {
       requestId: String(requestId).slice(0, 12),
       taskType,
@@ -1506,12 +1555,12 @@ async function runCloudFlowJob(cloud, job) {
 
     let generated;
     const isVideoTask = taskType === 'img2vid' || taskType === 'txt2vid_omni';
-    if ((!sourceMediaId || typeof sourceMediaId !== 'string') && refMediaIds.length === 1 && !isVideoTask) {
-      sourceMediaId = refMediaIds[0];
-      refMediaIds = [];
-      console.log('[Flowboard][cloud-worker] promoted single ref to source_media_id', {
-        requestId: String(requestId).slice(0, 12),
-        taskType,
+  if (shouldPromoteSingleRefToSourceMediaId(taskType, sourceMediaId, refMediaIds, isVideoTask)) {
+    sourceMediaId = refMediaIds[0];
+    refMediaIds = [];
+    console.log('[Flowboard][cloud-worker] promoted single ref to source_media_id', {
+      requestId: String(requestId).slice(0, 12),
+      taskType,
         sourceMediaId,
       });
     }
@@ -1575,17 +1624,22 @@ async function runCloudFlowJob(cloud, job) {
       }
 
       const rawData = generated.raw?.data || generated.raw;
+      const submitVideoMediaIds = extractSubmitVideoMediaIds(rawData);
       let workflows = [];
       let opNames = [];
       if (Array.isArray(rawData.workflows)) {
-        workflows = rawData.workflows.map(wf => ({
+        workflows = rawData.workflows.map((wf, idx) => ({
           name: wf.name,
-          primary_media_id: wf.metadata?.primaryMediaId || wf.primary_media_id || wf.primaryMediaId
+          primary_media_id:
+            normalizeFlowMediaId(wf.metadata?.primaryMediaId || wf.primary_media_id || wf.primaryMediaId || null)
+            || submitVideoMediaIds[idx]
+            || null,
         })).filter(wf => wf.name && wf.primary_media_id);
         opNames = workflows.map(wf => wf.name);
       } else if (Array.isArray(rawData.operations)) {
         opNames = rawData.operations.map(op => op.name || op.operation?.name).filter(Boolean);
       }
+      const opFallbackMediaIds = opNames.map((_, idx) => submitVideoMediaIds[idx] || null);
       
       if (opNames.length === 0) {
         throw stageError('ERR_STAGE_GENERATE', new Error('Flow API returned no operation names or workflows'));
@@ -1649,23 +1703,37 @@ async function runCloudFlowJob(cloud, job) {
               }
               
               if (isDone) {
-                const resolvedVideo = await resolveCompletedVideo(flowApi, found, opReqName, extractOperationMediaId(found, opReqName));
+                const opIndex = opNames.indexOf(opReqName);
+                const fallbackMediaId =
+                  extractOperationMediaId(found, opReqName)
+                  || (opIndex >= 0 ? opFallbackMediaIds[opIndex] : null);
+                const resolvedVideo = await resolveCompletedVideo(flowApi, found, opReqName, fallbackMediaId);
                 if (resolvedVideo.done) {
                   currentOps.push({
                     name: opReqName,
                     done: true,
-                    media_id: resolvedVideo.media_id || opReqName,
+                    media_id: resolvedVideo.media_id || fallbackMediaId || opReqName,
                     fifeUrl: resolvedVideo.fifeUrl || null,
                     encodedVideo: resolvedVideo.encodedVideo || null,
                   });
                 } else {
-                  currentOps.push({ name: opReqName, done: false, media_id: resolvedVideo.media_id || null });
+                  currentOps.push({ name: opReqName, done: false, media_id: resolvedVideo.media_id || fallbackMediaId || null });
                 }
               } else {
-                currentOps.push({ name: opReqName, done: false });
+                const opIndex = opNames.indexOf(opReqName);
+                currentOps.push({
+                  name: opReqName,
+                  done: false,
+                  media_id: opIndex >= 0 ? opFallbackMediaIds[opIndex] : null,
+                });
               }
             } else {
-              currentOps.push({ name: opReqName, done: false });
+              const opIndex = opNames.indexOf(opReqName);
+              currentOps.push({
+                name: opReqName,
+                done: false,
+                media_id: opIndex >= 0 ? opFallbackMediaIds[opIndex] : null,
+              });
             }
           }
           finalOps = currentOps;
@@ -1695,6 +1763,7 @@ async function runCloudFlowJob(cloud, job) {
       const assets = [];
       const mediaUrls = [];
       const mediaIds = [];
+      const videoDiagnostics = [];
 
       for (let i = 0; i < finalOps.length; i++) {
         const op = finalOps[i];
@@ -1719,6 +1788,9 @@ async function runCloudFlowJob(cloud, job) {
             mediaIds.push(op.media_id);
             if (op.fifeUrl) mediaUrls.push(op.fifeUrl);
           } catch (error) {
+            videoDiagnostics.push(
+              `slot ${i + 1}: encoded video upload failed (${error?.message || String(error)})`
+            );
             console.warn('[Flowboard] Workflow video upload failed', error);
           }
         } else if (op.fifeUrl) {
@@ -1736,8 +1808,15 @@ async function runCloudFlowJob(cloud, job) {
               'Asset upload failed'
             ));
           } catch (error) {
+            videoDiagnostics.push(
+              `slot ${i + 1}: url fallback upload skipped (${error?.message || String(error)})`
+            );
             console.warn('[Flowboard] Video download/upload skipped', error);
           }
+        } else {
+          videoDiagnostics.push(
+            `slot ${i + 1}: no encodedVideo or downloadable URL after poll`
+          );
         }
       }
 
@@ -1777,18 +1856,31 @@ async function runCloudFlowJob(cloud, job) {
                 () => FlowboardAssetUtils.uploadGeneratedAsset(cloud, mediaAsset, userId, requestId, i, prompt),
                 'Asset upload failed'
               ));
+            } else {
+              videoDiagnostics.push(
+                `slot ${i + 1}: recovery found no encodedVideo or downloadable URL`
+              );
             }
             if ((recovered?.fifeUrl || recovered?.encodedVideo) && !mediaIds.includes(op.media_id)) {
               mediaIds.push(op.media_id);
             }
           } catch (error) {
+            videoDiagnostics.push(
+              `slot ${i + 1}: recovery failed (${error?.message || String(error)})`
+            );
             console.warn('[Flowboard] Final video recovery failed', { mediaId: op.media_id, error: error?.message || String(error) });
           }
         }
       }
 
       if (!assets.length && !mediaUrls.length) {
-        throw stageError('ERR_STAGE_DOWNLOAD', new Error('Generated videos had no downloadable URLs or raw bytes'));
+        const debugSummary = videoDiagnostics.length > 0
+          ? `; diagnostics: ${videoDiagnostics.join(' | ')}`
+          : '';
+        throw stageError(
+          'ERR_STAGE_DOWNLOAD',
+          new Error(`Generated videos had no downloadable URLs or raw bytes${debugSummary}`)
+        );
       }
 
       await withStage(
@@ -1807,35 +1899,77 @@ async function runCloudFlowJob(cloud, job) {
       chrome.storage.local.set({ metrics });
     } else {
       // Pure or Edit Image Generation
-      if (isEditTask) {
-        if (!sourceMediaId || typeof sourceMediaId !== 'string') {
-          throw stageError('ERR_STAGE_GENERATE', new Error('Missing source_media_id for edit_image / variant task'));
+      const runImageJob = (projectId, currentSourceMediaId, currentRefMediaIds) => {
+        if (isEditTask) {
+          if (!currentSourceMediaId || typeof currentSourceMediaId !== 'string') {
+            throw stageError('ERR_STAGE_GENERATE', new Error('Missing source_media_id for edit_image / variant task'));
+          }
+          return runEditImageWithFallback(flowApi, prompt, projectId, {
+            paygateTier: inputData.paygate_tier || cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
+            imageModel: inputData.image_model || cloudConfig?.imageModel || null,
+            aspectRatio: inputData.aspect_ratio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+            variantCount: inputData.variant_count || 1,
+            prompts: Array.isArray(inputData.prompts) ? inputData.prompts : undefined,
+            sourceMediaId: currentSourceMediaId,
+            refMediaIds: currentRefMediaIds,
+          });
         }
+        return flowApi.generateImage(prompt, projectId, {
+          paygateTier: inputData.paygate_tier || cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
+          imageModel: inputData.image_model || cloudConfig?.imageModel || null,
+          aspectRatio: inputData.aspect_ratio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+          variantCount: inputData.variant_count || 1,
+          prompts: Array.isArray(inputData.prompts) ? inputData.prompts : undefined,
+          refMediaIds: currentRefMediaIds,
+        });
+      };
+
+      try {
         generated = await withStage(
           'ERR_STAGE_GENERATE',
-          () => runEditImageWithFallback(flowApi, prompt, project.projectId, {
-            paygateTier: inputData.paygate_tier || cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
-            imageModel: inputData.image_model || cloudConfig?.imageModel || null,
-            aspectRatio: inputData.aspect_ratio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
-            variantCount: inputData.variant_count || 1,
-            prompts: Array.isArray(inputData.prompts) ? inputData.prompts : undefined,
-            sourceMediaId,
-            refMediaIds,
-          }),
-          'Google Flow edit/image generation failed'
+          () => runImageJob(project.projectId, sourceMediaId, refMediaIds),
+          isEditTask ? 'Google Flow edit/image generation failed' : 'Google Flow generation failed'
         );
-      } else {
+      } catch (error) {
+        if (!shouldRetryImageJobWithFreshProject(error, taskType, rawSourceMediaId, rawRefMediaIds)) {
+          throw error;
+        }
+        console.warn('[Flowboard][cloud-worker] retrying image job with fresh project after provider 500', {
+          requestId: String(requestId).slice(0, 12),
+          taskType,
+          previousProjectId: project.projectId,
+        });
+        project = await withStage(
+          'ERR_STAGE_CREATE_PROJECT',
+          () => flowApi.createProject(inputData.project_title || `flowboard-${String(requestId).slice(0, 8)}-retry`),
+          'Google Flow project recreation failed'
+        );
+        await cloud.bindProject(requestId, project.projectId).catch((bindError) => {
+          console.warn('[Flowboard] Failed to persist retried Flow project id:', bindError?.message || bindError);
+        });
+        refMediaIds = await withStage(
+          'ERR_STAGE_GENERATE',
+          () => resolveCloudRefMediaIds(flowApi, rawRefMediaIds, project.projectId),
+          'Reference preparation failed'
+        );
+        let retriedSourceMediaId = rawSourceMediaId;
+        if (typeof retriedSourceMediaId === 'string' && /^https?:\/\//i.test(retriedSourceMediaId)) {
+          const resolvedBaseIds = await withStage(
+            'ERR_STAGE_GENERATE',
+            () => resolveCloudRefMediaIds(flowApi, [retriedSourceMediaId], project.projectId),
+            'Base image preparation failed'
+          );
+          retriedSourceMediaId = resolvedBaseIds[0] || null;
+        }
+        if (shouldPromoteSingleRefToSourceMediaId(taskType, retriedSourceMediaId, refMediaIds, isVideoTask)) {
+          retriedSourceMediaId = refMediaIds[0];
+          refMediaIds = [];
+        }
+        sourceMediaId = retriedSourceMediaId;
         generated = await withStage(
           'ERR_STAGE_GENERATE',
-          () => flowApi.generateImage(prompt, project.projectId, {
-            paygateTier: inputData.paygate_tier || cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
-            imageModel: inputData.image_model || cloudConfig?.imageModel || null,
-            aspectRatio: inputData.aspect_ratio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
-            variantCount: inputData.variant_count || 1,
-            prompts: Array.isArray(inputData.prompts) ? inputData.prompts : undefined,
-            refMediaIds,
-          }),
-          'Google Flow generation failed'
+          () => runImageJob(project.projectId, sourceMediaId, refMediaIds),
+          isEditTask ? 'Google Flow edit/image generation failed' : 'Google Flow generation failed'
         );
       }
       const entries = generated.mediaEntries || [];

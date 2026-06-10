@@ -112,6 +112,39 @@
       });
     }
 
+    async uploadAsset(requestId, storageKey, contentType, bytes, checksum) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      try {
+        const resp = await fetch(`${this.baseUrl}/api/extension/upload-asset`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': contentType,
+            'X-Client-Id': this.clientId,
+            'X-Pairing-Secret': this.pairingSecret,
+            'X-Request-Id': requestId,
+            'X-Storage-Key': storageKey,
+            'X-Byte-Size': String(bytes?.byteLength ?? 0),
+            ...(checksum ? { 'X-Checksum': checksum } : {}),
+          },
+          body: bytes,
+          signal: controller.signal,
+        });
+        let data = null;
+        const text = await resp.text();
+        if (text) {
+          try { data = JSON.parse(text); } catch (_) { data = { detail: text }; }
+        }
+        if (!resp.ok) {
+          const detail = data?.detail || resp.statusText || 'Control Plane upload failed';
+          throw new FlowboardCloudError(`/api/extension/upload-asset: Control Plane HTTP ${resp.status}: ${String(detail).slice(0, 220)}`, resp.status, detail);
+        }
+        return data || {};
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
     complete(requestId, outputResult, assets) {
       return this.request('/api/extension/complete', {
         request_id: requestId,
