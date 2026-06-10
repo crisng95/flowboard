@@ -459,6 +459,8 @@ class FlowSDK:
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
         paygate_tier: Optional[str] = None,
         seed: Optional[int] = None,
+        start_media_ids: Optional[list[str]] = None,
+        prompts: Optional[list[str]] = None,
     ) -> dict[str, Any]:
         """Kick off Omni Flash video generation. Distinct from Veo i2v —
         uses /video:batchAsyncGenerateVideoReferenceImages with a
@@ -481,8 +483,14 @@ class FlowSDK:
                 "raw": None,
                 "error": f"omni_aspect_unsupported_{aspect_ratio}",
             }
-        cleaned_refs = [m for m in (ref_media_ids or []) if isinstance(m, str) and m]
-        if not cleaned_refs:
+        shared_refs = [m for m in (ref_media_ids or []) if isinstance(m, str) and m]
+        batch_sources = [m for m in (start_media_ids or []) if isinstance(m, str) and m]
+        # Batch mode: each start image becomes its own video, conditioned on
+        # that image (plus any shared reference ingredients). This is what
+        # makes a zip/cross batch (N prompts x N images) emit N distinct
+        # clips instead of collapsing everything into one video. Without a
+        # batch the request is a single video conditioned on every ref image.
+        if not batch_sources and not shared_refs:
             return {"raw": None, "error": "missing_ref_media_ids"}
         try:
             model_key = resolve_omni_flash_model(duration_s)
@@ -490,19 +498,44 @@ class FlowSDK:
             return {"raw": None, "error": str(exc)[:200]}
 
         ts = int(time.time() * 1000)
-        used_seed = seed if seed is not None else ts % 1_000_000
         ctx = _client_context(project_id, paygate_tier)
-        request_item = {
-            "aspectRatio": aspect_ratio,
-            "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
-            "videoModelKey": model_key,
-            "seed": used_seed,
-            "metadata": {},
-            "referenceImages": [
+
+        def _ref_images(ids: list[str]) -> list[dict[str, Any]]:
+            return [
                 {"mediaId": mid, "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"}
-                for mid in cleaned_refs
-            ],
-        }
+                for mid in ids
+            ]
+
+        items: list[dict[str, Any]] = []
+        if batch_sources:
+            for i, mid in enumerate(batch_sources):
+                item_prompt = (
+                    prompts[i]
+                    if prompts
+                    and i < len(prompts)
+                    and isinstance(prompts[i], str)
+                    and prompts[i]
+                    else prompt
+                )
+                items.append({
+                    "aspectRatio": aspect_ratio,
+                    "textInput": {"structuredPrompt": {"parts": [{"text": item_prompt}]}},
+                    "videoModelKey": model_key,
+                    # Distinct seed per item so Flow doesn't dedupe.
+                    "seed": (ts + i * 9973) % 1_000_000,
+                    "metadata": {},
+                    "referenceImages": _ref_images([mid, *shared_refs]),
+                })
+        else:
+            used_seed = seed if seed is not None else ts % 1_000_000
+            items.append({
+                "aspectRatio": aspect_ratio,
+                "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
+                "videoModelKey": model_key,
+                "seed": used_seed,
+                "metadata": {},
+                "referenceImages": _ref_images(shared_refs),
+            })
         body = {
             "mediaGenerationContext": {
                 "batchId": str(uuid.uuid4()),
@@ -512,7 +545,7 @@ class FlowSDK:
                 "audioFailurePreference": "BLOCK_SILENCED_VIDEOS",
             },
             "clientContext": {**ctx, "sessionId": f";{ts}"},
-            "requests": [request_item],
+            "requests": items,
             "useV2ModelConfig": True,
         }
 

@@ -1,5 +1,11 @@
 """In-process worker that drains queued generation requests.
 
+Legacy note: this worker still powers the local-agent path kept in-repo for
+development and regression testing. The primary production web path is now
+cloud-first (`frontend -> Cloudflare Worker control plane -> Chrome extension
+-> Google Flow`), so handlers here should not be read as the canonical
+production execution route.
+
 Scope for Run 3 (Phase 2 bridge): a single handler type `"proxy"` that
 forwards `params = {url, method?, headers?, body?}` through the extension
 via ``flow_client.api_request``. Further types (gen_image, gen_video,
@@ -846,9 +852,12 @@ async def _handle_retry_storyboard_shot(params: dict) -> tuple[dict, Optional[st
 # ── Omni Flash r2v ────────────────────────────────────────────────────────
 # Variable-duration video model with a distinct endpoint + body shape from
 # Veo i2v. See agent/flowboard/services/flow_sdk.py::gen_video_omni for the
-# request assembly. Single operation per request (no multi-source batching
-# like Veo's start_media_ids), so the polling logic collapses to a single
-# op + first-error-wins, simpler than _handle_gen_video.
+# request assembly. Now supports multi-source batch fan-out like Veo: each
+# start_media_ids[i] spawns its own video op, paired with prompts[i]; when
+# start_media_ids is absent it falls back to the legacy single-clip flow
+# (conditioned on ref_media_ids). Polling/aggregation handles the N ops
+# positionally (positional media_ids + slot_errors), mirroring
+# _handle_gen_video.
 
 async def _handle_gen_video_omni(params: dict) -> tuple[dict, Optional[str]]:
     from flowboard.services.flow_sdk import is_valid_project_id
@@ -870,6 +879,26 @@ async def _handle_gen_video_omni(params: dict) -> tuple[dict, Optional[str]]:
             else []
         )
     ref_media_ids = [m for m in raw_refs if isinstance(m, str) and m.strip()]
+
+    # Batch source images (optional). Mirrors _handle_gen_video: when the
+    # frontend fans out N source images, each becomes its own video op.
+    # Filter to non-empty strings and strip; empty/absent → None so the
+    # single-input path stays unchanged.
+    raw_starts = params.get("start_media_ids")
+    start_media_ids: Optional[list[str]] = None
+    if isinstance(raw_starts, list):
+        cleaned = [m for m in raw_starts if isinstance(m, str) and m.strip()]
+        start_media_ids = [m.strip() for m in cleaned] or None
+
+    # Per-variant prompts (optional). When provided, each batch source gets
+    # its own prompt instead of all sharing `prompt`; missing/short lists
+    # fall back to the shared prompt. Same cleaning as _handle_gen_video.
+    raw_video_prompts = params.get("prompts")
+    per_variant_prompts: Optional[list[str]] = None
+    if isinstance(raw_video_prompts, list):
+        cleaned_prompts = [p for p in raw_video_prompts if isinstance(p, str) and p.strip()]
+        per_variant_prompts = cleaned_prompts or None
+
     duration_s = params.get("duration_s")
 
     if not isinstance(prompt, str) or not prompt.strip():
@@ -879,7 +908,12 @@ async def _handle_gen_video_omni(params: dict) -> tuple[dict, Optional[str]]:
     project_id = project_id.strip()
     if not is_valid_project_id(project_id):
         return {}, "invalid_project_id"
-    if not ref_media_ids:
+    # A request is valid as long as at least one image source exists:
+    # `ref_media_ids` (shared ingredients) OR `start_media_ids` (batch
+    # fan-out sources). Only when BOTH are empty do we reject. The error
+    # code stays `missing_ref_media_ids` for compatibility with Property P6
+    # and existing tests. (Task 2.3 will sync start_media_ids too.)
+    if not ref_media_ids and not start_media_ids:
         return {}, "missing_ref_media_ids"
     if not isinstance(duration_s, int) or duration_s not in (4, 6, 8, 10):
         return {}, "invalid_duration_s"
@@ -888,7 +922,7 @@ async def _handle_gen_video_omni(params: dict) -> tuple[dict, Optional[str]]:
     if tier is None:
         return {}, "paygate_tier_unknown"
 
-    # ── Cross-project ref sync ────────────────────────────────────────
+    # ── Cross-project media sync ──────────────────────────────────────
     # Flow scopes mediaIds to the project they were uploaded in. When
     # the user references media generated under another board's project
     # (the cross-board Reference library case), Flow returns 404 because
@@ -896,34 +930,93 @@ async def _handle_gen_video_omni(params: dict) -> tuple[dict, Optional[str]]:
     # local cache and substitute the project-local id before dispatch.
     # First sync hits the Flow upload endpoint per ref; subsequent
     # syncs use the MediaProjectMapping cache and are free.
+    #
+    # BOTH source lists must be synced: `ref_media_ids` (shared
+    # ingredients) AND `start_media_ids` (per-video batch sources). We
+    # sync the *union* (de-duplicated, first-seen order) in a single
+    # call, then map each synced id back onto its original list position.
+    # Order preservation is critical for the batch path (Property P5):
+    # the worker pairs media_ids[i] with source[i] positionally, so the
+    # post-sync `synced_start_media_ids` must keep the exact order of the
+    # incoming `start_media_ids`.
+    ids_to_sync: list[str] = []
+    _seen_ids: set[str] = set()
+    for mid in (start_media_ids or []) + ref_media_ids:
+        if mid not in _seen_ids:
+            _seen_ids.add(mid)
+            ids_to_sync.append(mid)
+
     try:
-        synced_refs, sync_failures = await ensure_media_ids_in_project(
-            ref_media_ids, project_id
+        synced_list, sync_failures = await ensure_media_ids_in_project(
+            ids_to_sync, project_id
         )
     except MediaSyncError as exc:
         return {}, f"sync_failed: {exc}"[:200]
-    if not synced_refs:
-        # Every ref failed to sync — surface the first reason.
+
+    # `ensure_media_ids_in_project` returns successes in input order with
+    # failed ids dropped, plus a (id, reason) failure list. Rebuild an
+    # explicit original_id -> project_local_id map so we never rely on
+    # set/ordering coincidences when re-distributing the results back to
+    # the start/ref lists. Walk `ids_to_sync`, skipping the ids that
+    # failed, and consume `synced_list` in lock-step.
+    _failed_ids = {mid for mid, _reason in sync_failures}
+    sync_map: dict[str, str] = {}
+    _cursor = 0
+    for mid in ids_to_sync:
+        if mid in _failed_ids:
+            continue
+        if _cursor < len(synced_list):
+            sync_map[mid] = synced_list[_cursor]
+            _cursor += 1
+
+    # Re-distribute, preserving each list's original order. A source that
+    # failed to sync is omitted (its slot drops out) rather than shifting
+    # the remaining slots — surviving slots keep their relative order so
+    # positional media_ids[i] ↔ source[i] alignment stays intact.
+    synced_start_media_ids: Optional[list[str]] = None
+    if start_media_ids:
+        synced_start_media_ids = [
+            sync_map[mid] for mid in start_media_ids if mid in sync_map
+        ] or None
+    synced_ref_media_ids: list[str] = [
+        sync_map[mid] for mid in ref_media_ids if mid in sync_map
+    ]
+
+    if not synced_start_media_ids and not synced_ref_media_ids:
+        # Every source (start + ref) failed to sync — surface the first
+        # reason. Preserves the previous ref-only `sync_failed` behaviour.
         first = sync_failures[0][1] if sync_failures else "no_refs_synced"
         return (
             {"sync_failures": sync_failures},
             f"sync_failed: {first}"[:200],
         )
     if sync_failures:
-        # Partial sync — log; proceed with the refs that worked.
+        # Partial sync — log; proceed with the sources that worked. For a
+        # batch source a dropped slot means that one video simply won't be
+        # produced, but the surviving slots keep their relative order.
         logger.warning(
-            "gen_video_omni: %d ref(s) failed to sync, proceeding with %d",
-            len(sync_failures), len(synced_refs),
+            "gen_video_omni: %d media id(s) failed to sync, proceeding "
+            "with %d ref(s) and %d batch source(s)",
+            len(sync_failures),
+            len(synced_ref_media_ids),
+            len(synced_start_media_ids or []),
         )
 
     sdk = get_flow_sdk()
+    # Forward the synced batch sources + per-variant prompts so Omni fans
+    # out one op per source image (symmetric with _handle_gen_video). When
+    # `synced_start_media_ids` is None (single-input case) the SDK keeps its
+    # existing single-clip behaviour conditioned on shared `ref_media_ids`,
+    # so non-batch requests are not regressed (Property P4).
     dispatch = await sdk.gen_video_omni(
         prompt=prompt.strip(),
         project_id=project_id,
-        ref_media_ids=synced_refs,
+        ref_media_ids=synced_ref_media_ids,
         duration_s=duration_s,
         aspect_ratio=aspect,
         paygate_tier=tier,
+        start_media_ids=synced_start_media_ids,
+        prompts=per_variant_prompts,
     )
     if dispatch.get("error"):
         return dispatch, str(dispatch["error"])[:200]
