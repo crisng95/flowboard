@@ -28,12 +28,18 @@ export function buildCompletedOutputResult(
   assetIds: string[],
 ): Record<string, unknown> {
   const base = output ?? {};
+  const fallbackMediaUrls = Array.isArray((base as Record<string, unknown>).media_urls)
+    ? ((base as Record<string, unknown>).media_urls as unknown[]).filter(
+        (value): value is string => typeof value === 'string' && value.length > 0,
+      )
+    : [];
+  const resolvedMediaUrls = signedUrls.length > 0 ? signedUrls : fallbackMediaUrls;
   return {
     ...base,
     media_ids: Array.isArray((base as Record<string, unknown>).media_ids)
       ? (base as Record<string, unknown>).media_ids
-      : signedUrls,
-    media_urls: signedUrls,
+      : resolvedMediaUrls,
+    media_urls: resolvedMediaUrls,
     asset_ids: assetIds,
   };
 }
@@ -111,6 +117,10 @@ function storageKeyFromSignedUrl(value: string, bucketName: string): string | nu
   if (!/^https?:\/\//i.test(value)) return null;
   try {
     const url = new URL(value);
+    if (url.pathname === '/api/assets/read') {
+      const key = url.searchParams.get('key');
+      return key && key.length > 0 ? key : null;
+    }
     const marker = `/${bucketName}/`;
     const idx = url.pathname.indexOf(marker);
     if (idx === -1) return null;
@@ -119,6 +129,8 @@ function storageKeyFromSignedUrl(value: string, bucketName: string): string | nu
     return null;
   }
 }
+
+export const __test__storageKeyFromSignedUrl = storageKeyFromSignedUrl;
 
 function userStorageKey(value: unknown, userId: string, bucketName: string): string | null {
   if (typeof value !== 'string' || !value) return null;

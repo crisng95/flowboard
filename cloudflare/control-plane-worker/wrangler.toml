@@ -1,6 +1,7 @@
 name = "flowboard-control-plane"
 main = "src/index.ts"
 compatibility_date = "2026-05-27"
+account_id = "c9aeb959a64a7ab57bd1edc265319da0"
 
 routes = [
   { pattern = "api.flowboard.bond", custom_domain = true }
