@@ -275,7 +275,7 @@ function AccountMenu({ session }: { session: any }) {
                     }}
                   >
                     <ShieldCheck size={20} />
-                    <span>Connect extension</span>
+                    <span>Install / connect extension</span>
                   </button>
                 </div>
 

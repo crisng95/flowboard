@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Copy, Loader2, LogOut, Play, RefreshCw, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Copy, Download, Loader2, LogOut, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { cloudApiBaseUrl, hasSupabaseConfig, supabase } from "./supabase";
 import { AuthFlowSurface } from "../components/AuthFlowSurface";
@@ -8,6 +8,7 @@ import {
   signOutWithCleanup,
   type AuthFlowMode,
 } from "./auth";
+import { EXTENSION_DOWNLOAD_URL, EXTENSION_INSTALL_NOTE } from "../constants/extension";
 import "./cloud-portal.css";
 
 type PairingPayload = {
@@ -155,19 +156,25 @@ export function CloudPortal() {
           <h2>Pair Chrome Extension</h2>
           <p className="muted">
             {session
-              ? "Step 2: generate a pairing token, then paste it into the extension Pair & Connect dialog."
+              ? "Step 2: download the Chrome extension ZIP, load it unpacked, then generate a pairing token and paste it into Pair & Connect."
               : "Step 2 starts after sign-in. Create or sign in to your account first."}
           </p>
-          <button disabled={!session || busy} onClick={() => runAction(async () => {
-            const secret = randomSecret();
-            const result = await postWorker<{ client_id: string }>("/api/pairings/register", token, {
-              client_name: navigator.userAgent.includes("Chrome") ? "Chrome Extension" : "Browser Extension",
-              client_installation_id: getInstallationId(),
-              secret,
-            });
-            setPairing({ controlPlaneBaseUrl: cloudApiBaseUrl, clientId: result.client_id, pairingSecret: secret, mode: "cloud-worker" });
-            setMessage("Pairing token created.");
-          })}><RefreshCw size={16} /> Generate pairing token</button>
+          <div className="button-row">
+            <a className="cloud-link-button secondary" href={EXTENSION_DOWNLOAD_URL} download>
+              <Download size={16} /> Download extension
+            </a>
+            <button disabled={!session || busy} onClick={() => runAction(async () => {
+              const secret = randomSecret();
+              const result = await postWorker<{ client_id: string }>("/api/pairings/register", token, {
+                client_name: navigator.userAgent.includes("Chrome") ? "Chrome Extension" : "Browser Extension",
+                client_installation_id: getInstallationId(),
+                secret,
+              });
+              setPairing({ controlPlaneBaseUrl: cloudApiBaseUrl, clientId: result.client_id, pairingSecret: secret, mode: "cloud-worker" });
+              setMessage("Pairing token created.");
+            })}><RefreshCw size={16} /> Generate pairing token</button>
+          </div>
+          <p className="muted cloud-panel__footnote">{EXTENSION_INSTALL_NOTE}</p>
           {pairing && (
             <div className="token-box">
               <pre>{pairingJson}</pre>

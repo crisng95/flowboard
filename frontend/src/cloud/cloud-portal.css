@@ -159,6 +159,10 @@
   flex-direction: column;
 }
 
+.button-row {
+  flex-wrap: wrap;
+}
+
 .account-box {
   align-items: center;
   justify-content: space-between;
@@ -240,10 +244,42 @@
   box-shadow: none;
 }
 
+.cloud-link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 18px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.cloud-link-button.secondary {
+  background: rgba(255, 255, 255, 0.05);
+  color: #e2e8f0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: none;
+}
+
+.cloud-link-button.secondary:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
+}
+
 .cloud-panel button.secondary:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.1);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.cloud-panel__footnote {
+  margin: 12px 0 0;
+  font-size: 12px;
 }
 
 .cloud-panel button:disabled {

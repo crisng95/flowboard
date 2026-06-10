@@ -1,6 +1,11 @@
 import { useEffect, useState, useMemo } from "react";
-import { X, RefreshCw, Copy, Check, Info, ShieldCheck, Loader2 } from "lucide-react";
+import { X, RefreshCw, Copy, Check, Info, ShieldCheck, Loader2, Download } from "lucide-react";
 import { supabase, cloudApiBaseUrl } from "../cloud/supabase";
+import {
+  EXTENSION_DOWNLOAD_URL,
+  EXTENSION_INSTALL_NOTE,
+  EXTENSION_INSTALL_STEPS,
+} from "../constants/extension";
 
 interface ExtensionGateModalProps {
   isOpen: boolean;
@@ -150,10 +155,11 @@ export function ExtensionGateModal({ isOpen, onClose }: ExtensionGateModalProps)
               <span>How to pair and connect:</span>
             </div>
             <ol className="list-decimal list-inside space-y-1 pl-1">
-              <li>Open the Flowboard helper Chrome extension popup.</li>
-              <li>Click <strong>Pair &amp; Connect</strong>.</li>
-              <li>Paste the pairing JSON token block below and save.</li>
+              {EXTENSION_INSTALL_STEPS.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
             </ol>
+            <p className="text-[11px] text-white/45">{EXTENSION_INSTALL_NOTE}</p>
           </div>
 
           {error && (
@@ -189,23 +195,34 @@ export function ExtensionGateModal({ isOpen, onClose }: ExtensionGateModalProps)
             </div>
           </div>
 
-          <button
-            onClick={handleCopy}
-            disabled={!pairing}
-            className="w-full rounded-xl bg-accent py-3.5 text-sm font-semibold text-white hover:bg-accent/90 focus:ring-2 focus:ring-accent/50 disabled:opacity-50 transition-all flex items-center justify-center gap-2 mt-4 cursor-pointer shadow-lg shadow-accent/20"
-          >
-            {copied ? (
-              <>
-                <Check size={16} />
-                <span>Copied Token!</span>
-              </>
-            ) : (
-              <>
-                <Copy size={16} />
-                <span>Copy Token to Clipboard</span>
-              </>
-            )}
-          </button>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <a
+              href={EXTENSION_DOWNLOAD_URL}
+              download
+              className="rounded-xl border border-white/[0.08] bg-white/[0.03] py-3.5 text-sm font-semibold text-white hover:bg-white/[0.08] transition-all flex items-center justify-center gap-2"
+            >
+              <Download size={16} />
+              <span>Download extension</span>
+            </a>
+
+            <button
+              onClick={handleCopy}
+              disabled={!pairing}
+              className="w-full rounded-xl bg-accent py-3.5 text-sm font-semibold text-white hover:bg-accent/90 focus:ring-2 focus:ring-accent/50 disabled:opacity-50 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-accent/20"
+            >
+              {copied ? (
+                <>
+                  <Check size={16} />
+                  <span>Copied Token!</span>
+                </>
+              ) : (
+                <>
+                  <Copy size={16} />
+                  <span>Copy Token</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>
