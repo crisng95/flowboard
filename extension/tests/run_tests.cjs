@@ -378,6 +378,26 @@ testAsync('FlowboardAssetUtils reference cache key ignores signed URL query para
   );
 });
 
+testAsync('FlowboardAssetUtils reference cache key preserves control-plane asset read storage keys', async () => {
+  const utils = global.FlowboardAssetUtils;
+  const urlA = 'https://api.flowboard.bond/api/assets/read?key=users%2Fu1%2Fuploads%2Fimg-1.jpg&exp=1&sig=aaa';
+  const urlB = 'https://api.flowboard.bond/api/assets/read?key=users%2Fu1%2Fuploads%2Fimg-2.jpg&exp=2&sig=bbb';
+
+  assertEquals(
+    utils.canonicalReferenceUrl(urlA),
+    'https://api.flowboard.bond/api/assets/read?key=users%2Fu1%2Fuploads%2Fimg-1.jpg',
+  );
+  assertEquals(
+    utils.canonicalReferenceUrl(urlB),
+    'https://api.flowboard.bond/api/assets/read?key=users%2Fu1%2Fuploads%2Fimg-2.jpg',
+  );
+  assert(
+    (await utils.referenceCacheKey('project-1', urlA)) !==
+      (await utils.referenceCacheKey('project-1', urlB)),
+    'Distinct asset read keys must not collide in the per-project media cache',
+  );
+});
+
 testAsync('FlowboardAssetUtils fetchMediaBytes validations', async () => {
   const utils = global.FlowboardAssetUtils;
 
@@ -454,6 +474,93 @@ testAsync('FlowboardAssetUtils uploadGeneratedAsset flow', async () => {
   assertEquals(assetRow.byte_size, 5);
   assertEquals(assetRow.checksum, 'dummy-checksum');
   assertEquals(assetRow.prompt_snapshot, 'a test prompt');
+});
+
+testAsync('FlowboardAssetUtils uploadGeneratedAsset prefers direct worker upload when available', async () => {
+  const utils = global.FlowboardAssetUtils;
+  let uploadCalled = false;
+  const mockClient = {
+    uploadAsset: async (requestId, storageKey, contentType, bytes, checksum) => {
+      uploadCalled = true;
+      assertEquals(requestId, 'job-1');
+      assertEquals(storageKey, 'users/user-1/flow/job-1/output-0.mp4');
+      assertEquals(contentType, 'video/mp4');
+      assertEquals(bytes.byteLength, 4);
+      assertEquals(checksum, 'video-checksum');
+      return { ok: true };
+    },
+    signUpload: async () => {
+      throw new Error('signUpload fallback should not be used');
+    },
+  };
+
+  const dummyAsset = {
+    bytes: new Uint8Array([1, 2, 3, 4]),
+    mimeType: 'video/mp4',
+    byteSize: 4,
+    checksum: 'video-checksum',
+    extension: 'mp4',
+  };
+
+  const assetRow = await utils.uploadGeneratedAsset(
+    mockClient,
+    dummyAsset,
+    'user-1',
+    'job-1',
+    0,
+    'video prompt'
+  );
+
+  assert(uploadCalled, 'Direct worker upload should have been executed');
+  assertEquals(assetRow.storage_key, 'users/user-1/flow/job-1/output-0.mp4');
+  assertEquals(assetRow.mime_type, 'video/mp4');
+});
+
+testAsync('FlowboardAssetUtils uploadGeneratedAsset falls back to direct control-plane upload when legacy client lacks uploadAsset', async () => {
+  const utils = global.FlowboardAssetUtils;
+  const mockClient = {
+    baseUrl: 'https://api.flowboard.bond',
+    clientId: 'client-123',
+    pairingSecret: 'pairing-xyz',
+    signUpload: async () => {
+      throw new Error('signUpload fallback should not be used when direct worker credentials exist');
+    },
+  };
+
+  let directCalled = false;
+  mockFetchHandler = async (url, options) => {
+    directCalled = true;
+    assertEquals(url, 'https://api.flowboard.bond/api/extension/upload-asset');
+    assertEquals(options.method, 'POST');
+    assertEquals(options.headers['X-Client-Id'], 'client-123');
+    assertEquals(options.headers['X-Pairing-Secret'], 'pairing-xyz');
+    assertEquals(options.headers['X-Request-Id'], 'job-1');
+    assertEquals(options.headers['X-Storage-Key'], 'users/user-1/flow/job-1/output-0.png');
+    assertEquals(options.headers['Content-Type'], 'image/png');
+    return new MockResponse(200, JSON.stringify({ ok: true }));
+  };
+
+  const dummyAsset = {
+    bytes: new Uint8Array([1, 2, 3]),
+    mimeType: 'image/png',
+    byteSize: 3,
+    checksum: 'legacy-checksum',
+    extension: 'png',
+  };
+
+  const assetRow = await utils.uploadGeneratedAsset(
+    mockClient,
+    dummyAsset,
+    'user-1',
+    'job-1',
+    0,
+    'legacy prompt'
+  );
+
+  assert(directCalled, 'Direct control-plane upload should have been executed');
+  assertEquals(assetRow.storage_key, 'users/user-1/flow/job-1/output-0.png');
+  assertEquals(assetRow.mime_type, 'image/png');
+  assertEquals(assetRow.byte_size, 3);
 });
 
 testAsync('FlowboardAssetUtils uploadGeneratedAsset sign-upload stage errors', async () => {

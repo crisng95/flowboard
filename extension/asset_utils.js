@@ -70,6 +70,18 @@
     try {
       const parsed = new URL(url);
       parsed.hash = '';
+      // Control-plane signed read URLs all share the same pathname
+      // (`/api/assets/read`) and differ only by the `key=` query param.
+      // Stripping the full query would collapse distinct uploaded assets into
+      // one cache entry, so preserve only the stable storage key identity.
+      if (parsed.pathname === '/api/assets/read') {
+        const storageKey = parsed.searchParams.get('key');
+        parsed.search = '';
+        if (storageKey) {
+          parsed.searchParams.set('key', storageKey);
+        }
+        return parsed.toString();
+      }
       parsed.search = '';
       return `${parsed.origin}${parsed.pathname}`;
     } catch (_) {
@@ -87,6 +99,37 @@
     const buffer = bytes instanceof ArrayBuffer ? bytes : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
     const digest = await crypto.subtle.digest('SHA-256', buffer);
     return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  async function directControlPlaneUpload(cloudClient, requestId, storageKey, contentType, bytes, checksum) {
+    const baseUrl = typeof cloudClient?.baseUrl === 'string' ? cloudClient.baseUrl.replace(/\/+$/, '') : '';
+    const clientId = typeof cloudClient?.clientId === 'string' ? cloudClient.clientId : '';
+    const pairingSecret = typeof cloudClient?.pairingSecret === 'string' ? cloudClient.pairingSecret : '';
+    if (!baseUrl || !clientId || !pairingSecret) {
+      throw new Error('Missing control-plane upload credentials');
+    }
+    const resp = await fetch(`${baseUrl}/api/extension/upload-asset`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': contentType,
+        'X-Client-Id': clientId,
+        'X-Pairing-Secret': pairingSecret,
+        'X-Request-Id': requestId,
+        'X-Storage-Key': storageKey,
+        'X-Byte-Size': String(bytes?.byteLength ?? 0),
+        ...(checksum ? { 'X-Checksum': checksum } : {}),
+      },
+      body: bytes,
+    });
+    if (!resp.ok) {
+      const detail = await resp.text().catch(() => '');
+      throw new Error(`/api/extension/upload-asset failed: HTTP ${resp.status}${detail ? ` ${detail}` : ''}`);
+    }
+    try {
+      return await resp.json();
+    } catch (_) {
+      return { ok: true };
+    }
   }
 
   async function fetchMediaBytes(url) {
@@ -144,6 +187,39 @@
   async function uploadGeneratedAsset(cloudClient, asset, userId, requestId, index, promptSnapshot) {
     const ext = asset.extension || extensionForMime(asset.mimeType);
     const storageKey = `users/${userId}/flow/${requestId}/output-${index}.${ext}`;
+    if (cloudClient && (typeof cloudClient.uploadAsset === 'function' || cloudClient.baseUrl)) {
+      try {
+        if (typeof cloudClient.uploadAsset === 'function') {
+          await cloudClient.uploadAsset(
+            requestId,
+            storageKey,
+            asset.mimeType,
+            asset.bytes,
+            asset.checksum,
+          );
+        } else {
+          await directControlPlaneUpload(
+            cloudClient,
+            requestId,
+            storageKey,
+            asset.mimeType,
+            asset.bytes,
+            asset.checksum,
+          );
+        }
+        return {
+          source_provider: 'flow',
+          file_name: `flow_output.${ext}`,
+          storage_key: storageKey,
+          mime_type: asset.mimeType,
+          byte_size: asset.byteSize,
+          checksum: asset.checksum,
+          prompt_snapshot: promptSnapshot || null,
+        };
+      } catch (error) {
+        throw new FlowboardAssetError('ERR_STAGE_R2_PUT', error?.message || 'Direct asset upload failed', error);
+      }
+    }
     let signed = null;
     try {
       signed = await cloudClient.signUpload(storageKey, asset.mimeType, 900);
