@@ -29,6 +29,12 @@ export function authRecoveryRedirectUrl(): string {
   return `${window.location.origin}${window.location.pathname}`;
 }
 
+export function authConfirmationRedirectUrl(): string {
+  const url = new URL(`${window.location.origin}${window.location.pathname}`);
+  url.searchParams.set("auth", "confirmed");
+  return url.toString();
+}
+
 export function clearAuthDependentState(): void {
   useGenerationStore.setState({ paygateTier: null, projectId: null });
   useBoardStore.setState({
@@ -62,7 +68,13 @@ export async function signUpWithPassword(
   credentials: SignUpWithPasswordCredentials,
 ): Promise<void> {
   const client = getSupabaseClient();
-  const { data, error } = await client.auth.signUp(credentials);
+  const { data, error } = await client.auth.signUp({
+    ...credentials,
+    options: {
+      ...credentials.options,
+      emailRedirectTo: authConfirmationRedirectUrl(),
+    },
+  });
   if (error) throw error;
   if (data.session) await client.auth.signOut();
 }
@@ -72,6 +84,9 @@ export async function resendSignupConfirmation(email: string): Promise<void> {
   const { error } = await client.auth.resend({
     type: "signup",
     email,
+    options: {
+      emailRedirectTo: authConfirmationRedirectUrl(),
+    },
   });
   if (error) throw error;
 }
