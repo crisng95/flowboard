@@ -20,13 +20,28 @@ function randomSecret(): string {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+let ephemeralInstallationId: string | null = null;
+
 function getInstallationId(): string {
   const key = "flowboard.beta.installationId";
-  const existing = localStorage.getItem(key);
-  if (existing) return existing;
   const value = crypto.randomUUID();
-  localStorage.setItem(key, value);
-  return value;
+
+  try {
+    const existing = localStorage.getItem(key);
+    if (existing) return existing;
+    localStorage.setItem(key, value);
+    return value;
+  } catch {}
+
+  try {
+    const existing = sessionStorage.getItem(key);
+    if (existing) return existing;
+    sessionStorage.setItem(key, value);
+    return value;
+  } catch {}
+
+  if (!ephemeralInstallationId) ephemeralInstallationId = value;
+  return ephemeralInstallationId;
 }
 
 export function ExtensionGateModal({ isOpen, onClose }: ExtensionGateModalProps) {
