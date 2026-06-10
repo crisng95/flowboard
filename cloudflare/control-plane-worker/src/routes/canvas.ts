@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireUser } from '../lib/auth';
+import { bucketName, storageKeyFromSignedUrl, userStorageKey } from '../lib/assetReferences';
 import { ApiError } from '../lib/errors';
 import { presignGet } from '../lib/r2Presign';
 import { assertTaskType } from '../lib/requestGuards';
@@ -113,50 +114,26 @@ function shouldHydrateProjectId(inputData: Record<string, unknown>): boolean {
   return typeof value !== 'string' || !value.trim() || value === 'cloud-worker';
 }
 
-function storageKeyFromSignedUrl(value: string, bucketName: string): string | null {
-  if (!/^https?:\/\//i.test(value)) return null;
-  try {
-    const url = new URL(value);
-    if (url.pathname === '/api/assets/read') {
-      const key = url.searchParams.get('key');
-      return key && key.length > 0 ? key : null;
-    }
-    const marker = `/${bucketName}/`;
-    const idx = url.pathname.indexOf(marker);
-    if (idx === -1) return null;
-    return decodeURIComponent(url.pathname.slice(idx + marker.length));
-  } catch {
-    return null;
-  }
-}
-
 export const __test__storageKeyFromSignedUrl = storageKeyFromSignedUrl;
 
-function userStorageKey(value: unknown, userId: string, bucketName: string): string | null {
-  if (typeof value !== 'string' || !value) return null;
-  if (value.startsWith(`users/${userId}/`)) return value;
-  const fromUrl = storageKeyFromSignedUrl(value, bucketName);
-  return fromUrl?.startsWith(`users/${userId}/`) ? fromUrl : null;
-}
-
 async function hydrateNodeMediaUrls(env: AppBindings['Bindings'], baseUrl: string, userId: string, nodes: any[]): Promise<any[]> {
-  const bucketName = env.R2_BUCKET_NAME || 'flowboard-prod-assets';
+  const bucket = bucketName(env);
   return Promise.all(nodes.map(async (node) => {
     const data = objectData(node.data);
     const sign = async (value: unknown): Promise<unknown> => {
-      const key = userStorageKey(value, userId, bucketName);
+      const key = userStorageKey(value, userId, bucket);
       return key ? presignGet(env, baseUrl, key, 3600) : value;
     };
 
     if (typeof data.mediaId === 'string') {
-      data.storageKey = data.storageKey || userStorageKey(data.mediaId, userId, bucketName) || undefined;
+      data.storageKey = data.storageKey || userStorageKey(data.mediaId, userId, bucket) || undefined;
       data.mediaId = await sign(data.storageKey || data.mediaId);
     }
     if (Array.isArray(data.mediaIds)) {
       const storageKeys = Array.isArray(data.storageKeys) ? data.storageKeys : [];
       const nextStorageKeys = data.mediaIds.map((value, index) => {
         if (typeof storageKeys[index] === 'string') return storageKeys[index];
-        return userStorageKey(value, userId, bucketName);
+        return userStorageKey(value, userId, bucket);
       });
       data.storageKeys = nextStorageKeys;
       data.mediaIds = await Promise.all(data.mediaIds.map((value, index) => sign(nextStorageKeys[index] || value)));
@@ -166,10 +143,10 @@ async function hydrateNodeMediaUrls(env: AppBindings['Bindings'], baseUrl: strin
       data.listItems = await Promise.all(data.listItems.map(async (rawItem) => {
         if (!rawItem || typeof rawItem !== 'object' || Array.isArray(rawItem)) return rawItem;
         const item = { ...(rawItem as Record<string, unknown>) };
-        const itemStorageKey = userStorageKey(item.storageKey, userId, bucketName)
-          || userStorageKey(item.mediaId, userId, bucketName)
-          || userStorageKey(item.mediaUrl, userId, bucketName)
-          || userStorageKey(item.imageUrl, userId, bucketName)
+        const itemStorageKey = userStorageKey(item.storageKey, userId, bucket)
+          || userStorageKey(item.mediaId, userId, bucket)
+          || userStorageKey(item.mediaUrl, userId, bucket)
+          || userStorageKey(item.imageUrl, userId, bucket)
           || undefined;
         if (itemStorageKey) {
           item.storageKey = itemStorageKey;
@@ -177,7 +154,7 @@ async function hydrateNodeMediaUrls(env: AppBindings['Bindings'], baseUrl: strin
           if (typeof item.mediaId === 'string') item.mediaId = signedValue;
           if (typeof item.mediaUrl === 'string') item.mediaUrl = signedValue;
           if (typeof item.imageUrl === 'string') item.imageUrl = signedValue;
-          if (typeof item.flowMediaId === 'string' && userStorageKey(item.flowMediaId, userId, bucketName)) {
+          if (typeof item.flowMediaId === 'string' && userStorageKey(item.flowMediaId, userId, bucket)) {
             item.flowMediaId = signedValue;
           }
         }
@@ -359,9 +336,13 @@ canvasRoutes.delete('/boards/:id', async (c) => {
     board_id: `eq.${boardId}`,
   }).catch(() => null);
 
-  await db.request('/rest/v1/assets', { method: 'DELETE' }, {
+  await db.patch('/rest/v1/assets', {
+    retention_state: 'orphaned',
+    orphaned_at: new Date().toISOString(),
+  }, {
     board_id: `eq.${boardId}`,
     user_id: `eq.${userId}`,
+    retention_state: 'neq.pinned',
   }).catch(() => null);
 
   await db.request('/rest/v1/requests', { method: 'DELETE' }, {

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { ZodError } from 'zod';
+import { runAssetGc } from './lib/assetGc';
 import { isAllowedOrigin, validateEnv } from './lib/env';
 import { ApiError, jsonError } from './lib/errors';
 import { SupabaseRest } from './lib/supabase';
@@ -61,7 +62,7 @@ app.route('/api', extensionRoutes);
 // `[triggers] crons` entry in wrangler.toml. Runs with service-role creds, so
 // no external token guard is needed — only Cloudflare can invoke it.
 async function scheduled(
-  _event: ScheduledController,
+  event: ScheduledController,
   env: Env,
   ctx: ExecutionContext,
 ): Promise<void> {
@@ -69,10 +70,14 @@ async function scheduled(
     (async () => {
       try {
         validateEnv(env);
+        if (event.cron === '*/15 * * * *') {
+          await runAssetGc(env);
+          return;
+        }
         const db = new SupabaseRest(env);
         await db.post('/rest/v1/rpc/recover_stale_requests', {});
       } catch (err) {
-        console.error('[control-plane] recover_stale_requests cron failed', err);
+        console.error(`[control-plane] scheduled job failed (${event.cron})`, err);
       }
     })(),
   );

@@ -144,6 +144,8 @@ assetRoutes.post('/upload', async (c) => {
     mime_type: contentType,
     byte_size: size,
     checksum,
+    retention_state: 'active',
+    orphaned_at: null,
   });
   const assetId = rows[0]?.id;
   const signedUrl = await presignGet(c.env, c.req.url, storageKey, 3600);

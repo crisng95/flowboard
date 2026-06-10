@@ -10,7 +10,7 @@ routes = [
 # Cron Trigger: periodically requeue/fail jobs whose worker lease expired
 # (replaces the FastAPI /api/cron/recover-stale endpoint). Every 2 minutes.
 [triggers]
-crons = ["*/2 * * * *"]
+crons = ["*/2 * * * *", "*/15 * * * *"]
 
 [vars]
 ENVIRONMENT = "production"
