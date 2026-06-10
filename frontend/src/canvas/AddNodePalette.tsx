@@ -4,6 +4,7 @@ import {
   Plus,
   StickyNote,
   MessageSquarePlus,
+  Bot,
   MousePointer2,
   Hand,
   Scissors,
@@ -39,6 +40,7 @@ const CATEGORIES: Category[] = [
     nodes: [
       { type: "text", icon: Type, label: "Text" },
       { type: "note", icon: StickyNote, label: "Note" },
+      { type: "assistant", icon: Bot, label: "Assistant" },
     ],
   },
   {

@@ -6,6 +6,7 @@ import {
   createNode,
   createEdge,
   getRequest,
+  mediaUrl,
   patchNode,
   type RequestDTO,
 } from "../api/client";
@@ -174,6 +175,17 @@ interface GenerationState {
       // across the 4 generated images.
       prompts?: string[];
       skipSpawningNodes?: boolean;
+    },
+  ): Promise<void>;
+
+  dispatchAssistant(
+    rfId: string,
+    opts: {
+      prompt: string;
+      systemPrompt?: string;
+      attachments?: AssistantAttachmentInput[];
+      attachmentSummary?: AssistantAttachmentSummary[];
+      model?: "flow_gemini";
     },
   ): Promise<void>;
 
@@ -406,7 +418,7 @@ function isMediaSourceType(type: string | undefined): boolean {
 }
 
 function isRunnableNodeType(type: string | undefined): boolean {
-  return type === "reference" || type === "variant" || type === "video" || type === "list";
+  return type === "reference" || type === "variant" || type === "video" || type === "list" || type === "assistant";
 }
 
 function isTextEdge(edge: { targetHandle?: string | null; source: string; target: string }, board: { nodes: any[]; edges: any[] }): boolean {
@@ -415,6 +427,7 @@ function isTextEdge(edge: { targetHandle?: string | null; source: string; target
   if (!srcNode) return false;
   const srcType = srcNode.data?.type ?? srcNode.type;
   if (srcType === "text") return true;
+  if (srcType === "assistant") return true;
   if (srcType === "list") {
     const listItems = Array.isArray(srcNode.data?.listItems) ? srcNode.data.listItems : [];
     const isTextList = listItems.length > 0 && listItems[0]?.kind === "text";
@@ -433,6 +446,9 @@ function getUpstreamTextPrompt(targetRfId: string): string {
   if (!textEdge) return "";
   const sourceNode = board.nodes.find((node) => node.id === textEdge.source);
   if (!sourceNode) return "";
+  if (sourceNode.data.type === "assistant") {
+    return ((sourceNode.data.assistantOutput as string | undefined) ?? "").trim();
+  }
   if (sourceNode.data.type === "list") {
     const listItems = collectListItemsFromNode(sourceNode as any);
     return listItems
@@ -442,6 +458,119 @@ function getUpstreamTextPrompt(targetRfId: string): string {
       .join("\n");
   }
   return ((sourceNode.data.prompt as string | undefined) ?? "").trim();
+}
+
+type AssistantAttachmentInput = {
+  mimeType: string;
+  data: string;
+};
+
+type AssistantAttachmentSummary = {
+  id: string;
+  kind: "image" | "video";
+  title: string;
+  mimeType: string;
+};
+
+function binaryToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function inferAttachmentMime(kind: "image" | "video", candidate: string): string {
+  if (kind === "video") return "video/mp4";
+  const lower = candidate.toLowerCase();
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".gif")) return "image/gif";
+  return "image/png";
+}
+
+function normalizeAttachmentCandidate(value: unknown): string | null {
+  const text = cleanText(value);
+  return text ? mediaUrl(text) : null;
+}
+
+function collectAssistantAttachmentCandidates(node: FlowNode): Array<{ url: string; kind: "image" | "video"; title: string }> {
+  const nodeType = primaryNodeType(node);
+  if (nodeType === "list") {
+    return collectSelectedListMediaItems(node as { id: string; data: Record<string, unknown> })
+      .map((item, index) => {
+        const url = normalizeAttachmentCandidate(item.mediaUrl ?? item.imageUrl ?? item.mediaId ?? item.flowMediaId);
+        if (!url) return null;
+        const kind = item.kind === "video" ? "video" : "image";
+        return {
+          url,
+          kind,
+          title: cleanText(item.title) ?? `${kind === "video" ? "Video" : "Image"} ${index + 1}`,
+        };
+      })
+      .filter((value): value is { url: string; kind: "image" | "video"; title: string } => value !== null);
+  }
+
+  const kind = nodeType === "video" ? "video" : "image";
+  const candidates = Array.isArray(node.data.mediaIds)
+    ? node.data.mediaIds
+    : [node.data.mediaId];
+  const normalized = candidates
+    .map((candidate) => normalizeAttachmentCandidate(candidate))
+    .filter((candidate): candidate is string => typeof candidate === "string" && candidate.length > 0);
+  if (normalized.length === 0) {
+    const fallback = normalizeAttachmentCandidate(node.data.flowMediaId ?? node.data.mediaId);
+    return fallback
+      ? [{ url: fallback, kind, title: cleanText(node.data.title) ?? (kind === "video" ? "Video" : "Image") }]
+      : [];
+  }
+  return normalized.map((url, index) => ({
+    url,
+    kind,
+    title: cleanText(node.data.title) ?? `${kind === "video" ? "Video" : "Image"} ${index + 1}`,
+  }));
+}
+
+async function buildAssistantAttachments(targetRfId: string): Promise<{
+  attachments: AssistantAttachmentInput[];
+  summary: AssistantAttachmentSummary[];
+}> {
+  const board = useBoardStore.getState();
+  const edges = board.edges.filter((edge) => edge.target === targetRfId);
+  const attachmentEdges = edges.filter((edge) => edge.targetHandle === "target-image" || edge.targetHandle === "target-video");
+  const attachments: AssistantAttachmentInput[] = [];
+  const summary: AssistantAttachmentSummary[] = [];
+
+  for (const edge of attachmentEdges) {
+    const sourceNode = board.nodes.find((node) => node.id === edge.source);
+    if (!sourceNode) continue;
+    const sourceType = primaryNodeType(sourceNode);
+    if (!isMediaSourceType(sourceType)) continue;
+    const candidates = collectAssistantAttachmentCandidates(sourceNode);
+    for (const [index, candidate] of candidates.entries()) {
+      const response = await fetch(candidate.url);
+      if (!response.ok) {
+        throw new Error(`Failed to load upstream ${candidate.kind} (${response.status})`);
+      }
+      const blob = await response.blob();
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      const mimeType = blob.type || inferAttachmentMime(candidate.kind, candidate.url);
+      attachments.push({
+        mimeType,
+        data: binaryToBase64(bytes),
+      });
+      summary.push({
+        id: `${sourceNode.id}-${candidate.kind}-${index}`,
+        kind: candidate.kind,
+        title: candidate.title,
+        mimeType,
+      });
+    }
+  }
+
+  return { attachments, summary };
 }
 
 async function waitForNodeSettled(
@@ -1117,6 +1246,19 @@ async function runNodeDirect(
         continue;
       }
 
+      if (sourceType === "assistant") {
+        if (!wantsText) continue;
+        const text = cleanText(sourceNode.data.assistantOutput);
+        if (!text) continue;
+        items.push({
+          id: `${sourceNode.id}-assistant-${items.length + 1}`,
+          kind: "text",
+          title: cleanText(sourceNode.data.title) ?? `Assistant ${items.length + 1}`,
+          text,
+        });
+        continue;
+      }
+
       const listItems = collectListItemsFromNode(sourceNode as { id: string; data: Record<string, unknown> });
       if (!isMediaSourceType(sourceType) && sourceType !== "list") continue;
       if (sourceType === "list") {
@@ -1215,6 +1357,20 @@ async function runNodeDirect(
 
     const hasBatchInputs = upstreamPrompts.length > 1 && refMediaIds.length > 1;
     const batchMode = (node.data.batchMode as "zip" | "cross") || "cross";
+
+    if (upstreamPrompts.length > 1 && refMediaIds.length === 1) {
+      await get().dispatchGeneration(rfId, {
+        prompt: upstreamPrompts[0],
+        kind: "image",
+        aspectRatio,
+        variantCount: upstreamPrompts.length,
+        imageModel,
+        prompts: upstreamPrompts,
+        sourceMediaIds: Array(upstreamPrompts.length).fill(refMediaIds[0]),
+        skipSpawningNodes: true,
+      });
+      return;
+    }
 
     if (hasBatchInputs) {
       if (batchMode === "zip") {
@@ -1318,6 +1474,30 @@ async function runNodeDirect(
       imageModel,
       prompts: upstreamPrompts.length > 0 ? upstreamPrompts.slice(0, imageCount) : undefined,
       sourceMediaIds: refMediaIds.length > 0 ? refMediaIds : undefined,
+    });
+    return;
+  }
+
+  if (nodeType === "assistant") {
+    const textEdge = board.edges.find((e) => e.target === rfId && e.targetHandle === "target-text");
+    const textSourceNode = textEdge ? board.nodes.find((n) => n.id === textEdge.source) : null;
+    const upstreamPrompts = textSourceNode
+      ? (textSourceNode.data.type === "list"
+          ? collectSelectedListTextPrompts(textSourceNode as { id: string; data: Record<string, unknown> })
+          : [getUpstreamTextPrompt(rfId)].filter(Boolean))
+      : [];
+    const prompt = ((node.data.assistantPrompt as string | undefined) ?? "").trim();
+    const finalPrompt = [prompt, ...upstreamPrompts].filter(Boolean).join("\n\n");
+    const { attachments, summary } = await buildAssistantAttachments(rfId);
+    if (!finalPrompt && attachments.length === 0) {
+      throw new Error("assistant_node_missing_prompt_or_inputs");
+    }
+    await get().dispatchAssistant(rfId, {
+      prompt: finalPrompt,
+      systemPrompt: ((node.data.systemPrompt as string | undefined) ?? "").trim(),
+      attachments,
+      attachmentSummary: summary,
+      model: ((node.data.assistantModel as "flow_gemini" | undefined) ?? "flow_gemini"),
     });
     return;
   }
@@ -2415,6 +2595,108 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       },
     }));
     scheduleNextPoll();
+  },
+
+  async dispatchAssistant(rfId, opts) {
+    if (supabase) {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session) {
+        useBoardStore.getState().setShowAuthModal(true);
+        return;
+      }
+    }
+
+    const boardId = useBoardStore.getState().boardId;
+    if (boardId === null) {
+      set({ error: "no board loaded" });
+      return;
+    }
+
+    const existing = get().active[rfId];
+    if (existing && existing.timerId !== null) clearTimeout(existing.timerId);
+
+    commitNodeData(rfId, {
+      status: "queued",
+      assistantStatus: "queued",
+      assistantError: null,
+      assistantOutput: "",
+      assistantModel: opts.model ?? "flow_gemini",
+      attachmentsSummary: opts.attachmentSummary ?? [],
+      error: null,
+    });
+
+    const nodeDbId = parseInt(rfId, 10);
+    let reqDto: RequestDTO;
+    try {
+      reqDto = await createRequest({
+        type: "text_gen",
+        node_id: Number.isNaN(nodeDbId) ? undefined : nodeDbId,
+        params: {
+          prompt: opts.prompt,
+          system_prompt: opts.systemPrompt,
+          attachments: opts.attachments ?? [],
+          model: "gemini-3-flash-preview",
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "assistant request failed";
+      commitNodeData(rfId, {
+        status: "error",
+        assistantStatus: "error",
+        assistantError: message,
+        error: message,
+      });
+      set({ error: message });
+      return;
+    }
+
+    pollRequest(
+      { get, set },
+      rfId,
+      reqDto.id,
+      {
+        onDone: (req) => {
+          const text = typeof req.result["text"] === "string" ? req.result["text"] : "";
+          commitNodeData(rfId, {
+            status: "done",
+            assistantStatus: "done",
+            assistantOutput: text,
+            assistantError: null,
+            error: null,
+          });
+          const dbId = parseInt(rfId, 10);
+          if (!Number.isNaN(dbId)) {
+            patchNode(dbId, {
+              status: "done",
+              data: {
+                assistantOutput: text,
+                assistantStatus: "done",
+                assistantError: null,
+                systemPrompt: opts.systemPrompt ?? null,
+                assistantModel: opts.model ?? "flow_gemini",
+                attachmentsSummary: opts.attachmentSummary ?? [],
+                renderedAt: new Date().toISOString(),
+                error: null,
+              },
+            }).catch(() => {});
+          }
+          set((s) => {
+            const next = { ...s.active };
+            delete next[rfId];
+            return { active: next };
+          });
+        },
+        onError: (errMsg) => {
+          commitNodeData(rfId, {
+            status: "error",
+            assistantStatus: "error",
+            assistantError: errMsg,
+            error: errMsg,
+          });
+          set({ error: errMsg });
+        },
+      },
+    );
   },
 
   async refineImage(rfId, opts) {

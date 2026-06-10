@@ -427,8 +427,14 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
           boardName = boardState.boardName || "";
         } catch {}
         const nodeId = body.node_id ? resolveToUuid(body.node_id) : null;
-        const expectedOutput = body.type.includes("video") ? "video" : "image";
-        const taskType = body.type === "gen_video_omni"
+        const expectedOutput = body.type === "text_gen"
+          ? "text"
+          : body.type.includes("video")
+            ? "video"
+            : "image";
+        const taskType = body.type === "text_gen"
+          ? "text_gen"
+          : body.type === "gen_video_omni"
           ? "txt2vid_omni"
           : body.type === "gen_video"
             ? "img2vid"
@@ -456,6 +462,9 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
             source_media_id: body.params.source_media_id ?? body.params.sourceMediaId,
             duration_s: body.params.duration_s,
             video_quality: body.params.video_quality ?? body.params.videoQuality,
+            system_prompt: body.params.system_prompt ?? body.params.systemPrompt,
+            attachments: body.params.attachments,
+            model: body.params.model,
             project_title: boardName,
           },
         };
@@ -663,6 +672,7 @@ export type NodeType =
   | "variant"
   | "video"
   | "upload"
+  | "assistant"
   | "text"
   | "add_reference"
   | "group"

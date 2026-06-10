@@ -33,6 +33,7 @@ import { TextNode } from "./v2/TextNode";
 import { NoteNode } from "./v2/NoteNode";
 import { GroupNodeShell } from "./v2/GroupNodeShell";
 import { ListNode } from "./v2/ListNode";
+import { AssistantNode } from "./v2/AssistantNode";
 import { SelectionContextMenu } from "./SelectionContextMenu";
 import { DashedConnectionLine } from "./DashedConnectionLine";
 
@@ -50,6 +51,7 @@ const nodeTypes = useV2
       variant: VariantNode,
       video: VideoGeneratorNode,
       upload: UploadNode,
+      assistant: AssistantNode,
       text: TextNode,
       add_reference: AddReferenceNode,
       group: GroupNodeShell,
@@ -61,6 +63,7 @@ const nodeTypes = useV2
       variant: NodeCard,
       video: NodeCard,
       upload: NodeCard,
+      assistant: NodeCard,
       text: NodeCard,
       add_reference: AddReferenceNode,
       group: GroupNodeShell,

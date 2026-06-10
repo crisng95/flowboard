@@ -125,6 +125,13 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   cameraMode?: string;
   startImageMediaId?: string;
   endImageMediaId?: string;
+  systemPrompt?: string;
+  assistantPrompt?: string;
+  assistantOutput?: string;
+  assistantModel?: "flow_gemini";
+  assistantStatus?: "idle" | "queued" | "running" | "done" | "error";
+  assistantError?: string | null;
+  attachmentsSummary?: Array<Record<string, unknown>>;
   listItems?: Array<Record<string, unknown>>;
   listViewMode?: "grid" | "list";
   listIntakeMode?: "keep" | "replace";
@@ -228,6 +235,10 @@ function defaultTargetHandleForConnection(sourceNode?: FlowNode, targetNode?: Fl
 
   if (targetNode.data?.type === "video") {
     return isTextSource ? "target-text" : "target-start-image";
+  }
+  if (targetNode.data?.type === "assistant") {
+    if (isTextSource) return "target-text";
+    return sourceType === "video" ? "target-video" : "target-image";
   }
   if (targetNode.data?.type === "list") {
     return isTextSource ? "target-text" : "target-image";
@@ -434,6 +445,7 @@ const TYPE_TITLE: Partial<Record<NodeType, string>> = {
   variant: "Variant",
   video: "Video Generator",
   upload: "Upload",
+  assistant: "Assistant",
   list: "List",
   text: "Text",
   add_reference: "Add Reference",
@@ -549,6 +561,13 @@ function nodeFromDto(
       cameraMode: d["cameraMode"] as string | undefined,
       startImageMediaId: d["startImageMediaId"] as string | undefined,
       endImageMediaId: d["endImageMediaId"] as string | undefined,
+      systemPrompt: d["systemPrompt"] as string | undefined,
+      assistantPrompt: d["assistantPrompt"] as string | undefined,
+      assistantOutput: d["assistantOutput"] as string | undefined,
+      assistantModel: d["assistantModel"] as "flow_gemini" | undefined,
+      assistantStatus: d["assistantStatus"] as FlowboardNodeData["assistantStatus"],
+      assistantError: d["assistantError"] as string | null | undefined,
+      attachmentsSummary: d["attachmentsSummary"] as Array<Record<string, unknown>> | undefined,
       // Legacy character builder (still loaded for old boards)
       charCountry: d["charCountry"] as string | undefined,
       charVibe: d["charVibe"] as string | undefined,
@@ -1251,6 +1270,17 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       seedData.listSelectedIndexes = [];
       seedData.nodeWidth = 580;
     }
+    if (type === "assistant") {
+      seedData.nodeWidth = 560;
+      seedData.nodeHeight = 420;
+      seedData.systemPrompt = "You are a helpful creative assistant.";
+      seedData.assistantPrompt = "";
+      seedData.assistantOutput = "";
+      seedData.assistantModel = "flow_gemini";
+      seedData.assistantStatus = "idle";
+      seedData.assistantError = null;
+      seedData.attachmentsSummary = [];
+    }
     try {
       const dto = await createNode({
         board_id: boardId,
@@ -1284,6 +1314,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         "upload",
         "add_reference",
         "variant",
+        "assistant",
         "list",
       ]);
       if (DOWNSTREAM_TYPES.has(type)) {

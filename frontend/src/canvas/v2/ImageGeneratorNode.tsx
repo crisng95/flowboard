@@ -167,7 +167,11 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     return 1;
   })();
 
-  const batchTaskCount = batchMode === "cross" ? promptCount * imageCountUpstream : Math.min(promptCount, imageCountUpstream);
+  const batchTaskCount = promptCount > 1 && imageCountUpstream === 1
+    ? promptCount
+    : batchMode === "cross"
+      ? promptCount * imageCountUpstream
+      : Math.min(promptCount, imageCountUpstream);
 
   const toggleBatchMode = useCallback(() => {
     const nextMode = batchMode === "cross" ? "zip" : "cross";
