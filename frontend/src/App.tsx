@@ -196,7 +196,7 @@ function AccountMenu({ session }: { session: any }) {
   const setShowExtensionModal = useBoardStore((s) => s.setShowExtensionModal);
   const isLoggedIn = Boolean(session?.user);
   const displayName = isLoggedIn ? userDisplayName(session) : "Guest";
-  const email = session?.user?.email ?? "Sign in to sync your workspace";
+  const email = session?.user?.email ?? "Work locally first. Sign in only when you want sync.";
   const avatar = userAvatarUrl(session);
 
   useEffect(() => {
@@ -217,10 +217,6 @@ function AccountMenu({ session }: { session: any }) {
   }, [open]);
 
   async function handleTrigger() {
-    if (!isLoggedIn) {
-      setShowAuthModal(true);
-      return;
-    }
     setOpen((value) => !value);
   }
 
@@ -240,7 +236,7 @@ function AccountMenu({ session }: { session: any }) {
       <button
         type="button"
         className={`magnific-avatar flowboard-account-menu__trigger${open ? " is-open" : ""}`}
-        aria-label={isLoggedIn ? "Open account menu" : "Sign in"}
+        aria-label={isLoggedIn ? "Open account menu" : "Open guest menu"}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => void handleTrigger()}
@@ -254,7 +250,7 @@ function AccountMenu({ session }: { session: any }) {
         )}
       </button>
 
-      {open && isLoggedIn && (
+      {open && (
         <div className="flowboard-account-popover" role="menu">
           <div className="flowboard-account-popover__card">
             <div className="flowboard-account-popover__identity">
@@ -267,29 +263,53 @@ function AccountMenu({ session }: { session: any }) {
               </div>
             </div>
 
-            <div className="flowboard-account-popover__items">
-              <button
-                type="button"
-                className="flowboard-account-popover__item"
-                onClick={() => {
-                  setOpen(false);
-                  setShowExtensionModal(true);
-                }}
-              >
-                <ShieldCheck size={20} />
-                <span>Connect extension</span>
-              </button>
-            </div>
+            {isLoggedIn ? (
+              <>
+                <div className="flowboard-account-popover__items">
+                  <button
+                    type="button"
+                    className="flowboard-account-popover__item"
+                    onClick={() => {
+                      setOpen(false);
+                      setShowExtensionModal(true);
+                    }}
+                  >
+                    <ShieldCheck size={20} />
+                    <span>Connect extension</span>
+                  </button>
+                </div>
 
-            <button
-              type="button"
-              className="flowboard-account-popover__logout"
-              onClick={() => void handleSignOut()}
-              disabled={signingOut}
-            >
-              <LogOut size={20} />
-              {signingOut ? "Logging out..." : "Log out"}
-            </button>
+                <button
+                  type="button"
+                  className="flowboard-account-popover__logout"
+                  onClick={() => void handleSignOut()}
+                  disabled={signingOut}
+                >
+                  <LogOut size={20} />
+                  {signingOut ? "Logging out..." : "Log out"}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="flowboard-account-popover__primary"
+                  onClick={() => {
+                    setOpen(false);
+                    setShowAuthModal(true, "sign_in");
+                  }}
+                >
+                  Sign in to sync
+                </button>
+                <button
+                  type="button"
+                  className="flowboard-account-popover__secondary"
+                  onClick={() => setOpen(false)}
+                >
+                  Continue locally
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -310,8 +330,6 @@ function SpacesPage({
   onClearCustomCover: (boardId: number) => void;
   session: any;
 }) {
-  const isGuest = !session;
-  const setShowAuthModal = useBoardStore((s) => s.setShowAuthModal);
   const boards = useBoardStore((s) => s.boards);
   const loading = useBoardStore((s) => s.loading);
   const createNewBoard = useBoardStore((s) => s.createNewBoard);
@@ -508,11 +526,7 @@ function SpacesPage({
                     <button
                       type="button"
                       onClick={() => {
-                        if (isGuest) {
-                          setShowAuthModal(true);
-                        } else {
-                          void handleDuplicateBoard(board.id, board.name);
-                        }
+                        void handleDuplicateBoard(board.id, board.name);
                         setMenuBoardId(null);
                       }}
                     >
@@ -797,8 +811,8 @@ function CanvasPage({ session }: { session: any }) {
           {isGuest && (
             <button
               type="button"
-              className="magnific-primary-button bg-accent hover:bg-accent/90 animate-pulse flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-semibold text-white shadow-lg shadow-accent/20 transition-all cursor-pointer mr-2"
-              onClick={() => setShowAuthModal(true)}
+              className="magnific-primary-button"
+              onClick={() => setShowAuthModal(true, "sign_in")}
             >
               <Sparkles size={14} />
               Save to Cloud
