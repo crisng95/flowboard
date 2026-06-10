@@ -36,6 +36,23 @@ function formatModelLabel(data: Record<string, unknown>): string {
   return VIDEO_MODEL_LABELS[videoQuality] ?? videoQuality;
 }
 
+type ViewerEntry = {
+  idx: number;
+  kind: "image" | "video";
+  title: string | null;
+  text: string | null;
+  mediaRef: string;
+  posterUrl: string | null;
+};
+
+function isDirectUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
+function resolveMediaSrc(value: string): string {
+  return isDirectUrl(value) ? value : mediaUrl(value);
+}
+
 export function ResultViewerV2() {
   const openViewer = useGenerationStore((s) => s.openViewer);
   const closeResultViewer = useGenerationStore((s) => s.closeResultViewer);
@@ -44,17 +61,60 @@ export function ResultViewerV2() {
   const rfId = openViewer.rfId;
   const node = rfId ? nodes.find((n) => n.id === rfId) : undefined;
   const data = node?.data;
-
-  const mediaIds: string[] = (data?.mediaIds ?? (data?.mediaId ? [data.mediaId] : []))
-    .filter((m): m is string => typeof m === "string" && !!m);
   const [activeIdx, setActiveIdx] = useState(0);
 
   useEffect(() => {
     setActiveIdx(openViewer.idx ?? 0);
   }, [openViewer.idx, rfId]);
 
-  const currentMediaId = mediaIds[activeIdx] ?? mediaIds[0];
-  const hasMultiple = mediaIds.length > 1;
+  const listEntries: ViewerEntry[] = data?.type === "list" && Array.isArray(data.listItems)
+    ? data.listItems
+        .map((rawItem, idx) => {
+          const item = rawItem as Record<string, unknown>;
+          const mediaRef = typeof item.mediaId === "string" && item.mediaId
+            ? item.mediaId
+            : typeof item.mediaUrl === "string" && item.mediaUrl
+              ? item.mediaUrl
+              : null;
+          if (!mediaRef) return null;
+          const kind = item.kind === "video" ? "video" : "image";
+          return {
+            idx,
+            kind,
+            title: typeof item.title === "string" ? item.title : null,
+            text: typeof item.text === "string" ? item.text : null,
+            mediaRef,
+            posterUrl: typeof item.imageUrl === "string" ? item.imageUrl : null,
+          } satisfies ViewerEntry;
+        })
+        .filter((item): item is ViewerEntry => item !== null)
+    : [];
+
+  const nodeEntries: ViewerEntry[] = listEntries.length > 0
+    ? listEntries
+    : (data?.mediaIds ?? (data?.mediaId ? [data.mediaId] : []))
+        .filter((m): m is string => typeof m === "string" && !!m)
+        .map((mediaRef, idx) => ({
+          idx,
+          kind: (data?.type as string) === "video" || (data?.type as string) === "turntable" ? "video" : "image",
+          title: typeof data?.title === "string" ? data.title : null,
+          text: null,
+          mediaRef,
+          posterUrl: null,
+        }));
+
+  const currentEntry = nodeEntries[activeIdx] ?? nodeEntries[0];
+  const currentMediaRef = currentEntry?.mediaRef ?? null;
+  const hasMultiple = nodeEntries.length > 1;
+
+  const downloadCurrent = useCallback(() => {
+    if (!currentMediaRef) return;
+    const a = document.createElement("a");
+    a.href = resolveMediaSrc(currentMediaRef);
+    const extension = currentEntry?.kind === "video" ? "mp4" : "png";
+    a.download = `${currentEntry?.title ?? data?.title ?? "media"}-${activeIdx + 1}.${extension}`;
+    a.click();
+  }, [activeIdx, currentEntry?.kind, currentEntry?.title, currentMediaRef, data?.title]);
 
   const onKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -64,17 +124,17 @@ export function ResultViewerV2() {
         closeResultViewer();
       }
       if (e.key === "ArrowRight" && hasMultiple) {
-        setActiveIdx((i) => (i + 1) % mediaIds.length);
+        setActiveIdx((i) => (i + 1) % nodeEntries.length);
       }
       if (e.key === "ArrowLeft" && hasMultiple) {
-        setActiveIdx((i) => (i - 1 + mediaIds.length) % mediaIds.length);
+        setActiveIdx((i) => (i - 1 + nodeEntries.length) % nodeEntries.length);
       }
       if (e.key === "d" || e.key === "D") {
         e.preventDefault();
         downloadCurrent();
       }
     },
-    [rfId, hasMultiple, mediaIds.length, closeResultViewer, activeIdx],
+    [rfId, hasMultiple, nodeEntries.length, closeResultViewer, downloadCurrent],
   );
 
   useEffect(() => {
@@ -82,19 +142,11 @@ export function ResultViewerV2() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [onKeyDown]);
 
-  function downloadCurrent() {
-    if (!currentMediaId) return;
-    const a = document.createElement("a");
-    a.href = mediaUrl(currentMediaId);
-    a.download = `${data?.title ?? "media"}-${activeIdx + 1}.png`;
-    a.click();
-  }
-
-  if (!rfId || !data || !currentMediaId) return null;
+  if (!rfId || !data || !currentMediaRef) return null;
 
   const nodeType = data.type as string;
-  const isVideo = nodeType === "video" || nodeType === "turntable";
-  const prompt = (data.prompt as string | undefined) ?? "(no prompt)";
+  const isVideo = currentEntry.kind === "video" || nodeType === "video" || nodeType === "turntable";
+  const prompt = currentEntry.text ?? (data.prompt as string | undefined) ?? "(no prompt)";
   const model = formatModelLabel(data as Record<string, unknown>);
   const aspect = (data.aspectRatio as string | undefined)?.replace("IMAGE_ASPECT_RATIO_", "").toLowerCase() ?? "—";
   const renderedAt = data.renderedAt
@@ -117,16 +169,17 @@ export function ResultViewerV2() {
       <div className="flex-1 flex items-center justify-center p-6 relative">
         {isVideo ? (
           <video
-            src={mediaUrl(currentMediaId)}
+            src={resolveMediaSrc(currentMediaRef)}
             controls
             autoPlay
             loop
+            poster={currentEntry.posterUrl ?? undefined}
             className="max-w-full max-h-full rounded-xl shadow-2xl"
           />
         ) : (
           <img
-            src={mediaUrl(currentMediaId)}
-            alt={data.title as string}
+            src={resolveMediaSrc(currentMediaRef)}
+            alt={(currentEntry.title ?? data.title) as string}
             className="max-w-full max-h-full rounded-xl shadow-2xl object-contain animate-fade-in"
           />
         )}
@@ -135,7 +188,7 @@ export function ResultViewerV2() {
           <>
             <button
               type="button"
-              onClick={() => setActiveIdx((i) => (i - 1 + mediaIds.length) % mediaIds.length)}
+              onClick={() => setActiveIdx((i) => (i - 1 + nodeEntries.length) % nodeEntries.length)}
               className="absolute left-4 top-1/2 -translate-y-1/2 size-10 rounded-full bg-black/50 backdrop-blur-sm inline-flex items-center justify-center text-white/80 hover:text-white hover:bg-black/70 transition-colors"
               aria-label="Previous variant"
             >
@@ -143,7 +196,7 @@ export function ResultViewerV2() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveIdx((i) => (i + 1) % mediaIds.length)}
+              onClick={() => setActiveIdx((i) => (i + 1) % nodeEntries.length)}
               className="absolute right-[340px] top-1/2 -translate-y-1/2 size-10 rounded-full bg-black/50 backdrop-blur-sm inline-flex items-center justify-center text-white/80 hover:text-white hover:bg-black/70 transition-colors"
               aria-label="Next variant"
             >
@@ -154,7 +207,7 @@ export function ResultViewerV2() {
 
         {hasMultiple && (
           <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
-            {mediaIds.map((_, i) => (
+            {nodeEntries.map((_, i) => (
               <button
                 key={i}
                 type="button"
@@ -183,7 +236,7 @@ export function ResultViewerV2() {
               Rendered
             </span>
             <h2 className="text-sm font-semibold text-ink-primary">
-              {data.title as string}
+              {(currentEntry.title ?? data.title) as string}
             </h2>
             <span className="text-2xs text-ink-muted font-mono">
               #{data.shortId}
@@ -223,7 +276,7 @@ export function ResultViewerV2() {
             </div>
             <div>
               <span className="text-ink-muted">variants</span>
-              <p className="text-ink-primary font-medium">{mediaIds.length}</p>
+              <p className="text-ink-primary font-medium">{nodeEntries.length}</p>
             </div>
             <div>
               <span className="text-ink-muted">time</span>

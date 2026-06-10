@@ -100,6 +100,18 @@ export function ResultViewer() {
   const node = nodes.find((n) => n.id === rfId);
   const data = node?.data;
   const mediaIds = data?.mediaIds ?? (data?.mediaId ? [data.mediaId] : []);
+  const currentListItem =
+    data?.type === "list" && Array.isArray(data.listItems)
+      ? data.listItems[activeIdx] as
+          | {
+              kind?: string | null;
+              title?: string | null;
+              mediaId?: string | null;
+              mediaUrl?: string | null;
+              imageUrl?: string | null;
+            }
+          | undefined
+      : undefined;
 
   // METADATA model label. Two tiers:
   //   - `isBadge: true` — node was generated AFTER the model-stamp feature
@@ -301,7 +313,9 @@ export function ResultViewer() {
 
   if (rfId === null || !data) return null;
 
-  const isVideo = (data.type as string) === "video";
+  const isVideo =
+    (data.type as string) === "video"
+    || currentListItem?.kind === "video";
   const shortMediaId = currentMediaId ? `${currentMediaId.slice(0, 12)}…` : "pending";
 
   const cacheBust = cacheKey > 0 ? `?t=${cacheKey}` : "";
@@ -471,7 +485,7 @@ export function ResultViewer() {
                     className="media-placeholder__img"
                     style={mediaReady ? undefined : { display: "none" }}
                     src={mediaUrl(currentMediaId) + cacheBust}
-                    alt={data.title as string}
+                    alt={(currentListItem?.title as string | undefined) ?? (data.title as string)}
                     onError={onImgError}
                     onLoad={onImgLoad}
                   />

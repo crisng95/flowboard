@@ -1316,7 +1316,6 @@ async function runNodeDirect(
       aspectRatio,
       variantCount: imageCount,
       imageModel,
-      sourceMediaId: refMediaIds.length === 1 && imageCount === 1 ? refMediaIds[0] : undefined,
       prompts: upstreamPrompts.length > 0 ? upstreamPrompts.slice(0, imageCount) : undefined,
       sourceMediaIds: refMediaIds.length > 0 ? refMediaIds : undefined,
     });
@@ -2052,7 +2051,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         }
         const editSourceMediaId = typeof opts.sourceMediaId === "string" && opts.sourceMediaId.length > 0
           ? opts.sourceMediaId
-          : (refMediaIds.length === 1 && variantCount === 1 ? refMediaIds[0] : undefined);
+          : undefined;
         const effectiveRefMediaIds = editSourceMediaId
           ? refMediaIds.filter((mediaId) => mediaId !== editSourceMediaId)
           : refMediaIds;
@@ -2184,6 +2183,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               ...(stampedImageModel ? { imageModel: stampedImageModel } : {}),
               ...(stampedVideoQuality ? { videoQuality: stampedVideoQuality } : {}),
             });
+            const persistenceJobs: Promise<unknown>[] = [];
             // Persist to backend so the node survives page reload.
             const dbId = parseInt(rfId, 10);
             if (!isNaN(dbId) && mediaId) {
@@ -2193,7 +2193,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               // `aiBrief: null` is the explicit "clear" sentinel —
               // undefined would be dropped by JSON.stringify and leave
               // the stale brief sitting on the node.
-              patchNode(dbId, {
+              persistenceJobs.push(patchNode(dbId, {
                 status: "done",
                 data: {
                   // Persist prompt — without this, reloading the page
@@ -2222,7 +2222,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                 },
               }).catch(() => {
                 // Non-fatal: the in-memory state is still correct for this session.
-              });
+              }));
             }
             // Batch video: pour the positional results into the
             // Batch_Result_List spawned at Generate time (Req 3.1-3.7,
@@ -2248,12 +2248,12 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               });
               const listDbId = parseInt(batchResultListId, 10);
               if (!isNaN(listDbId)) {
-                patchNode(listDbId, {
+                persistenceJobs.push(patchNode(listDbId, {
                   status: "done",
                   data: { ...listData, renderedAt },
                 }).catch(() => {
                   // Non-fatal: the in-memory state is still correct for this session.
-                });
+                }));
               }
             }
             if ((opts.kind ?? "image") === "image" && mediaIds.length > 1 && !(opts as any).skipSpawningNodes) {
@@ -2336,6 +2336,13 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               delete next[rfId];
               return { active: next };
             });
+            if ((opts.kind ?? "image") === "video") {
+              void Promise.allSettled(persistenceJobs).then(() =>
+                useBoardStore.getState().refreshBoardState().catch(() => {
+                  // Non-fatal: local optimistic state already holds the result.
+                })
+              );
+            }
           } else if (req.status === "failed" || req.status === "timeout") {
             // 'timeout' is the dedicated terminal state for the
             // 5-minute video-gen budget. We render it as a node error
