@@ -839,6 +839,7 @@ export function App() {
   const [showMigrationPrompt, setShowMigrationPrompt] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
   const [migrationError, setMigrationError] = useState<string | null>(null);
+  const [authReturnNotice, setAuthReturnNotice] = useState<string | null>(null);
 
   const [spaceSnapshots, setSpaceSnapshots] = useState<Record<number, string>>(() => {
     try {
@@ -881,6 +882,21 @@ export function App() {
     });
     return () => subscription.unsubscribe();
   }, [setShowAuthModal]);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const authState = url.searchParams.get("auth");
+    if (authState !== "confirmed") return;
+
+    setAuthReturnNotice("Email verified. Sign in to continue.");
+    if (!session?.user) {
+      setShowAuthModal(true, "sign_in");
+    }
+
+    url.searchParams.delete("auth");
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState({}, document.title, nextUrl);
+  }, [session?.user, setShowAuthModal]);
 
   useEffect(() => {
     if (session && !localStorage.getItem("flowboard.migration_dismissed")) {
@@ -1109,11 +1125,19 @@ export function App() {
       <AuthGateModal 
         isOpen={showAuthModal} 
         mode={authModalMode}
-        onClose={() => setShowAuthModal(false)}
-        onModeChange={(mode: AuthFlowMode) => setAuthModalMode(mode)}
+        notice={authModalMode === "sign_in" ? authReturnNotice : null}
+        onClose={() => {
+          setShowAuthModal(false);
+          setAuthReturnNotice(null);
+        }}
+        onModeChange={(mode: AuthFlowMode) => {
+          setAuthModalMode(mode);
+          if (mode !== "sign_in") setAuthReturnNotice(null);
+        }}
         onAuthenticated={() => {
           setShowAuthModal(false);
           setAuthModalMode("sign_in");
+          setAuthReturnNotice(null);
           // Reload boards on success
           useBoardStore.getState().refreshBoardList();
         }}

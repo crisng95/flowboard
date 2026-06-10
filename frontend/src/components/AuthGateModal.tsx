@@ -5,6 +5,7 @@ import { AuthFlowSurface } from "./AuthFlowSurface";
 interface AuthGateModalProps {
   isOpen: boolean;
   mode: AuthFlowMode;
+  notice?: string | null;
   onClose: () => void;
   onModeChange(mode: AuthFlowMode): void;
   onAuthenticated(): void;
@@ -13,6 +14,7 @@ interface AuthGateModalProps {
 export function AuthGateModal({
   isOpen,
   mode,
+  notice,
   onClose,
   onModeChange,
   onAuthenticated,
@@ -42,6 +44,7 @@ export function AuthGateModal({
         <AuthFlowSurface
           mode={mode}
           layout="modal"
+          notice={notice}
           onModeChange={onModeChange}
           onAuthenticated={onAuthenticated}
         />

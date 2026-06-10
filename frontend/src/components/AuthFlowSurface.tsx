@@ -22,6 +22,7 @@ import {
 interface AuthFlowSurfaceProps {
   mode: AuthFlowMode;
   layout?: "modal" | "panel";
+  notice?: string | null;
   onModeChange(mode: AuthFlowMode): void;
   onAuthenticated(): void;
 }
@@ -59,6 +60,7 @@ const MODE_COPY: Record<
 export function AuthFlowSurface({
   mode,
   layout = "modal",
+  notice: externalNotice = null,
   onModeChange,
   onAuthenticated,
 }: AuthFlowSurfaceProps) {
@@ -84,6 +86,7 @@ export function AuthFlowSurface({
   const iconClassName = isPanel
     ? "flex h-9 w-9 items-center justify-center rounded-lg bg-accent/14 text-accent border border-accent/20"
     : "flex h-10 w-10 items-center justify-center rounded-xl bg-accent/14 text-accent border border-accent/20";
+  const visibleNotice = notice ?? externalNotice;
 
   const primaryLabel = copy.submit ?? "";
   const canSubmit = useMemo(() => {
@@ -183,10 +186,10 @@ export function AuthFlowSurface({
           </div>
         )}
 
-        {notice && (
+        {visibleNotice && (
           <div className="rounded-xl border border-green-500/20 bg-green-500/10 p-4 text-sm text-green-400 flex items-start gap-2.5">
             <CheckCircle2 className="shrink-0 mt-0.5" size={18} />
-            <span>{notice}</span>
+            <span>{visibleNotice}</span>
           </div>
         )}
 
