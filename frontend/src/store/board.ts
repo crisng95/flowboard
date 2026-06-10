@@ -21,6 +21,7 @@ import {
   type EdgeDTO,
   type NodeDTO as ApiNodeDTO,
 } from "../api/client";
+import type { AuthFlowMode } from "../cloud/auth";
 
 export type { NodeType };
 
@@ -693,7 +694,9 @@ interface BoardState {
   historyPresent: BoardSnapshot | null;
   historySuspend: boolean;
   showAuthModal: boolean;
-  setShowAuthModal(val: boolean): void;
+  authModalMode: AuthFlowMode;
+  setShowAuthModal(val: boolean, mode?: AuthFlowMode): void;
+  setAuthModalMode(mode: AuthFlowMode): void;
   showExtensionModal: boolean;
   setShowExtensionModal(val: boolean): void;
 
@@ -806,7 +809,16 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   historyPresent: null,
   historySuspend: false,
   showAuthModal: false,
-  setShowAuthModal(val) { set({ showAuthModal: val }); },
+  authModalMode: "sign_in",
+  setShowAuthModal(val, mode) {
+    set((state) => ({
+      showAuthModal: val,
+      authModalMode: mode ?? (val ? state.authModalMode : "sign_in"),
+    }));
+  },
+  setAuthModalMode(mode) {
+    set({ authModalMode: mode });
+  },
   showExtensionModal: false,
   setShowExtensionModal(val) { set({ showExtensionModal: val }); },
 

@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Copy, KeyRound, Loader2, LogOut, Play, RefreshCw, ShieldCheck, UserPlus } from "lucide-react";
+import { CheckCircle2, Copy, Loader2, LogOut, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { cloudApiBaseUrl, hasSupabaseConfig, supabase } from "./supabase";
+import { AuthFlowSurface } from "../components/AuthFlowSurface";
+import {
+  isPasswordRecoveryEvent,
+  signOutWithCleanup,
+  type AuthFlowMode,
+} from "./auth";
 import "./cloud-portal.css";
 
 type PairingPayload = {
@@ -58,8 +64,7 @@ async function postWorker<T>(path: string, token: string, body: unknown): Promis
 
 export function CloudPortal() {
   const [session, setSession] = useState<Session | null>(null);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [authMode, setAuthMode] = useState<AuthFlowMode>("sign_in");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -72,7 +77,11 @@ export function CloudPortal() {
   useEffect(() => {
     if (!supabase) return;
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data } = supabase.auth.onAuthStateChange((_, nextSession) => setSession(nextSession));
+    const { data } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      setSession(nextSession);
+      if (isPasswordRecoveryEvent(event)) setAuthMode("reset_password");
+      if (event === "SIGNED_OUT") setAuthMode("sign_in");
+    });
     return () => data.subscription.unsubscribe();
   }, []);
 
@@ -100,7 +109,6 @@ export function CloudPortal() {
     );
   }
 
-  const supabaseClient = supabase;
   const token = session?.access_token || "";
 
   return (
@@ -115,34 +123,41 @@ export function CloudPortal() {
 
       <section className="cloud-grid">
         <div className="cloud-panel">
-          <h2>{session ? "Account" : "Sign in or create account"}</h2>
-          {session ? (
+          <h2>{session && authMode !== "reset_password" ? "Account" : "Sign in or create account"}</h2>
+          {session && authMode !== "reset_password" ? (
             <div className="account-box">
               <div><span>Signed in as</span><strong>{session.user.email}</strong></div>
-              <button className="secondary" onClick={() => runAction(async () => { await supabaseClient.auth.signOut(); setPairing(null); })}><LogOut size={16} /> Sign out</button>
+              <button
+                className="secondary"
+                onClick={() => runAction(async () => {
+                  await signOutWithCleanup();
+                  setPairing(null);
+                  setLastRequestId(null);
+                })}
+              >
+                <LogOut size={16} /> Sign out
+              </button>
             </div>
           ) : (
-            <form className="auth-form" onSubmit={(e) => e.preventDefault()}>
-              <input type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
-              <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
-              <div className="button-row">
-                <button onClick={() => runAction(async () => {
-                  const { error: authError } = await supabaseClient.auth.signInWithPassword({ email, password });
-                  if (authError) throw authError;
-                })}><KeyRound size={16} /> Sign in</button>
-                <button className="secondary" onClick={() => runAction(async () => {
-                  const { error: authError } = await supabaseClient.auth.signUp({ email, password });
-                  if (authError) throw authError;
-                  setMessage("Account created. Check your inbox if email confirmation is enabled, then sign in.");
-                })}><UserPlus size={16} /> Sign up</button>
-              </div>
-            </form>
+            <AuthFlowSurface
+              mode={authMode}
+              layout="panel"
+              onModeChange={setAuthMode}
+              onAuthenticated={() => {
+                setAuthMode("sign_in");
+                setMessage("Account ready. Pair the extension to continue.");
+              }}
+            />
           )}
         </div>
 
         <div className="cloud-panel">
           <h2>Pair Chrome Extension</h2>
-          <p className="muted">Generate a pairing token, then paste it into the extension Pair & Connect dialog.</p>
+          <p className="muted">
+            {session
+              ? "Step 2: generate a pairing token, then paste it into the extension Pair & Connect dialog."
+              : "Step 2 starts after sign-in. Create or sign in to your account first."}
+          </p>
           <button disabled={!session || busy} onClick={() => runAction(async () => {
             const secret = randomSecret();
             const result = await postWorker<{ client_id: string }>("/api/pairings/register", token, {
@@ -163,7 +178,7 @@ export function CloudPortal() {
 
         <div className="cloud-panel wide">
           <h2>Create real Flow test request</h2>
-          <p className="muted">After the extension is paired and Google Flow is open, create a queued request here. The extension should claim it and upload the result to R2.</p>
+          <p className="muted">Step 3: after the extension is paired and Google Flow is open, create a queued request here. The extension should claim it and upload the result to R2.</p>
           <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} />
           <button disabled={!session || busy} onClick={() => runAction(async () => {
             const result = await postWorker<{ request_id: string }>("/api/beta/smoke-request", token, { prompt, provider: "flow", expected_output: "image" });

@@ -31,6 +31,12 @@ import { Toaster } from "./components/Toaster";
 import { ResultViewerV2 } from "./components/ResultViewerV2";
 import { AuthGateModal } from "./components/AuthGateModal";
 import { ExtensionGateModal } from "./components/ExtensionGateModal";
+import {
+  clearAuthDependentState,
+  isPasswordRecoveryEvent,
+  signOutWithCleanup,
+  type AuthFlowMode,
+} from "./cloud/auth";
 import { supabase } from "./cloud/supabase";
 import { SPACE_TEMPLATES, type SpaceTemplate } from "./constants/spaceTemplates";
 import { useGenerationStore } from "./store/generation";
@@ -222,8 +228,7 @@ function AccountMenu({ session }: { session: any }) {
     if (!supabase || signingOut) return;
     setSigningOut(true);
     try {
-      await supabase.auth.signOut();
-      useGenerationStore.setState({ paygateTier: null, projectId: null });
+      await signOutWithCleanup();
       setOpen(false);
     } finally {
       setSigningOut(false);
@@ -822,7 +827,9 @@ export function App() {
   const undo = useBoardStore((s) => s.undo);
   const redo = useBoardStore((s) => s.redo);
   const showAuthModal = useBoardStore((s) => s.showAuthModal);
+  const authModalMode = useBoardStore((s) => s.authModalMode);
   const setShowAuthModal = useBoardStore((s) => s.setShowAuthModal);
+  const setAuthModalMode = useBoardStore((s) => s.setAuthModalMode);
   const showExtensionModal = useBoardStore((s) => s.showExtensionModal);
   const setShowExtensionModal = useBoardStore((s) => s.setShowExtensionModal);
 
@@ -861,12 +868,19 @@ export function App() {
       setSession(s);
       setAuthReady(true);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
       setAuthReady(true);
+      if (isPasswordRecoveryEvent(event)) {
+        setShowAuthModal(true, "reset_password");
+        return;
+      }
+      if (event === "SIGNED_OUT") {
+        clearAuthDependentState();
+      }
     });
     return () => subscription.unsubscribe();
-  }, []);
+  }, [setShowAuthModal]);
 
   useEffect(() => {
     if (session && !localStorage.getItem("flowboard.migration_dismissed")) {
@@ -885,7 +899,11 @@ export function App() {
     if (loadedForRef.current === loadKey) return;
     loadedForRef.current = loadKey;
     void loadInitialBoard();
-    void loadReferences();
+    if (session?.user?.id) {
+      void loadReferences();
+    } else {
+      useReferencesStore.setState({ items: [], loading: false, error: null, query: "" });
+    }
   }, [authReady, session?.user?.id, loadInitialBoard, loadReferences]);
 
   useEffect(() => {
@@ -1090,8 +1108,12 @@ export function App() {
       
       <AuthGateModal 
         isOpen={showAuthModal} 
-        onClose={() => setShowAuthModal(false)} 
-        onSuccess={() => {
+        mode={authModalMode}
+        onClose={() => setShowAuthModal(false)}
+        onModeChange={(mode: AuthFlowMode) => setAuthModalMode(mode)}
+        onAuthenticated={() => {
+          setShowAuthModal(false);
+          setAuthModalMode("sign_in");
           // Reload boards on success
           useBoardStore.getState().refreshBoardList();
         }}
