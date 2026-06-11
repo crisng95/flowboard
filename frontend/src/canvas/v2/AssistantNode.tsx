@@ -10,6 +10,7 @@ import {
   Sparkles,
   Type,
   Video,
+  type LucideIcon,
 } from "lucide-react";
 
 import { cn } from "../../lib/utils";
@@ -38,13 +39,17 @@ type SummaryPill = {
   id: string;
   label: string;
   tone?: "default" | "muted";
-  icon?: "image" | "text" | "video";
+  icon?: "image" | "video";
 };
+
+const ASSISTANT_TABS: Array<{ id: AssistantTab; label: string; icon: LucideIcon }> = [
+  { id: "prompt", label: "Prompt", icon: Sparkles },
+  { id: "result", label: "Result", icon: FileText },
+];
 
 function SummaryIcon({ icon }: { icon: SummaryPill["icon"] }) {
   if (icon === "image") return <ImageIcon size={11} strokeWidth={1.8} />;
   if (icon === "video") return <Video size={11} strokeWidth={1.8} />;
-  if (icon === "text") return <Type size={11} strokeWidth={1.8} />;
   return null;
 }
 
@@ -55,7 +60,7 @@ function AssistantToolbarButton({
   onClick,
 }: {
   active: boolean;
-  icon: typeof Sparkles;
+  icon: LucideIcon;
   label: string;
   onClick: () => void;
 }) {
@@ -230,18 +235,15 @@ export function AssistantNode(props: NodeProps<FlowNode>) {
             role="tablist"
             aria-label="Assistant view"
           >
-            <AssistantToolbarButton
-              active={activeTab === "prompt"}
-              icon={Sparkles}
-              label="Prompt"
-              onClick={() => setActiveTab("prompt")}
-            />
-            <AssistantToolbarButton
-              active={activeTab === "result"}
-              icon={FileText}
-              label="Result"
-              onClick={() => setActiveTab("result")}
-            />
+            {ASSISTANT_TABS.map((tab) => (
+              <AssistantToolbarButton
+                key={tab.id}
+                active={activeTab === tab.id}
+                icon={tab.icon}
+                label={tab.label}
+                onClick={() => setActiveTab(tab.id)}
+              />
+            ))}
           </div>
 
           {hasOutput ? (
