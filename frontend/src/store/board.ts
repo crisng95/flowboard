@@ -231,7 +231,10 @@ function defaultTargetHandleForConnection(sourceNode?: FlowNode, targetNode?: Fl
   if (!sourceNode || !targetNode) return undefined;
   const sourceType = sourceNode.type ?? sourceNode.data?.type;
   const listItems = Array.isArray(sourceNode.data?.listItems) ? sourceNode.data.listItems : [];
-  const isTextSource = sourceType === "text" || (sourceType === "list" && listItems.length > 0 && listItems[0]?.kind === "text");
+  const isTextSource =
+    sourceType === "text" ||
+    sourceType === "assistant" ||
+    (sourceType === "list" && listItems.length > 0 && listItems[0]?.kind === "text");
 
   if (targetNode.data?.type === "video") {
     return isTextSource ? "target-text" : "target-start-image";

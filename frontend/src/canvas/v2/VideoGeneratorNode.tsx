@@ -13,7 +13,7 @@ import {
 
 import { cn } from "../../lib/utils";
 import { type FlowNode, useBoardStore } from "../../store/board";
-import { collectSelectedListMediaItems, collectSelectedListTextPrompts, useGenerationStore } from "../../store/generation";
+import { collectSelectedListMediaItems, collectSelectedTextPrompts, useGenerationStore } from "../../store/generation";
 import {
   OMNI_FLASH_CREDIT_COST,
   type OmniFlashDuration,
@@ -189,9 +189,7 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
   // data.prompt for plain text nodes. Without this the Generate gate sees an
   // empty prompt and silently returns when a Prompt list is connected.
   const upstreamTextPrompts = upstreamTextNode
-    ? (upstreamTextNode.data.type === "list"
-        ? collectSelectedListTextPrompts(upstreamTextNode as { id: string; data: Record<string, unknown> })
-        : [((upstreamTextNode.data.prompt as string | undefined) ?? "").trim()].filter(Boolean))
+    ? collectSelectedTextPrompts(upstreamTextNode as { id: string; data: Record<string, unknown> })
     : [];
   const upstreamText = upstreamTextPrompts.join("\n");
 

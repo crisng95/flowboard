@@ -464,10 +464,12 @@ globalThis.injectCaptchaToken = injectCaptchaToken;
 /**
  * Build the Gemini-style `contents` array for a `text_gen` job from its
  * `inputData`. Produces a single `user` content whose `parts` begins with
- * exactly one `{ text: prompt }` entry, followed by exactly one
+ * exactly one `{ text: ... }` entry, followed by exactly one
  * `{ inlineData: { mimeType, data } }` entry per attachment that carries a
  * string `data` (in order). When there are no valid attachments, `parts`
- * contains only the text entry.
+ * contains only the text entry. If the prompt is blank but attachments are
+ * present, inject a minimal fallback instruction so Flow does not receive an
+ * effectively image-only request.
  *
  * Pure helper (no side effects): `inputData.attachments` is treated as empty
  * when it is not an array. Mirrors the parts-building in design component 2b.
@@ -478,7 +480,9 @@ globalThis.injectCaptchaToken = injectCaptchaToken;
 function buildTextGenContents(inputData) {
   const prompt = inputData ? inputData.prompt : undefined;
   const attachments = inputData && Array.isArray(inputData.attachments) ? inputData.attachments : [];
-  const parts = [{ text: prompt }];
+  const parts = [];
+  const normalizedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
+  parts.push({ text: normalizedPrompt || 'Analyze the attached media.' });
   for (const att of attachments) {
     if (att && typeof att.data === 'string' && att.data) {
       parts.push({ inlineData: { mimeType: att.mimeType || 'image/png', data: att.data } });
@@ -970,6 +974,82 @@ async function forwardOmniFetchViaTab(requestId, payload) {
   }
 }
 
+function parseForwardedJsonResponse(rawText, label) {
+  try {
+    return rawText ? JSON.parse(rawText) : {};
+  } catch (_) {
+    throw new Error(`${label} malformed JSON response`);
+  }
+}
+
+async function generateTextViaFlowTab(flowApi, requestId, contents, options, onStage) {
+  const opts = options || {};
+  const headers = {
+    'content-type': 'text/plain;charset=UTF-8',
+    'accept': '*/*',
+    'origin': 'https://labs.google',
+    'referer': 'https://labs.google/',
+    'authorization': flowApi.bearerHeader(),
+  };
+
+  const attempt = async (requestContext) => {
+    await onStage?.('captcha');
+    const captchaToken = await solveCaptchaForCloud(opts.captchaAction || 'TEXT_GENERATION');
+    const body = {
+      model: opts.model || 'gemini-3-flash-preview',
+      contents,
+      recaptchaContext: {
+        token: captchaToken,
+        applicationType: 'RECAPTCHA_APPLICATION_TYPE_WEB',
+      },
+    };
+    if (opts.systemInstruction) body.systemInstruction = opts.systemInstruction;
+    if (opts.thinkingConfig) body.thinkingConfig = opts.thinkingConfig;
+    if (requestContext) body.requestContext = requestContext;
+
+    await onStage?.('fetch');
+    const forwarded = await forwardOmniFetchViaTab(`${requestId}-textgen-${Date.now()}`, {
+      url: 'https://aisandbox-pa.googleapis.com/v1/flow:generateContent',
+      method: 'POST',
+      headers,
+      body,
+    });
+    if (forwarded?.error) throw new Error(forwarded.error);
+
+    const status = Number(forwarded?.status || 0);
+    await onStage?.('parse');
+    const data = parseForwardedJsonResponse(forwarded?.text || '', 'generateContent');
+    if (!(status >= 200 && status < 300)) {
+      const detail = typeof data?.error?.message === 'string'
+        ? data.error.message
+        : typeof data?.detail === 'string'
+          ? data.detail
+          : '';
+      throw new Error(detail ? `generateContent HTTP ${status}: ${detail}` : `generateContent HTTP ${status}`);
+    }
+    return {
+      raw: data,
+      text: FlowboardFlowApiUtils?.extractGeneratedText
+        ? FlowboardFlowApiUtils.extractGeneratedText(data)
+        : '',
+    };
+  };
+
+  try {
+    return await attempt(opts.requestContext);
+  } catch (err) {
+    const msg = (err && err.message) || '';
+    const sdk = resolveFlowSdkInfo();
+    if (!opts.requestContext && sdk && /flowSdkInfo|requestContext|applet|INVALID_ARGUMENT|HTTP 400/i.test(msg)) {
+      console.log('[Flowboard] text_gen retry with flowSdkInfo (tab path)');
+      return await attempt({ flowSdkInfo: sdk });
+    }
+    throw err;
+  }
+}
+
+globalThis.generateTextViaFlowTab = generateTextViaFlowTab;
+
 // ─── TRPC Request Proxy ─────────────────────────────────────
 
 async function handleTrpcRequest(msg) {
@@ -1426,20 +1506,26 @@ async function runCloudFlowJob(cloud, job) {
     variantCount: variantCountLog,
   });
 
-  if (!userId) throw new Error('Claimed job missing user_id');
-  if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('Missing prompt in claimed job');
-  if (!flowKey) throw new Error('Missing Google Flow bearer token');
+  let heartbeat = null;
+  try {
+    if (!userId) throw new Error('Claimed job missing user_id');
+    if (typeof prompt !== 'string') throw new Error('Missing prompt in claimed job');
+    if (taskType !== 'text_gen' && !prompt.trim()) throw new Error('Missing prompt in claimed job');
+    if (taskType === 'text_gen' && !prompt.trim() && (!inputData.attachments || !inputData.attachments.length)) {
+      throw new Error('Missing prompt or attachments in claimed job');
+    }
+    if (!flowKey) throw new Error('Missing Google Flow bearer token');
 
-  setState('running');
-  metrics.requestCount++;
-  try {
-    await cloud.progress(requestId, 'preparing', 10);
-  } catch (error) {
-    throw new Error('progress/preparing failed: ' + formatWorkerError(error));
-  }
-  const leaseDurationSec = Math.max(cloudConfig?.leaseDurationSec || 180, CLOUD_HEARTBEAT_SECONDS * 3);
-  const heartbeat = setInterval(() => cloud.heartbeat(requestId, leaseDurationSec).catch(() => {}), CLOUD_HEARTBEAT_SECONDS * 1000);
-  try {
+    setState('running');
+    metrics.requestCount++;
+    try {
+      await cloud.progress(requestId, 'preparing', 10);
+    } catch (error) {
+      throw new Error('progress/preparing failed: ' + formatWorkerError(error));
+    }
+    const leaseDurationSec = Math.max(cloudConfig?.leaseDurationSec || 180, CLOUD_HEARTBEAT_SECONDS * 3);
+    heartbeat = setInterval(() => cloud.heartbeat(requestId, leaseDurationSec).catch(() => {}), CLOUD_HEARTBEAT_SECONDS * 1000);
+
     const flowApi = new FlowboardFlowApi({
       getBearerToken: () => flowKey,
       solveCaptcha: solveCaptchaForCloud,
@@ -1465,6 +1551,16 @@ async function runCloudFlowJob(cloud, job) {
         captchaAction: inputData.captcha_action || undefined,
       };
       if (sysText) options.systemInstruction = { parts: [{ text: sysText }] };
+      const textGenStageProgress = async (stage) => {
+        const mapping = {
+          captcha: ['text_captcha', 40],
+          fetch: ['text_fetch', 55],
+          parse: ['text_parse', 70],
+        };
+        const pair = mapping[stage];
+        if (!pair) return;
+        await cloud.progress(requestId, pair[0], pair[1]).catch(() => {});
+      };
 
       // 3-tier flowSdkInfo fallback chain (design 6c):
       //  Tier 1 — first attempt WITHOUT requestContext (preserves Req 1.6).
@@ -1472,22 +1568,7 @@ async function runCloudFlowJob(cloud, job) {
       //  with the resolved value (observed → cloudConfig seed → default seed).
       //  If the retry also fails (or no flowSdkInfo is available), the original
       //  error propagates to the existing catch → cloud.fail.
-      const runGenerate = async () => {
-        try {
-          return await flowApi.generateContent(contents, options);
-        } catch (err) {
-          const msg = (err && err.message) || '';
-          const sdk = resolveFlowSdkInfo();
-          if (sdk && /flowSdkInfo|requestContext|applet|INVALID_ARGUMENT|HTTP 400/i.test(msg)) {
-            console.log('[Flowboard] text_gen retry with flowSdkInfo (tier 2/3)');
-            return await flowApi.generateContent(contents, {
-              ...options,
-              requestContext: { flowSdkInfo: sdk },
-            });
-          }
-          throw err;
-        }
-      };
+      const runGenerate = () => generateTextViaFlowTab(flowApi, requestId, contents, options, textGenStageProgress);
 
       const result = await withStage(
         'ERR_STAGE_GENERATE',
@@ -2029,7 +2110,7 @@ async function runCloudFlowJob(cloud, job) {
     metrics.lastError = formatWorkerError(error, 'FLOW_CLOUD_JOB_FAILED');
     chrome.storage.local.set({ metrics });
   } finally {
-    clearInterval(heartbeat);
+    if (heartbeat) clearInterval(heartbeat);
   }
 }
 
@@ -2200,6 +2281,61 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
 
   if (msg.type === 'FLOWBOARD_CLAIM_NOW') {
     reply({ ok: nudgeCloudWorker('web-generate') });
+    return true;
+  }
+
+  if (msg.type === 'FLOWBOARD_RUN_ASSISTANT') {
+    const requestId = typeof msg.requestId === 'string' && msg.requestId
+      ? msg.requestId
+      : `assistant-${Date.now()}`;
+    const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
+    (async () => {
+      try {
+        if (!flowKey) throw new Error('Missing Google Flow bearer token');
+        const inputData = {
+          prompt: typeof payload.prompt === 'string' ? payload.prompt : '',
+          system_prompt: typeof payload.systemPrompt === 'string' ? payload.systemPrompt : '',
+          attachments: Array.isArray(payload.attachments) ? payload.attachments : [],
+        };
+        if (!String(inputData.prompt || '').trim() && (!inputData.attachments || inputData.attachments.length === 0)) {
+          throw new Error('assistant_node_missing_prompt_or_inputs');
+        }
+        const contents = buildTextGenContents(inputData);
+        const options = {
+          model: typeof payload.model === 'string' && payload.model ? payload.model : 'gemini-3-flash-preview',
+          captchaAction: typeof payload.captchaAction === 'string' && payload.captchaAction ? payload.captchaAction : undefined,
+        };
+        if (inputData.system_prompt) {
+          options.systemInstruction = { parts: [{ text: inputData.system_prompt }] };
+        }
+        const flowApi = new FlowboardFlowApi({
+          getBearerToken: () => flowKey,
+          solveCaptcha: solveCaptchaForCloud,
+          paygateTier: cloudConfig?.paygateTier || 'PAYGATE_TIER_ONE',
+          imageModel: cloudConfig?.imageModel || null,
+        });
+        const runDirectGenerate = async () => {
+          try {
+            return await flowApi.generateContent(contents, options);
+          } catch (err) {
+            const msg = (err && err.message) || '';
+            const sdk = resolveFlowSdkInfo();
+            if (sdk && /flowSdkInfo|requestContext|applet|INVALID_ARGUMENT|HTTP 400/i.test(msg)) {
+              console.log('[Flowboard] assistant direct generateContent retry with flowSdkInfo');
+              return await flowApi.generateContent(contents, {
+                ...options,
+                requestContext: { flowSdkInfo: sdk },
+              });
+            }
+            throw err;
+          }
+        };
+        const result = await runDirectGenerate();
+        reply({ ok: true, text: result.text || '' });
+      } catch (error) {
+        reply({ ok: false, error: sanitizeWorkerError(error?.message || 'Assistant run failed') });
+      }
+    })();
     return true;
   }
 

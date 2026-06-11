@@ -161,6 +161,8 @@ describe('background.js buildTextGenContents — Property 4 (task 3.3)', () => {
         fc.array(attachmentArb),
         (prompt, attachments) => {
           const contents = buildTextGenContents({ prompt, attachments });
+          const normalizedPrompt = prompt.trim();
+          const expectedText = normalizedPrompt || 'Analyze the attached media.';
 
           // single user content
           expect(Array.isArray(contents)).toBe(true);
@@ -169,7 +171,7 @@ describe('background.js buildTextGenContents — Property 4 (task 3.3)', () => {
 
           const parts = contents[0].parts;
           // parts[0] is exactly the text part equal to the prompt
-          expect(parts[0]).toEqual({ text: prompt });
+          expect(parts[0]).toEqual({ text: expectedText });
           // exactly one inlineData per attachment, in order
           expect(parts.length).toBe(1 + attachments.length);
           attachments.forEach((att, i) => {
@@ -180,7 +182,7 @@ describe('background.js buildTextGenContents — Property 4 (task 3.3)', () => {
           });
           // empty attachments → only the text part
           if (attachments.length === 0) {
-            expect(parts).toEqual([{ text: prompt }]);
+            expect(parts).toEqual([{ text: expectedText }]);
           }
         },
       ),
@@ -197,6 +199,18 @@ describe('background.js buildTextGenContents — Property 4 (task 3.3)', () => {
     const parts = contents[0].parts;
     expect(parts).toHaveLength(2); // text + one valid inlineData
     expect(parts[0]).toEqual({ text: 'p' });
+    expect(parts[1]).toEqual({ inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } });
+  });
+
+  it('injects a fallback text prompt when attachments are present but prompt is empty', () => {
+    const { buildTextGenContents } = loadBackground();
+    const contents = buildTextGenContents({
+      prompt: '',
+      attachments: [{ data: 'AAAA', mimeType: 'image/jpeg' }],
+    });
+    const parts = contents[0].parts;
+    expect(parts).toHaveLength(2);
+    expect(parts[0]).toEqual({ text: 'Analyze the attached media.' });
     expect(parts[1]).toEqual({ inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } });
   });
 });
@@ -264,6 +278,48 @@ describe('background.js text_gen branch contract (task 3.4)', () => {
     expect(completeCalls).toHaveLength(1);
     expect(completeCalls[0].output).toEqual({ provider: 'flow', task_type: 'text_gen', text: 'A serene lake.' });
     expect(completeCalls[0].assets).toEqual([]);
+  });
+
+  it('routes text_gen fetches through the Flow tab helper and parses the returned text', async () => {
+    const bg = loadBackground();
+    const forwarded = [];
+    bg.solveCaptchaForCloud = async () => 'captcha-token';
+    bg.forwardOmniFetchViaTab = async (requestId, payload) => {
+      forwarded.push({ requestId, payload });
+      return {
+        status: 200,
+        ok: true,
+        text: JSON.stringify({
+          candidates: [{ content: { parts: [{ text: 'Stylized metallic shell.' }] } }],
+        }),
+      };
+    };
+    bg.FlowboardFlowApiUtils = {
+      extractGeneratedText(data) {
+        return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      },
+    };
+
+    const result = await bg.generateTextViaFlowTab(
+      { bearerHeader: () => 'Bearer ya29.fake' },
+      'req-1',
+      [{ role: 'user', parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }] }],
+      {
+        model: 'gemini-3-flash-preview',
+        systemInstruction: { parts: [{ text: 'Analyze style only.' }] },
+      },
+    );
+
+    expect(result.text).toBe('Stylized metallic shell.');
+    expect(forwarded).toHaveLength(1);
+    expect(forwarded[0].requestId).toMatch(/^req-1-textgen-/);
+    expect(forwarded[0].payload.url).toBe('https://aisandbox-pa.googleapis.com/v1/flow:generateContent');
+    expect(forwarded[0].payload.headers.authorization).toBe('Bearer ya29.fake');
+    expect(forwarded[0].payload.body.recaptchaContext.token).toBe('captcha-token');
+    expect(forwarded[0].payload.body.systemInstruction).toEqual({ parts: [{ text: 'Analyze style only.' }] });
+    expect(forwarded[0].payload.body.contents).toEqual([
+      { role: 'user', parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }] },
+    ]);
   });
 });
 

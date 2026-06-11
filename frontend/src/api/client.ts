@@ -187,7 +187,12 @@ function mapRequestFromServer(r: any): RequestDTO {
   const mappedId = uuidToNumericId(r.id);
   registerIdMapping(mappedId, r.id);
   const rawStatus = r.status;
-  const status = rawStatus === "completed" ? "done" : rawStatus;
+  const status =
+    rawStatus === "completed"
+      ? "done"
+      : rawStatus === "claimed"
+      ? "running"
+      : rawStatus;
   const result = r.result ?? r.output_result ?? {};
   return {
     id: mappedId,

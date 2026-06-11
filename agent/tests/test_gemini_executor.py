@@ -25,6 +25,11 @@ MOCK_JOB_EMPTY = {
     "input_data": {"prompt": "   "},
 }
 
+MOCK_JOB_EMPTY_WITH_ATTACHMENTS = {
+    "id": "gemini-job-4",
+    "input_data": {"prompt": "  ", "attachments": [{"mimeType": "image/png", "data": "QUJD"}]},
+}
+
 
 class FakeGeminiDriver(GeminiDriver):
     """Test driver simulating success, timeout, or errors."""
@@ -92,6 +97,19 @@ class TestGeminiExecutor:
         with pytest.raises(ExecutionError, match="prompt' is empty or invalid"):
             async for _ in executor.run(MOCK_JOB_EMPTY):
                 pass
+
+    @pytest.mark.asyncio
+    async def test_empty_prompt_with_attachments_succeeds(self):
+        """Empty prompt is allowed if attachments are present."""
+        driver = FakeGeminiDriver()
+        executor = GeminiExecutor(driver=driver)
+
+        events = []
+        async for event in executor.run(MOCK_JOB_EMPTY_WITH_ATTACHMENTS):
+            events.append(event)
+
+        output, assets = executor.last_result()
+        assert output["text"] == "A funny joke"
 
     @pytest.mark.asyncio
     async def test_provider_timeout_raises_execution_error(self):

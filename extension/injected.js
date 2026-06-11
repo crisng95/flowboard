@@ -205,24 +205,7 @@ window.addEventListener(FORWARD_FETCH_EVENT, async ({ detail }) => {
       signal: controller.signal,
       body: method === 'GET' ? undefined : JSON.stringify(body),
     });
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error('response body is not readable');
-    }
-    const decoder = new TextDecoder();
-    let finalFullText = '';
-    while (true) {
-      const { value, done } = await reader.read();
-      const rawChunk = decoder.decode(value || new Uint8Array(), { stream: !done });
-      if (rawChunk) {
-        console.log('[Injected Stream Raw Chunk]:', rawChunk);
-        finalFullText += rawChunk;
-      }
-      if (done) {
-        finalFullText += decoder.decode();
-        break;
-      }
-    }
+    const finalFullText = await response.text();
     const errorText = response.ok ? '' : finalFullText;
     console.log('[Injected Omni HTTP Status/Error Body]:', response.status, errorText);
     window.dispatchEvent(new CustomEvent(FORWARD_FETCH_RESULT_EVENT, {

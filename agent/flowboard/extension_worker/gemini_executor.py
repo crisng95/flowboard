@@ -53,9 +53,12 @@ class GeminiExecutor(BaseExecutor):
             raise ExecutionError("Missing required field 'prompt' in input_data")
 
         prompt = input_data["prompt"]
-        if not isinstance(prompt, str) or not prompt.strip():
-            logger.error("job=%s reason=empty_prompt", request_id)
-            raise ExecutionError("Required field 'prompt' is empty or invalid string type")
+        if not isinstance(prompt, str):
+            logger.error("job=%s reason=invalid_prompt", request_id)
+            raise ExecutionError("Required field 'prompt' is invalid string type")
+        if not prompt.strip() and not input_data.get("attachments"):
+            logger.error("job=%s reason=empty_prompt_and_no_attachments", request_id)
+            raise ExecutionError("Required field 'prompt' is empty or invalid (no attachments provided)")
 
         # 2. Redact sensitive prompt in logs
         prompt_len = len(prompt)

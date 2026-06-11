@@ -178,4 +178,51 @@ describe("Image Generator dispatch with upload + text inputs", () => {
     expect(arg.params.prompts).toEqual(["prompt one", "prompt two"]);
     expect(arg.params.ref_media_ids).toEqual(["uploaded-media-id", "uploaded-media-id"]);
   });
+
+  it("resolves the prompt from an upstream assistant node output correctly", async () => {
+    useBoardStore.setState({
+      nodes: [
+        {
+          id: IMAGE_RF_ID,
+          type: "reference",
+          position: { x: 0, y: 0 },
+          data: {
+            type: "reference",
+            aspectKey: "1:1",
+            imageCount: 1,
+          },
+        },
+        {
+          id: "assistant-1",
+          type: "assistant",
+          position: { x: -320, y: 220 },
+          data: {
+            type: "assistant",
+            status: "done",
+            assistantOutput: "assistant output prompt",
+          },
+        },
+      ],
+      edges: [
+        {
+          id: "edge-text",
+          source: "assistant-1",
+          target: IMAGE_RF_ID,
+          sourceHandle: "source",
+          targetHandle: "target-text",
+        },
+      ],
+    } as never);
+
+    await useGenerationStore.getState().runNodeGraph(IMAGE_RF_ID);
+
+    const create = vi.mocked(client.createRequest);
+    expect(create).toHaveBeenCalledTimes(1);
+    const arg = create.mock.calls[0][0] as {
+      type: string;
+      params: Record<string, unknown>;
+    };
+    expect(arg.type).toBe("gen_image");
+    expect(arg.params.prompt).toBe("assistant output prompt");
+  });
 });

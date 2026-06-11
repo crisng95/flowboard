@@ -413,6 +413,21 @@ export function collectSelectedListTextPrompts(node: { id: string; data: Record<
     .filter(Boolean);
 }
 
+/**
+ * Collect text prompts from a source node, supporting list selection,
+ * assistant output, or fallback to the standard prompt field.
+ */
+export function collectSelectedTextPrompts(node: { id: string; data: Record<string, unknown> }): string[] {
+  const nodeType = node.data.type || (node as any).type;
+  if (nodeType === "list") {
+    return collectSelectedListTextPrompts(node);
+  }
+  if (nodeType === "assistant") {
+    return [((node.data.assistantOutput as string | undefined) ?? "").trim()].filter(Boolean);
+  }
+  return [((node.data.prompt as string | undefined) ?? "").trim()].filter(Boolean);
+}
+
 function isMediaSourceType(type: string | undefined): boolean {
   return type === "reference" || type === "variant" || type === "video" || type === "upload" || type === "list" || type === "add_reference";
 }
@@ -1339,9 +1354,7 @@ async function runNodeDirect(
     const textEdge = board.edges.find((e) => e.target === rfId && e.targetHandle === "target-text");
     const textSourceNode = textEdge ? board.nodes.find((n) => n.id === textEdge.source) : null;
     const upstreamPrompts = textSourceNode
-      ? (textSourceNode.data.type === "list"
-          ? collectSelectedListTextPrompts(textSourceNode as { id: string; data: Record<string, unknown> })
-          : [((textSourceNode.data.prompt as string | undefined) ?? "").trim()].filter(Boolean))
+      ? collectSelectedTextPrompts(textSourceNode as { id: string; data: Record<string, unknown> })
       : [];
 
     const prompt = upstreamPrompts[0] || ((node.data.prompt as string | undefined) ?? "").trim();
@@ -1506,9 +1519,7 @@ async function runNodeDirect(
     const textEdge = board.edges.find((e) => e.target === rfId && e.targetHandle === "target-text");
     const textSourceNode = textEdge ? board.nodes.find((n) => n.id === textEdge.source) : null;
     const upstreamPrompts = textSourceNode
-      ? (textSourceNode.data.type === "list"
-          ? collectSelectedListTextPrompts(textSourceNode as { id: string; data: Record<string, unknown> })
-          : [((textSourceNode.data.prompt as string | undefined) ?? "").trim()].filter(Boolean))
+      ? collectSelectedTextPrompts(textSourceNode as { id: string; data: Record<string, unknown> })
       : [];
 
     const startEdge = board.edges.find((e) => e.target === rfId && e.targetHandle === "target-start-image");
@@ -1740,8 +1751,9 @@ export function getVideoNodeInputs(targetRfId: string): {
     if (!src) continue;
     const handle = e.targetHandle ?? "target";
     if (handle === "target-text") {
-      if (typeof src.data.prompt === "string" && src.data.prompt.trim()) {
-        textPrompt = src.data.prompt.trim();
+      const val = src.data.type === "assistant" ? src.data.assistantOutput : src.data.prompt;
+      if (typeof val === "string" && val.trim()) {
+        textPrompt = val.trim();
       }
       continue;
     }

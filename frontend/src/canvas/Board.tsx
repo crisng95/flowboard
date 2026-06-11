@@ -395,7 +395,7 @@ export function Board({
   // Text nodes (type="text") can only connect to "target-text" handles
   // Image nodes (type="upload"/"reference"/etc) can only connect to "target-image" handles
   // If target has no specific handle id (legacy nodes), allow any connection
-  const TEXT_SOURCE_TYPES = new Set(["text", "list"]);
+  const TEXT_SOURCE_TYPES = new Set(["text", "list", "assistant"]);
   const IMAGE_SOURCE_TYPES = new Set(["upload", "reference", "variant", "add_reference", "list"]);
   const VIDEO_IMAGE_SOURCE_TYPES = new Set(["upload", "reference", "variant", "add_reference", "list", "video"]);
   // Sources that can actually deliver video items to a List's `target-video`

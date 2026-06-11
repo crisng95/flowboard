@@ -4,7 +4,7 @@ import { ImageUp, Play, RefreshCw, Settings, Type } from "lucide-react";
 
 import { type FlowNode } from "../../store/board";
 import { useBoardStore } from "../../store/board";
-import { collectSelectedListTextPrompts, useGenerationStore } from "../../store/generation";
+import { collectSelectedTextPrompts, useGenerationStore } from "../../store/generation";
 import { cn } from "../../lib/utils";
 import { mediaUrl } from "./shared/useUploadFlow";
 import { persistNodeData } from "./shared/persistNodeData";
@@ -130,9 +130,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
   // data.prompt for plain text nodes. This is what lets the prompt preview
   // render and the Generate gate pass when a list is connected.
   const upstreamTextPrompts = upstreamTextNode
-    ? (upstreamTextNode.data.type === "list"
-        ? collectSelectedListTextPrompts(upstreamTextNode as { id: string; data: Record<string, unknown> })
-        : [((upstreamTextNode.data.prompt as string | undefined) ?? "").trim()].filter(Boolean))
+    ? collectSelectedTextPrompts(upstreamTextNode as { id: string; data: Record<string, unknown> })
     : [];
   const upstreamText = upstreamTextPrompts.join("\n");
 
