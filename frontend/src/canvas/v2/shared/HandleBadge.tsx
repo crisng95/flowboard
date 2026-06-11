@@ -11,7 +11,7 @@ export function HandleBadge({
   icon: LucideIcon;
   active: boolean;
   label?: string;
-  side: "left" | "right";
+  side: "left" | "right" | "bottom";
 }) {
   return (
     <>
@@ -28,11 +28,13 @@ export function HandleBadge({
       {label && (
         <div
           className={cn(
-            "pointer-events-none absolute top-1/2 z-50 -translate-y-1/2 rounded-xl border border-white/[0.08] bg-[#1f1f1f] px-3 py-2 text-xs font-medium text-white shadow-xl",
+            "pointer-events-none absolute z-50 rounded-xl border border-white/[0.08] bg-[#1f1f1f] px-3 py-2 text-xs font-medium text-white shadow-xl",
             "whitespace-nowrap opacity-0 scale-95 transition-all duration-200 ease-out group-hover/handle:opacity-100 group-hover/handle:scale-100",
             side === "left"
-              ? "right-full mr-3 translate-x-1 group-hover/handle:translate-x-0"
-              : "left-full ml-3 -translate-x-1 group-hover/handle:translate-x-0",
+              ? "top-1/2 right-full mr-3 -translate-y-1/2 translate-x-1 group-hover/handle:translate-x-0"
+              : side === "right"
+                ? "top-1/2 left-full ml-3 -translate-y-1/2 -translate-x-1 group-hover/handle:translate-x-0"
+                : "bottom-full left-1/2 mb-3 -translate-x-1/2 translate-y-1 group-hover/handle:translate-y-0",
           )}
         >
           {label}

@@ -10,7 +10,7 @@
  * predicate (e.g. "no axis picked yet", "already running"). This
  * component does not fetch; it just renders.
  */
-import { Play } from "lucide-react";
+import { Play, RefreshCw } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { MouseEvent } from "react";
 
@@ -23,6 +23,7 @@ export interface RunButtonProps {
   busy?: boolean;
   /** Override the default Play icon. */
   icon?: LucideIcon;
+  busyIcon?: LucideIcon;
 }
 
 export function RunButton({
@@ -31,6 +32,7 @@ export function RunButton({
   label = "Run",
   busy = false,
   icon: Icon = Play,
+  busyIcon: BusyIcon = RefreshCw,
 }: RunButtonProps) {
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
@@ -65,7 +67,11 @@ export function RunButton({
         boxShadow: "0 4px 14px rgba(124,92,255,0.4)",
       }}
     >
-      <Icon size={14} fill="white" stroke="white" strokeWidth={0} />
+      {busy ? (
+        <BusyIcon size={14} className="animate-spin text-white" strokeWidth={2} />
+      ) : (
+        <Icon size={14} fill="white" stroke="white" strokeWidth={0} />
+      )}
     </button>
   );
 }

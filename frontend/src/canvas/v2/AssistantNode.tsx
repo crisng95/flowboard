@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Handle, Position, useConnection, useEdges, type NodeProps } from "@xyflow/react";
 import {
   Bot,
@@ -12,25 +12,75 @@ import {
   Video,
 } from "lucide-react";
 
-
 import { cn } from "../../lib/utils";
 import { type FlowNode, useBoardStore } from "../../store/board";
 import {
   collectSelectedListMediaItems,
-  collectSelectedListTextPrompts,
   useGenerationStore,
 } from "../../store/generation";
-import { NodeShell } from "./NodeShell";
 import { ResizeHandle } from "./shared/ResizeHandle";
 import { persistNodeData } from "./shared/persistNodeData";
 import { HandleBadge } from "./shared/HandleBadge";
-import { edgeHandleClass, EDGE_HANDLE_TOP_OFFSET } from "./shared/edgeHandle";
+import { edgeHandleClass, EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET } from "./shared/edgeHandle";
 
 const MIN_WIDTH = 420;
 const MAX_WIDTH = 760;
 const DEFAULT_WIDTH = 560;
-const TARGET_IMAGE_TOP = EDGE_HANDLE_TOP_OFFSET + 44;
-const TARGET_VIDEO_TOP = EDGE_HANDLE_TOP_OFFSET + 88;
+const BORDER_RADIUS = 16;
+const HOVER_LEAVE_DELAY = 200;
+const INPUT_HANDLE_BOTTOM_TEXT = 94;
+const INPUT_HANDLE_BOTTOM_IMAGE = 54;
+const INPUT_HANDLE_BOTTOM_VIDEO = 14;
+
+type AssistantTab = "result" | "prompt";
+
+type SummaryPill = {
+  id: string;
+  label: string;
+  tone?: "default" | "muted";
+  icon?: "image" | "text" | "video";
+};
+
+function SummaryIcon({ icon }: { icon: SummaryPill["icon"] }) {
+  if (icon === "image") return <ImageIcon size={11} strokeWidth={1.8} />;
+  if (icon === "video") return <Video size={11} strokeWidth={1.8} />;
+  if (icon === "text") return <Type size={11} strokeWidth={1.8} />;
+  return null;
+}
+
+function AssistantToolbarButton({
+  active,
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  icon: typeof Sparkles;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className={cn(
+        "group/assistant-tab relative inline-flex h-8 w-8 items-center justify-center rounded-full transition",
+        active
+          ? "bg-white/[0.08] text-white"
+          : "text-white/52 hover:bg-white/[0.04] hover:text-white/82",
+      )}
+    >
+      <Icon size={14} strokeWidth={1.9} />
+      <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 -translate-x-1/2 rounded-xl border border-white/[0.08] bg-[#1f1f1f] px-3 py-2 text-xs font-medium text-white shadow-xl whitespace-nowrap opacity-0 scale-95 transition-all duration-200 ease-out group-hover/assistant-tab:opacity-100 group-hover/assistant-tab:scale-100">
+        {label}
+      </span>
+    </button>
+  );
+}
 
 export function AssistantNode(props: NodeProps<FlowNode>) {
   const { id: rfId, data, selected } = props;
@@ -46,28 +96,26 @@ export function AssistantNode(props: NodeProps<FlowNode>) {
   const prompt = (data.assistantPrompt as string | undefined) ?? "";
   const output = (data.assistantOutput as string | undefined) ?? "";
   const error = (data.assistantError as string | undefined) ?? (data.error as string | undefined);
+  const hasOutput = output.trim().length > 0;
 
-  const [activeTab, setActiveTab] = useState<"document" | "prompt">(() =>
-    output.trim() ? "document" : "prompt"
-  );
+  const [activeTab, setActiveTab] = useState<AssistantTab>(() => (hasOutput ? "result" : "prompt"));
+  const [hovered, setHovered] = useState(false);
+  const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onMouseEnter = useCallback(() => {
+    if (leaveTimer.current) {
+      clearTimeout(leaveTimer.current);
+      leaveTimer.current = null;
+    }
+    setHovered(true);
+  }, []);
+  const onMouseLeave = useCallback(() => {
+    leaveTimer.current = setTimeout(() => setHovered(false), HOVER_LEAVE_DELAY);
+  }, []);
+  const showControls = hovered || !!selected;
 
   const edges = useEdges();
   const connection = useConnection();
   const allNodes = useBoardStore((s) => s.nodes);
-  const textEdge = edges.find((edge) => edge.target === rfId && edge.targetHandle === "target-text");
-  const textSourceNode = textEdge ? allNodes.find((node) => node.id === textEdge.source) : null;
-  const upstreamText = useMemo(() => {
-    if (!textSourceNode) return [];
-    if (textSourceNode.data.type === "list") {
-      return collectSelectedListTextPrompts(textSourceNode as { id: string; data: Record<string, unknown> });
-    }
-    if (textSourceNode.data.type === "assistant") {
-      const value = (textSourceNode.data.assistantOutput as string | undefined) ?? "";
-      return value.trim() ? [value.trim()] : [];
-    }
-    const value = ((textSourceNode.data.prompt as string | undefined) ?? "").trim();
-    return value ? [value] : [];
-  }, [textSourceNode]);
 
   const attachmentSummary = useMemo(() => {
     const attachmentEdges = edges.filter(
@@ -97,14 +145,47 @@ export function AssistantNode(props: NodeProps<FlowNode>) {
     });
   }, [allNodes, edges, rfId]);
 
+  const summaryPills = useMemo<SummaryPill[]>(() => {
+    const pills: SummaryPill[] = [{ id: "model", label: "Flow Gemini" }];
+    if (attachmentSummary.length > 0) {
+      const imageCount = attachmentSummary.filter((item) => item.kind === "image").length;
+      const videoCount = attachmentSummary.filter((item) => item.kind === "video").length;
+      if (imageCount > 0) {
+        pills.push({
+          id: "attachments-image",
+          label: `${imageCount} ${imageCount > 1 ? "images" : "image"}`,
+          tone: "muted",
+          icon: "image",
+        });
+      }
+      if (videoCount > 0) {
+        pills.push({
+          id: "attachments-video",
+          label: `${videoCount} ${videoCount > 1 ? "videos" : "video"}`,
+          tone: "muted",
+          icon: "video",
+        });
+      }
+    }
+    return pills;
+  }, [attachmentSummary]);
+
+  const hasSourceEdge = edges.some((edge) => edge.source === rfId);
+  const hasTargetTextEdge = edges.some((edge) => edge.target === rfId && edge.targetHandle === "target-text");
   const hasTargetImageEdge = edges.some((edge) => edge.target === rfId && edge.targetHandle === "target-image");
   const hasTargetVideoEdge = edges.some((edge) => edge.target === rfId && edge.targetHandle === "target-video");
+  const isConnectingFrom = connection.inProgress && connection.fromNode?.id === rfId;
+  const showSourceHandle = showControls || hasSourceEdge || isConnectingFrom;
+  const anyConnectionInProgress = connection.inProgress;
+  const targetHandleClassName = (active: boolean) => cn(
+    edgeHandleClass({ side: "left", visible: showControls || active || anyConnectionInProgress }),
+    anyConnectionInProgress && "!pointer-events-auto !z-50",
+  );
 
   function persistDelta(delta: Record<string, unknown>) {
     useBoardStore.getState().updateNodeData(rfId, delta);
     persistNodeData(rfId, delta);
   }
-
 
   function setPrompt(value: string) {
     persistDelta({ assistantPrompt: value });
@@ -114,127 +195,122 @@ export function AssistantNode(props: NodeProps<FlowNode>) {
     useGenerationStore.getState().runNodeGraph(rfId);
   }
 
-  function handleCopyOutput() {
-    if (!output.trim()) return;
+  function handleCopyOutput(event: React.MouseEvent<HTMLButtonElement>) {
+    event.stopPropagation();
+    if (!hasOutput) return;
     void navigator.clipboard.writeText(output);
   }
 
   return (
-    <div className={cn("relative", selected && "node-selected")}>
-      <NodeShell
-        id={rfId}
-        Icon={Bot}
-        title={data.title || "Assistant"}
-        shortId={shortId}
-        selected={selected}
-        width={width}
-        padded={false}
-        status={status}
-        targetHandle={{ id: "target-text", icon: Type, label: "Prompt context" }}
-        sourceHandle={{ id: "source", icon: Type, label: "Assistant output" }}
-        className="overflow-hidden"
-        toolbarLeft={
-          <div className="flex items-center gap-1 rounded-lg bg-black/40 p-1">
-            <button
-              type="button"
+    <div
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      className="relative font-sans"
+      style={{ width, padding: "0 20px 0 20px" }}
+    >
+      <div className="mb-2 flex items-center gap-1.5 pl-1">
+        <Bot size={14} strokeWidth={1.5} className="text-ink-muted shrink-0" />
+        <span className="text-xs font-medium leading-none text-ink-primary">{data.title || "Assistant"}</span>
+        {shortId && <span className="font-mono text-2xs leading-none text-ink-placeholder">#{shortId}</span>}
+      </div>
+
+      <div
+        data-selected={selected || undefined}
+        className={cn(
+          "relative overflow-visible transition-all duration-300 ease-out",
+          "border-[3px] border-white/[0.14] shadow-[0_8px_28px_-10px_rgba(0,0,0,0.6)]",
+          selected && "ring-2 ring-accent/50",
+          isRunning && "ring-2 ring-accent/30",
+        )}
+        style={{ borderRadius: BORDER_RADIUS, backgroundColor: "#1a1a1a" }}
+      >
+        <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-3 pt-2.5">
+          <div
+            className="inline-flex items-center gap-1 rounded-full border border-white/[0.08] bg-black/30 p-1 backdrop-blur-sm"
+            role="tablist"
+            aria-label="Assistant view"
+          >
+            <AssistantToolbarButton
+              active={activeTab === "prompt"}
+              icon={Sparkles}
+              label="Prompt"
               onClick={() => setActiveTab("prompt")}
-              className={cn(
-                "flex h-7 w-7 items-center justify-center rounded-md text-white/50 transition hover:text-white",
-                activeTab === "prompt" && "bg-white/[0.08] text-white"
-              )}
-              title="Prompt Editor"
-            >
-              <Sparkles size={14} strokeWidth={1.8} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("document")}
-              className={cn(
-                "flex h-7 w-7 items-center justify-center rounded-md text-white/50 transition hover:text-white",
-                activeTab === "document" && "bg-white/[0.08] text-white"
-              )}
-              title="Document View"
-            >
-              <FileText size={14} strokeWidth={1.8} />
-            </button>
+            />
+            <AssistantToolbarButton
+              active={activeTab === "result"}
+              icon={FileText}
+              label="Result"
+              onClick={() => setActiveTab("result")}
+            />
           </div>
-        }
-        toolbarRight={
-          output.trim() ? (
+
+          {hasOutput ? (
             <button
               type="button"
               onClick={handleCopyOutput}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-white/55 transition hover:bg-white/[0.06] hover:text-white"
+              aria-label="Copy output"
               title="Copy output"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-white/55 transition hover:bg-white/[0.06] hover:text-white"
             >
               <Copy size={14} strokeWidth={1.8} />
             </button>
-          ) : undefined
-        }
-      >
-        <div className="flex min-h-[420px] flex-col px-5 pb-4 pt-16">
-          {activeTab === "prompt" ? (
-            <>
+          ) : null}
+        </div>
 
-              <div className="mb-3 rounded-2xl border border-white/[0.08] bg-white/[0.03] p-3">
-                <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-white/35">
-                  Prompt
-                </div>
+        <div className="flex min-h-[420px] flex-col px-5 pb-4 pt-14">
+          <div className="flex flex-wrap gap-2 pb-2">
+            {summaryPills.map((pill) => (
+              <div
+                key={pill.id}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] leading-none select-none",
+                  pill.tone === "muted"
+                    ? "border-white/[0.08] bg-white/[0.03] text-white/60"
+                    : "border-white/10 bg-white/[0.04] text-white/78",
+                )}
+              >
+                {pill.icon ? <SummaryIcon icon={pill.icon} /> : null}
+                <span>{pill.label}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-1 flex-col rounded-2xl border border-white/[0.08] bg-black/20">
+            <div className="flex flex-1 flex-col px-4 py-4">
+              {activeTab === "prompt" ? (
                 <textarea
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
                   spellCheck={false}
-                  className="nodrag nowheel img-gen-prompt min-h-[92px] w-full resize-none border-0 bg-transparent text-sm leading-relaxed text-white/88 outline-none placeholder:text-white/30"
+                  className="nodrag nowheel img-gen-prompt min-h-[170px] flex-1 resize-none border-0 bg-transparent text-sm leading-relaxed text-white/88 outline-none placeholder:text-white/28"
                   placeholder="Ask the assistant to analyze, rewrite, or synthesize from your upstream text and media."
                 />
-                {upstreamText.length > 0 && (
-                  <div className="mt-3 rounded-xl border border-white/[0.06] bg-black/20 px-3 py-2 text-xs leading-relaxed text-white/45">
-                    Upstream text: {upstreamText.length} item{upstreamText.length > 1 ? "s" : ""}
-                  </div>
-                )}
-              </div>
-
-              {attachmentSummary.length > 0 && (
-                <div className="mb-3 flex flex-wrap gap-2">
-                  {attachmentSummary.slice(0, 8).map((item) => (
-                    <div
-                      key={item.id}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-xs text-white/65 select-none"
-                    >
-                      {item.kind === "video" ? <Video size={12} strokeWidth={1.6} /> : <ImageIcon size={12} strokeWidth={1.6} />}
-                      <span className="max-w-[170px] truncate">{item.title}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="flex-1 rounded-[24px] border border-white/[0.08] bg-black/20 p-4 mb-3 overflow-y-auto">
-              {error ? (
-                <div className="text-sm leading-relaxed text-rose-300">{error}</div>
-              ) : output.trim() ? (
-                <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-white/88">
-                  {output}
-                </pre>
               ) : (
-                <div className="max-w-[440px] text-[15px] leading-8 text-white/38">
-                  Assistant is your creative sidekick, powered by a multimodal model. Add prompt context, connect images or
-                  video, and run it to synthesize a text result.
+                <div className="magnific-dropdown-scroll flex-1 overflow-y-auto pr-1">
+                  {error ? (
+                    <div className="rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm leading-relaxed text-rose-200">
+                      {error}
+                    </div>
+                  ) : hasOutput ? (
+                    <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-7 text-white/88">
+                      {output}
+                    </pre>
+                  ) : (
+                    <div className="flex h-full min-h-[220px] max-w-[420px] flex-col justify-center">
+                      <div className="text-base font-medium text-white/72">No result yet</div>
+                      <div className="mt-2 text-sm leading-7 text-white/38">
+                        Run the node to capture a reusable text output.
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-          )}
+          </div>
 
-          <div className="mt-auto flex items-center justify-between border-t border-white/[0.04] pt-3">
-            <div className="flex items-center gap-2">
-              <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-white/80 select-none">
-                Flow Gemini
-              </div>
-              {activeTab === "prompt" && attachmentSummary.length > 0 && (
-                <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-white/60 select-none">
-                  {attachmentSummary.length} attachment{attachmentSummary.length > 1 ? "s" : ""}
-                </div>
-              )}
+          <div className="mt-4 flex items-center justify-between">
+            <div className="text-xs text-white/40">
+              {isRunning ? "Generating..." : "Export as text"}
             </div>
             <button
               type="button"
@@ -252,25 +328,6 @@ export function AssistantNode(props: NodeProps<FlowNode>) {
           </div>
         </div>
 
-        <Handle
-          type="target"
-          position={Position.Left}
-          id="target-image"
-          style={{ top: TARGET_IMAGE_TOP }}
-          className={edgeHandleClass({ side: "left", visible: hasTargetImageEdge || connection.inProgress, dragActive: connection.inProgress })}
-        >
-          <HandleBadge icon={ImageIcon} active={hasTargetImageEdge} label="Image context" side="left" />
-        </Handle>
-        <Handle
-          type="target"
-          position={Position.Left}
-          id="target-video"
-          style={{ top: TARGET_VIDEO_TOP }}
-          className={edgeHandleClass({ side: "left", visible: hasTargetVideoEdge || connection.inProgress, dragActive: connection.inProgress })}
-        >
-          <HandleBadge icon={Video} active={hasTargetVideoEdge} label="Video context" side="left" />
-        </Handle>
-
         <ResizeHandle
           minWidth={MIN_WIDTH}
           maxWidth={MAX_WIDTH}
@@ -280,7 +337,46 @@ export function AssistantNode(props: NodeProps<FlowNode>) {
           onResizeEnd={(nextWidth) => persistNodeData(rfId, { nodeWidth: Math.round(nextWidth) })}
           forceVisible={!!selected}
         />
-      </NodeShell>
+
+      </div>
+
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="source"
+        style={{ top: EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET }}
+        className={edgeHandleClass({ side: "right", visible: showSourceHandle })}
+      >
+        <HandleBadge icon={Type} active={hasSourceEdge} label="Assistant output" side="right" />
+      </Handle>
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="target-text"
+        style={{ bottom: INPUT_HANDLE_BOTTOM_TEXT, top: "auto" }}
+        className={targetHandleClassName(hasTargetTextEdge)}
+      >
+        <HandleBadge icon={Type} active={hasTargetTextEdge} label="Prompt context" side="left" />
+      </Handle>
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="target-image"
+        style={{ bottom: INPUT_HANDLE_BOTTOM_IMAGE, top: "auto" }}
+        className={targetHandleClassName(hasTargetImageEdge)}
+      >
+        <HandleBadge icon={ImageIcon} active={hasTargetImageEdge} label="Image context" side="left" />
+      </Handle>
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="target-video"
+        style={{ bottom: INPUT_HANDLE_BOTTOM_VIDEO, top: "auto" }}
+        className={targetHandleClassName(hasTargetVideoEdge)}
+      >
+        <HandleBadge icon={Video} active={hasTargetVideoEdge} label="Video context" side="left" />
+      </Handle>
+
     </div>
   );
 }

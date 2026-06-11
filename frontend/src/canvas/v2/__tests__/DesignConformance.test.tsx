@@ -62,6 +62,7 @@ vi.mock("../shared/persistNodeData", () => ({
 }));
 
 import { ImageGeneratorNode } from "../ImageGeneratorNode";
+import { AssistantNode } from "../AssistantNode";
 import { ListNode } from "../ListNode";
 import { NodeShell } from "../NodeShell";
 import { NoteNode } from "../NoteNode";
@@ -69,8 +70,10 @@ import { VideoGeneratorNode } from "../VideoGeneratorNode";
 import { persistNodeData } from "../shared/persistNodeData";
 import type { FlowNode } from "../../../store/board";
 import { useBoardStore } from "../../../store/board";
+import { useGenerationStore } from "../../../store/generation";
 
 const persistNodeDataMock = vi.mocked(persistNodeData);
+const clipboardWriteText = vi.fn();
 
 function makeNodeProps(data: Record<string, unknown>, selected = false, id = "1"): NodeProps<FlowNode> {
   return {
@@ -98,6 +101,11 @@ beforeEach(() => {
   mockEdges = [];
   mockConnection = { inProgress: false, fromNode: null };
   persistNodeDataMock.mockReset();
+  clipboardWriteText.mockReset();
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText: clipboardWriteText },
+    configurable: true,
+  });
   useBoardStore.setState((state) => ({ ...state, nodes: [], edges: [] }));
 });
 
@@ -284,5 +292,106 @@ describe("canvas-v2 design conformance", () => {
     expect(noteCard.style.borderRadius).toBe("16px");
     expect(noteView.container.innerHTML.includes("border-radius: 20px")).toBe(false);
     expect(noteView.container.innerHTML.includes("border-radius: 24px")).toBe(false);
+  });
+
+  it("keeps AssistantNode on the v2 card system and default result view when output exists", () => {
+    const view = render(
+      <AssistantNode
+        {...makeNodeProps(
+          {
+            type: "assistant",
+            title: "Assistant",
+            assistantOutput: "Synthesized answer",
+            assistantStatus: "done",
+          },
+          true,
+        )}
+      />,
+    );
+
+    const assistantCard = view.container.querySelector('[data-selected="true"]') as HTMLElement;
+    expect(assistantCard).toBeTruthy();
+    expect(assistantCard.className.includes("border-[3px]")).toBe(true);
+    expect(assistantCard.className.includes("border-white/[0.14]")).toBe(true);
+    expect(assistantCard.style.borderRadius).toBe("16px");
+
+    const panels = view.container.querySelectorAll(".rounded-2xl");
+    expect(view.container.innerHTML.includes("rounded-[24px]")).toBe(false);
+    expect(panels.length).toBeGreaterThan(0);
+    expect(screen.getByRole("tab", { name: "Result" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByText("Synthesized answer")).toBeTruthy();
+  });
+
+  it("keeps AssistantNode handles visible during a connection drag and uses the v2 run button treatment", () => {
+    mockConnection = { inProgress: true, fromNode: { id: "upstream" } };
+
+    const view = render(
+      <AssistantNode
+        {...makeNodeProps(
+          {
+            type: "assistant",
+            title: "Assistant",
+            assistantStatus: "running",
+          },
+          false,
+        )}
+      />,
+    );
+
+    const targetIds = ["target-text", "target-image", "target-video"];
+    for (const id of targetIds) {
+      const handle = screen.getByTestId(`handle-${id}`);
+      expectClassTokens(handle.className, ["!opacity-100", "!pointer-events-auto", "!z-50"]);
+    }
+
+    const sourceHandle = screen.getByTestId("handle-source");
+    expectClassTokens(sourceHandle.className, [], ["!pointer-events-auto", "!z-50"]);
+
+    const runButton = screen.getByRole("button", { name: /running/i });
+    expect(runButton.className.includes("h-10")).toBe(true);
+    expect(runButton.className.includes("rounded-full")).toBe(true);
+    expect(view.container.querySelector(".animate-spin")).toBeTruthy();
+  });
+
+  it("keeps AssistantNode prompt view as the default when no output exists and copies output when available", () => {
+    const runNodeGraphSpy = vi.spyOn(useGenerationStore.getState(), "runNodeGraph").mockImplementation(async () => {});
+
+    const noOutputView = render(
+      <AssistantNode
+        {...makeNodeProps(
+          {
+            type: "assistant",
+            title: "Assistant",
+            assistantPrompt: "Rewrite the brief",
+            assistantStatus: "idle",
+          },
+          false,
+        )}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: "Prompt" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByDisplayValue("Rewrite the brief")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /run assistant/i }));
+    expect(runNodeGraphSpy).toHaveBeenCalledWith("1");
+    noOutputView.unmount();
+
+    render(
+      <AssistantNode
+        {...makeNodeProps(
+          {
+            type: "assistant",
+            title: "Assistant",
+            assistantOutput: "Ready to paste",
+            assistantStatus: "done",
+          },
+          false,
+        )}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /copy output/i }));
+    expect(clipboardWriteText).toHaveBeenCalledWith("Ready to paste");
   });
 });
