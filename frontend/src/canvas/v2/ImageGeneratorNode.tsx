@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState, useEffect } from "react";
 import { Handle, Position, useConnection, useEdges, type NodeProps } from "@xyflow/react";
-import { ImageUp, Play, RefreshCw, Settings, Type } from "lucide-react";
+import { ImageUp, Play, RefreshCw, Settings, Type, X } from "lucide-react";
 
 import { type FlowNode } from "../../store/board";
 import { useBoardStore } from "../../store/board";
@@ -145,7 +145,11 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
 
   const promptCount = (() => {
     if (!upstreamTextNode) return 1;
-    if (upstreamTextNode.data.type === "list") {
+    const type = upstreamTextNode.data.type || upstreamTextNode.type;
+    const isListLike =
+      type === "list" ||
+      (type === "assistant" && upstreamTextNode.data.assistantExportMode === "list");
+    if (isListLike) {
       // Count the actual text prompts the dispatch engine will use so the
       // batch badge matches execution exactly.
       return Math.max(1, upstreamTextPrompts.length);
@@ -199,7 +203,11 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     persistNodeData(rfId, { modelKey: key });
     setShowModelPicker(false);
   }
-  function handleGenerate() {
+  function handleGenerateOrCancel() {
+    if (isRunning) {
+      useGenerationStore.getState().cancelActiveRequest(rfId);
+      return;
+    }
     const finalPrompt = hasPromptSource ? upstreamText : prompt.trim();
     const hasImageRefs = edges.some((e) => {
       if (e.target !== rfId) return false;
@@ -439,14 +447,18 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
             </div>
 
             {/* Persistent Batch Mode Toggle Badge when List is connected - absolute & static to prevent animation stutter */}
-            {promptCount > 1 && imageCountUpstream > 1 && (
+            {(promptCount > 1 || imageCountUpstream > 1) && (
               <button
                 type="button"
                 onMouseDown={stopNodeAction}
                 onDoubleClick={stopNodeAction}
-                onClick={toggleBatchMode}
-                title={`Batch Mode: ${batchMode === "cross" ? "Cross Product (Generate every prompt for every image)" : "Zip Paired (Generate prompts matched with images by index)"}`}
-                className="nodrag nowheel absolute left-4 bottom-3 z-40 flex h-7 items-center justify-center rounded-full border border-white/[0.08] px-2.5 py-1 text-2xs font-bold text-white/80 hover:bg-white/[0.08] hover:text-white transition-all whitespace-nowrap cursor-pointer"
+                onClick={promptCount > 1 && imageCountUpstream > 1 ? toggleBatchMode : undefined}
+                disabled={!(promptCount > 1 && imageCountUpstream > 1)}
+                title={promptCount > 1 && imageCountUpstream > 1 ? `Batch Mode: ${batchMode === "cross" ? "Cross Product (Generate every prompt for every image)" : "Zip Paired (Generate prompts matched with images by index)"}` : `Generating ${batchTaskCount} batch items`}
+                className={cn(
+                  "nodrag nowheel absolute left-4 bottom-3 z-40 flex h-7 items-center justify-center rounded-full border border-white/[0.08] px-2.5 py-1 text-2xs font-bold text-white/80 transition-all whitespace-nowrap",
+                  promptCount > 1 && imageCountUpstream > 1 ? "hover:bg-white/[0.08] hover:text-white cursor-pointer" : "cursor-default"
+                )}
                 style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
               >
                 x{batchTaskCount}
@@ -462,10 +474,10 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
                   ? "max-h-[48px] opacity-100 translate-y-0"
                   : "max-h-0 opacity-0 translate-y-1 overflow-hidden",
               )}
-              style={{ paddingLeft: promptCount > 1 && imageCountUpstream > 1 ? 64 : 12 }}
+              style={{ paddingLeft: (promptCount > 1 || imageCountUpstream > 1) ? 64 : 12 }}
             >
               {/* Standard Image count stepper (Only shown when not in batch list mode) */}
-              {!(promptCount > 1 && imageCountUpstream > 1) && (
+              {!(promptCount > 1 || imageCountUpstream > 1) && (
                 <CountStepper
                   value={imageCount}
                   min={1}
@@ -534,16 +546,22 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
                 type="button"
                 onMouseDown={stopNodeAction}
                 onDoubleClick={stopNodeAction}
-                onClick={handleGenerate}
-                disabled={isRunning}
+                onClick={handleGenerateOrCancel}
                 className={cn(
-                  "nodrag nowheel p-2 rounded-full border transition-all duration-150 shadow-sm",
+                  "nodrag nowheel p-2 rounded-full border transition-all duration-150 shadow-sm cursor-pointer",
                   isRunning
-                    ? "bg-[#8f939b] border-[#8f939b] text-white/45 cursor-not-allowed"
-                    : "bg-[#f3f4f6] border-[#f3f4f6] text-[#1c2027] hover:bg-white hover:border-white hover:scale-[1.06] cursor-pointer"
+                    ? hovered
+                      ? "bg-rose-600 border-rose-600 text-white hover:bg-rose-700 hover:border-rose-700"
+                      : "bg-[#8f939b]/20 border-[#8f939b]/25 text-white/70"
+                    : "bg-[#f3f4f6] border-[#f3f4f6] text-[#1c2027] hover:bg-white hover:border-white hover:scale-[1.06]"
                 )}
+                title={isRunning ? (hovered ? "Cancel generation" : "Running") : (mediaId || mediaIds.length > 0 ? "Regenerate" : "Generate")}
               >
-                {mediaId || mediaIds.length > 0 ? <RefreshCw size={14} strokeWidth={2} /> : <Play size={14} strokeWidth={2} fill="currentColor" />}
+                {isRunning ? (
+                  hovered ? <X size={14} strokeWidth={2} /> : <RefreshCw size={14} strokeWidth={2} className="animate-spin" />
+                ) : (
+                  mediaId || mediaIds.length > 0 ? <RefreshCw size={14} strokeWidth={2} /> : <Play size={14} strokeWidth={2} fill="currentColor" />
+                )}
               </button>
             </div>
           </div>

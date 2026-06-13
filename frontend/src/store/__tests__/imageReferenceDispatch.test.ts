@@ -225,4 +225,210 @@ describe("Image Generator dispatch with upload + text inputs", () => {
     expect(arg.type).toBe("gen_image");
     expect(arg.params.prompt).toBe("assistant output prompt");
   });
+
+  it("fans out assistant list exports into batch prompts for downstream generators", async () => {
+    useBoardStore.setState({
+      nodes: [
+        {
+          id: IMAGE_RF_ID,
+          type: "reference",
+          position: { x: 0, y: 0 },
+          data: {
+            type: "reference",
+            aspectKey: "1:1",
+            imageCount: 1,
+            batchMode: "zip",
+          },
+        },
+        {
+          id: "upload-1",
+          type: "upload",
+          position: { x: -320, y: 0 },
+          data: {
+            type: "upload",
+            status: "done",
+            mediaId: "uploaded-media-id",
+          },
+        },
+        {
+          id: "assistant-1",
+          type: "assistant",
+          position: { x: -320, y: 220 },
+          data: {
+            type: "assistant",
+            status: "done",
+            assistantStatus: "done",
+            assistantExportMode: "list",
+            assistantOutput: "- prompt one\n\n- prompt two",
+          },
+        },
+      ],
+      edges: [
+        {
+          id: "edge-image",
+          source: "upload-1",
+          target: IMAGE_RF_ID,
+          sourceHandle: "source",
+          targetHandle: "target-image",
+        },
+        {
+          id: "edge-text",
+          source: "assistant-1",
+          target: IMAGE_RF_ID,
+          sourceHandle: "source",
+          targetHandle: "target-text",
+        },
+      ],
+    } as never);
+
+    await useGenerationStore.getState().runNodeGraph(IMAGE_RF_ID);
+
+    const create = vi.mocked(client.createRequest);
+    expect(create).toHaveBeenCalledTimes(1);
+    const arg = create.mock.calls[0][0] as {
+      type: string;
+      params: Record<string, unknown>;
+    };
+    expect(arg.type).toBe("gen_image");
+    expect(arg.params.variant_count).toBe(2);
+    expect(arg.params.prompts).toEqual(["- prompt one", "- prompt two"]);
+    expect(arg.params.ref_media_ids).toEqual(["uploaded-media-id", "uploaded-media-id"]);
+  });
+
+  it("imports assistant list exports into downstream list nodes as separate text items", async () => {
+    useBoardStore.setState({
+      nodes: [
+        {
+          id: "list-1",
+          type: "list",
+          position: { x: 0, y: 0 },
+          data: {
+            type: "list",
+            listItems: [],
+            listIntakeMode: "replace",
+            listSelectedIndexes: [],
+          },
+        },
+        {
+          id: "assistant-1",
+          type: "assistant",
+          position: { x: -320, y: 220 },
+          data: {
+            type: "assistant",
+            status: "done",
+            assistantStatus: "done",
+            assistantExportMode: "list",
+            assistantOutput: "First prompt block\nwith continuation\n\nSecond prompt block",
+          },
+        },
+      ],
+      edges: [
+        {
+          id: "edge-text",
+          source: "assistant-1",
+          target: "list-1",
+          sourceHandle: "source",
+          targetHandle: "target-text",
+        },
+      ],
+    } as never);
+
+    await useGenerationStore.getState().runNodeGraph("list-1");
+
+    const listNode = useBoardStore.getState().nodes.find((node) => node.id === "list-1");
+    expect(listNode?.data.status).toBe("done");
+    expect(listNode?.data.listItems).toHaveLength(2);
+    expect(listNode?.data.listItems?.map((item) => item.text)).toEqual([
+      "First prompt block\nwith continuation",
+      "Second prompt block",
+    ]);
+  });
+
+  it("merges assistant text inputs in text-then-list order and dispatches batch requests", async () => {
+    useBoardStore.setState({
+      nodes: [
+        {
+          id: "assistant-1",
+          type: "assistant",
+          position: { x: 0, y: 0 },
+          data: {
+            type: "assistant",
+            assistantPrompt: "Base instruction",
+          },
+        },
+        {
+          id: "text-1",
+          type: "text",
+          position: { x: -320, y: 0 },
+          data: {
+            type: "text",
+            prompt: "Brand",
+          },
+        },
+        {
+          id: "list-1",
+          type: "list",
+          position: { x: -320, y: 220 },
+          data: {
+            type: "list",
+            listItems: [
+              { id: "g1", kind: "text", text: "Guideline one" },
+              { id: "g2", kind: "text", text: "Guideline two" },
+            ],
+            listSelectedIndexes: [],
+          },
+        },
+      ],
+      edges: [
+        {
+          id: "edge-text",
+          source: "text-1",
+          target: "assistant-1",
+          sourceHandle: "source",
+          targetHandle: "target-text",
+        },
+        {
+          id: "edge-list",
+          source: "list-1",
+          target: "assistant-1",
+          sourceHandle: "source-text",
+          targetHandle: "target-text",
+        },
+      ],
+      boardId: 1,
+    } as never);
+
+    await useGenerationStore.getState().runNodeGraph("assistant-1");
+
+    const create = vi.mocked(client.createRequest);
+    expect(create).toHaveBeenCalledTimes(2);
+    
+    const firstCall = create.mock.calls[0][0] as {
+      type: string;
+      params: Record<string, unknown>;
+    };
+    expect(firstCall.type).toBe("text_gen");
+    expect(firstCall.params.prompt).toBe(
+      [
+        "Base instruction",
+        "Brand",
+        "Guideline one",
+        "Return the final answer as a clean list of standalone text items. No intro or closing note. Keep one item per paragraph or bullet.",
+      ].join("\n\n")
+    );
+
+    const secondCall = create.mock.calls[1][0] as {
+      type: string;
+      params: Record<string, unknown>;
+    };
+    expect(secondCall.type).toBe("text_gen");
+    expect(secondCall.params.prompt).toBe(
+      [
+        "Base instruction",
+        "Brand",
+        "Guideline two",
+        "Return the final answer as a clean list of standalone text items. No intro or closing note. Keep one item per paragraph or bullet.",
+      ].join("\n\n")
+    );
+  });
 });

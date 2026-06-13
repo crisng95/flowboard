@@ -294,6 +294,72 @@ describe("canvas-v2 design conformance", () => {
     expect(noteView.container.innerHTML.includes("border-radius: 24px")).toBe(false);
   });
 
+  it("locks ImageGeneratorNode batch count to prompt fanout when one image is paired with assistant list output", () => {
+    mockEdges = [
+      {
+        id: "edge-image",
+        source: "upload-1",
+        target: "1",
+        sourceHandle: "source",
+        targetHandle: "target-image",
+      },
+      {
+        id: "edge-text",
+        source: "assistant-1",
+        target: "1",
+        sourceHandle: "source",
+        targetHandle: "target-text",
+      },
+    ];
+
+    useBoardStore.setState((state) => ({
+      ...state,
+      nodes: [
+        {
+          id: "1",
+          type: "reference",
+          position: { x: 0, y: 0 },
+          data: { type: "reference", title: "Image Generator", imageCount: 1 },
+        } as unknown as FlowNode,
+        {
+          id: "upload-1",
+          type: "upload",
+          position: { x: -320, y: 0 },
+          data: { type: "upload", title: "Upload", mediaId: "media-1", status: "done" },
+        } as unknown as FlowNode,
+        {
+          id: "assistant-1",
+          type: "assistant",
+          position: { x: -320, y: 220 },
+          data: {
+            type: "assistant",
+            title: "Assistant",
+            assistantStatus: "done",
+            assistantExportMode: "list",
+            assistantOutput: "- prompt one\n\n- prompt two",
+          },
+        } as unknown as FlowNode,
+      ],
+      edges: mockEdges as never,
+    }));
+
+    render(
+      <ImageGeneratorNode
+        {...makeNodeProps(
+          {
+            type: "reference",
+            title: "Image Generator",
+            imageCount: 1,
+          },
+          false,
+        )}
+      />,
+    );
+
+    expect(screen.getByText("x2")).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Count" })).toBe(null);
+  });
+
   it("keeps AssistantNode on the v2 card system and default result view when output exists", () => {
     const view = render(
       <AssistantNode
@@ -393,5 +459,71 @@ describe("canvas-v2 design conformance", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /copy output/i }));
     expect(clipboardWriteText).toHaveBeenCalledWith("Ready to paste");
+  });
+
+  it("defaults AssistantNode export mode to list for upstream prompt lists and persists manual export changes", () => {
+    mockEdges = [
+      {
+        id: "edge-brand",
+        source: "text-1",
+        target: "1",
+        sourceHandle: "source",
+        targetHandle: "target-text",
+      },
+      {
+        id: "edge-text",
+        source: "list-1",
+        target: "1",
+        sourceHandle: "source-text",
+        targetHandle: "target-text",
+      },
+    ];
+    useBoardStore.setState((state) => ({
+      ...state,
+      nodes: [
+        {
+          id: "1",
+          type: "assistant",
+          position: { x: 0, y: 0 },
+          data: { type: "assistant", title: "Assistant" },
+        } as unknown as FlowNode,
+        {
+          id: "text-1",
+          type: "text",
+          position: { x: -420, y: 0 },
+          data: { type: "text", title: "Brand", prompt: "Brand" },
+        } as unknown as FlowNode,
+        {
+          id: "list-1",
+          type: "list",
+          position: { x: -320, y: 0 },
+          data: {
+            type: "list",
+            listItems: [{ id: "t1", kind: "text", text: "prompt one", title: "prompt one" }],
+            listSelectedIndexes: [],
+          },
+        } as unknown as FlowNode,
+      ],
+      edges: mockEdges as never,
+    }));
+
+    render(
+      <AssistantNode
+        {...makeNodeProps(
+          {
+            type: "assistant",
+            title: "Assistant",
+          },
+          false,
+        )}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /export as list/i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /export as list/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Export As Text/ }));
+
+    expect(persistNodeDataMock).toHaveBeenCalledWith("1", { assistantExportMode: "text" });
   });
 });

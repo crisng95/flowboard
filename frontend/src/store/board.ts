@@ -128,6 +128,7 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   systemPrompt?: string;
   assistantPrompt?: string;
   assistantOutput?: string;
+  assistantExportMode?: "text" | "list";
   assistantModel?: "flow_gemini";
   assistantStatus?: "idle" | "queued" | "running" | "done" | "error";
   assistantError?: string | null;
@@ -567,6 +568,7 @@ function nodeFromDto(
       systemPrompt: d["systemPrompt"] as string | undefined,
       assistantPrompt: d["assistantPrompt"] as string | undefined,
       assistantOutput: d["assistantOutput"] as string | undefined,
+      assistantExportMode: d["assistantExportMode"] as "text" | "list" | undefined,
       assistantModel: d["assistantModel"] as "flow_gemini" | undefined,
       assistantStatus: d["assistantStatus"] as FlowboardNodeData["assistantStatus"],
       assistantError: d["assistantError"] as string | null | undefined,

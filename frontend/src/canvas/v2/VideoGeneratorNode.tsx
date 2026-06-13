@@ -9,6 +9,7 @@ import {
   Video,
   Volume2,
   VolumeX,
+  X,
 } from "lucide-react";
 
 import { cn } from "../../lib/utils";
@@ -281,9 +282,13 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
     setShowCameraPicker(false);
   }
 
-  function handleGenerate() {
+  function handleGenerateOrCancel() {
+    if (isRunning) {
+      useGenerationStore.getState().cancelActiveRequest(rfId);
+      return;
+    }
     const finalPrompt = (hasTextConnection ? upstreamText : prompt).trim();
-    if (!finalPrompt || isRunning) return;
+    if (!finalPrompt) return;
     useGenerationStore.getState().runNodeGraph(rfId);
   }
 
@@ -711,16 +716,22 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
                 type="button"
                 onMouseDown={stopNodeAction}
                 onDoubleClick={stopNodeAction}
-                onClick={handleGenerate}
-                disabled={isRunning}
+                onClick={handleGenerateOrCancel}
                 className={cn(
-                  "p-2 rounded-full border transition-all duration-150 shadow-sm",
+                  "p-2 rounded-full border transition-all duration-150 shadow-sm cursor-pointer",
                   isRunning
-                    ? "bg-[#8f939b] border-[#8f939b] text-white/45 cursor-not-allowed"
-                    : "bg-[#f3f4f6] border-[#f3f4f6] text-[#1c2027] hover:bg-white hover:border-white hover:scale-[1.06] cursor-pointer",
+                    ? hovered
+                      ? "bg-rose-600 border-rose-600 text-white hover:bg-rose-700 hover:border-rose-700"
+                      : "bg-[#8f939b]/20 border-[#8f939b]/25 text-white/70"
+                    : "bg-[#f3f4f6] border-[#f3f4f6] text-[#1c2027] hover:bg-white hover:border-white hover:scale-[1.06]",
                 )}
+                title={isRunning ? (hovered ? "Cancel generation" : "Running") : (mediaId || mediaIds.length > 0 ? "Regenerate" : "Generate")}
               >
-                {mediaId || mediaIds.length > 0 ? <RefreshCw size={14} strokeWidth={2} /> : <Play size={14} strokeWidth={2} fill="currentColor" />}
+                {isRunning ? (
+                  hovered ? <X size={14} strokeWidth={2} /> : <RefreshCw size={14} strokeWidth={2} className="animate-spin" />
+                ) : (
+                  mediaId || mediaIds.length > 0 ? <RefreshCw size={14} strokeWidth={2} /> : <Play size={14} strokeWidth={2} fill="currentColor" />
+                )}
               </button>
             </div>
           </div>

@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { Handle, Position, useConnection, useEdges, type NodeProps } from "@xyflow/react";
+import { Handle, Position, useConnection, useEdges, type NodeProps, useReactFlow } from "@xyflow/react";
 import {
   Bot,
+  ChevronDown,
   Copy,
   FileText,
   Image as ImageIcon,
@@ -10,23 +11,30 @@ import {
   Sparkles,
   Type,
   Video,
+  X,
   type LucideIcon,
 } from "lucide-react";
 
 import { cn } from "../../lib/utils";
 import { type FlowNode, useBoardStore } from "../../store/board";
 import {
+  type AssistantExportMode,
   collectSelectedListMediaItems,
+  collectSelectedTextPrompts,
+  resolveAssistantExportMode,
   useGenerationStore,
 } from "../../store/generation";
-import { ResizeHandle } from "./shared/ResizeHandle";
 import { persistNodeData } from "./shared/persistNodeData";
 import { HandleBadge } from "./shared/HandleBadge";
 import { edgeHandleClass, EXTERNAL_HEADER_EDGE_HANDLE_TOP_OFFSET } from "./shared/edgeHandle";
+import { PickerDropdown } from "./shared/PickerDropdown";
 
 const MIN_WIDTH = 420;
 const MAX_WIDTH = 760;
 const DEFAULT_WIDTH = 560;
+const MIN_HEIGHT = 360;
+const MAX_HEIGHT = 1000;
+const DEFAULT_HEIGHT = 480;
 const BORDER_RADIUS = 16;
 const HOVER_LEAVE_DELAY = 200;
 const INPUT_HANDLE_BOTTOM_TEXT = 94;
@@ -34,8 +42,8 @@ const INPUT_HANDLE_BOTTOM_IMAGE = 54;
 const INPUT_HANDLE_BOTTOM_VIDEO = 14;
 const PROMPT_PLACEHOLDER =
   "Ask the assistant to analyze, rewrite, or synthesize from your upstream text and media.";
-const FOOTER_IDLE_LABEL = "Export as text";
 const FOOTER_RUNNING_LABEL = "Generating...";
+const EXPORT_DROPDOWN_MIN_WIDTH = 228;
 
 type AssistantTab = "result" | "prompt";
 
@@ -65,8 +73,163 @@ const ASSISTANT_EMPTY_STATE: Record<AssistantTab, { title: string; body?: string
   },
 };
 
+interface DualResizeHandleProps {
+  forceVisible?: boolean;
+  minWidth: number;
+  maxWidth: number;
+  minHeight: number;
+  maxHeight: number;
+  currentWidth: number;
+  currentHeight: number;
+  onResize: (width: number, height: number) => void;
+  onResizeEnd: (width: number, height: number) => void;
+}
+
+function DualResizeHandle({
+  minWidth,
+  maxWidth,
+  minHeight,
+  maxHeight,
+  currentWidth,
+  currentHeight,
+  onResize,
+  onResizeEnd,
+  forceVisible = false,
+}: DualResizeHandleProps) {
+  const { getZoom } = useReactFlow();
+  const [isDragging, setIsDragging] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const [liveSize, setLiveSize] = useState<{ w: number; h: number } | null>(null);
+  const dragStateRef = useRef<{
+    startX: number;
+    startY: number;
+    startWidth: number;
+    startHeight: number;
+    zoom: number;
+  } | null>(null);
+
+  function onPointerDown(e: React.PointerEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragStateRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startWidth: currentWidth,
+      startHeight: currentHeight,
+      zoom: getZoom(),
+    };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    setIsDragging(true);
+    setLiveSize({ w: Math.round(currentWidth), h: Math.round(currentHeight) });
+  }
+
+  function onPointerMove(e: React.PointerEvent) {
+    const s = dragStateRef.current;
+    if (!s) return;
+    const deltaX = (e.clientX - s.startX) / s.zoom;
+    const deltaY = (e.clientY - s.startY) / s.zoom;
+    const nextW = Math.max(minWidth, Math.min(maxWidth, s.startWidth + deltaX));
+    const nextH = Math.max(minHeight, Math.min(maxHeight, s.startHeight + deltaY));
+    onResize(nextW, nextH);
+    setLiveSize({ w: Math.round(nextW), h: Math.round(nextH) });
+  }
+
+  function onPointerUp(e: React.PointerEvent) {
+    const s = dragStateRef.current;
+    if (!s) return;
+    const deltaX = (e.clientX - s.startX) / s.zoom;
+    const deltaY = (e.clientY - s.startY) / s.zoom;
+    const finalW = Math.max(minWidth, Math.min(maxWidth, s.startWidth + deltaX));
+    const finalH = Math.max(minHeight, Math.min(maxHeight, s.startHeight + deltaY));
+    dragStateRef.current = null;
+    setIsDragging(false);
+    setLiveSize(null);
+    try {
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {}
+    onResizeEnd(finalW, finalH);
+  }
+
+  return (
+    <div
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onMouseDown={(e) => e.stopPropagation()}
+      className={cn(
+        "absolute z-10 flex items-center justify-center group",
+        isDragging ? "[&_path]:opacity-100" : forceVisible && isHovered ? "[&_path]:opacity-50" : "[&_path]:opacity-0",
+        "[&_path]:transition-opacity [&_path]:duration-100",
+        isDragging && "[&_path]:!opacity-100",
+      )}
+      style={{
+        bottom: 0,
+        right: 0,
+        width: 64,
+        height: 64,
+        transform: "translate(50%, 50%)",
+        background: "transparent",
+        touchAction: "none",
+      }}
+    >
+      {liveSize !== null && (
+        <div
+          className="absolute pointer-events-none rounded-full border text-[10px] font-mono leading-none px-2 py-1 tabular-nums animate-fade-in"
+          style={{
+            bottom: "calc(100% + 6px)",
+            right: "50%",
+            transform: "translateX(50%)",
+            backgroundColor: "#1c1f27",
+            borderColor: "rgba(255,255,255,0.14)",
+            color: "rgba(255,255,255,0.9)",
+            whiteSpace: "nowrap",
+            zIndex: 100,
+          }}
+          aria-live="polite"
+        >
+          {liveSize.w} × {liveSize.h}px
+        </div>
+      )}
+      <svg
+        viewBox="0 0 48 48"
+        style={{
+          width: "100%",
+          height: "100%",
+          pointerEvents: "none",
+          filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.5))",
+          overflow: "visible",
+        }}
+      >
+        <path
+          d="M 36 22 A 14 14 0 0 1 22 36"
+          stroke="rgba(0,0,0,0)"
+          strokeWidth="18"
+          strokeLinecap="round"
+          fill="none"
+          pointerEvents="stroke"
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+        />
+        <path
+          d="M 36 22 A 14 14 0 0 1 22 36"
+          stroke="rgba(255,255,255,0.95)"
+          strokeWidth="5"
+          strokeLinecap="round"
+          fill="none"
+          pointerEvents="none"
+        />
+      </svg>
+    </div>
+  );
+}
+
 function formatCountLabel(count: number, singular: string, plural: string) {
   return `${count} ${count > 1 ? plural : singular}`;
+}
+
+function getExportModeLabel(mode: AssistantExportMode) {
+  return mode === "list" ? "Export as list" : "Export as text";
 }
 
 function buildContextBadges(
@@ -227,10 +390,13 @@ export function AssistantNode(props: NodeProps<FlowNode>) {
   const isRunning = status === "queued" || status === "running";
   const shortId = data.shortId as string | undefined;
   const width = (data.nodeWidth as number | undefined) ?? DEFAULT_WIDTH;
+  const height = (data.nodeHeight as number | undefined) ?? DEFAULT_HEIGHT;
   const prompt = (data.assistantPrompt as string | undefined) ?? "";
   const output = (data.assistantOutput as string | undefined) ?? "";
   const error = (data.assistantError as string | undefined) ?? (data.error as string | undefined);
   const hasOutput = output.trim().length > 0;
+  const exportButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [showExportDropdown, setShowExportDropdown] = useState(false);
 
   const [activeTab, setActiveTab] = useState<AssistantTab>(() => (hasOutput ? "result" : "prompt"));
   const [hovered, setHovered] = useState(false);
@@ -280,6 +446,28 @@ export function AssistantNode(props: NodeProps<FlowNode>) {
   }, [allNodes, edges, rfId]);
 
   const contextBadges = useMemo(() => buildContextBadges(attachmentSummary), [attachmentSummary]);
+  const resolvedExportMode = useMemo<AssistantExportMode>(
+    () => resolveAssistantExportMode({ id: rfId, data }, { nodes: allNodes, edges }),
+    [allNodes, data, edges, rfId],
+  );
+
+  const promptCount = useMemo(() => {
+    const textEdges = edges.filter((edge) => edge.target === rfId && edge.targetHandle === "target-text");
+    let count = 1;
+    for (const edge of textEdges) {
+      const node = allNodes.find((entry) => entry.id === edge.source);
+      if (!node) continue;
+      const prompts = collectSelectedTextPrompts(node as { id: string; data: Record<string, unknown> });
+      const type = node.data.type || node.type;
+      const isListLike =
+        type === "list" ||
+        (type === "assistant" && node.data.assistantExportMode === "list");
+      if (isListLike && prompts.length > 1) {
+        count = Math.max(count, prompts.length);
+      }
+    }
+    return count;
+  }, [allNodes, edges, rfId]);
 
   const hasSourceEdge = edges.some((edge) => edge.source === rfId);
   const hasTargetTextEdge = edges.some((edge) => edge.target === rfId && edge.targetHandle === "target-text");
@@ -293,6 +481,22 @@ export function AssistantNode(props: NodeProps<FlowNode>) {
     anyConnectionInProgress && "!pointer-events-auto !z-50",
   );
 
+  const onResize = useCallback(
+    (nextW: number, nextH: number) => {
+      useBoardStore.getState().updateNodeData(rfId, { nodeWidth: nextW, nodeHeight: nextH });
+    },
+    [rfId],
+  );
+
+  const onResizeEnd = useCallback(
+    (nextW: number, nextH: number) => {
+      const clampedW = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.round(nextW)));
+      const clampedH = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, Math.round(nextH)));
+      persistNodeData(rfId, { nodeWidth: clampedW, nodeHeight: clampedH });
+    },
+    [rfId],
+  );
+
   function persistDelta(delta: Record<string, unknown>) {
     useBoardStore.getState().updateNodeData(rfId, delta);
     persistNodeData(rfId, delta);
@@ -302,8 +506,17 @@ export function AssistantNode(props: NodeProps<FlowNode>) {
     persistDelta({ assistantPrompt: value });
   }
 
-  function handleRun() {
-    useGenerationStore.getState().runNodeGraph(rfId);
+  function setExportMode(mode: AssistantExportMode) {
+    persistDelta({ assistantExportMode: mode });
+    setShowExportDropdown(false);
+  }
+
+  function handleRunOrCancel() {
+    if (isRunning) {
+      useGenerationStore.getState().cancelActiveRequest(rfId);
+    } else {
+      useGenerationStore.getState().runNodeGraph(rfId);
+    }
   }
 
   function handleCopyOutput(event: React.MouseEvent<HTMLButtonElement>) {
@@ -333,7 +546,11 @@ export function AssistantNode(props: NodeProps<FlowNode>) {
           selected && "ring-2 ring-accent/50",
           isRunning && "ring-2 ring-accent/30",
         )}
-        style={{ borderRadius: BORDER_RADIUS, backgroundColor: "#1a1a1a" }}
+        style={{
+          borderRadius: BORDER_RADIUS,
+          backgroundColor: "#1a1a1a",
+          height: height ? `${height}px` : undefined,
+        }}
       >
         <AssistantTopBar
           activeTab={activeTab}
@@ -342,7 +559,7 @@ export function AssistantNode(props: NodeProps<FlowNode>) {
           onTabChange={setActiveTab}
         />
 
-        <div className="flex min-h-[420px] flex-col px-5 pb-4 pt-14">
+        <div className="flex h-full flex-col px-5 pb-4 pt-14">
           <div className="flex flex-wrap gap-2 pb-2">
             {contextBadges.map((pill) => (
               <div
@@ -360,18 +577,18 @@ export function AssistantNode(props: NodeProps<FlowNode>) {
             ))}
           </div>
 
-          <div className="flex flex-1 flex-col rounded-2xl border border-white/[0.08] bg-black/20">
-            <div className="flex flex-1 flex-col px-4 py-4">
+          <div className="flex flex-1 flex-col rounded-2xl border border-white/[0.08] bg-black/20 overflow-hidden">
+            <div className="flex flex-1 flex-col px-4 py-4 overflow-hidden">
               {activeTab === "prompt" ? (
                 <textarea
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
                   spellCheck={false}
-                  className="nodrag nowheel img-gen-prompt min-h-[170px] flex-1 resize-none border-0 bg-transparent text-sm leading-relaxed text-white/88 outline-none placeholder:text-white/28"
+                  className="nodrag nowheel img-gen-prompt flex-1 resize-none border-0 bg-transparent text-sm leading-relaxed text-white/88 outline-none placeholder:text-white/28 overflow-y-auto"
                   placeholder={PROMPT_PLACEHOLDER}
                 />
               ) : (
-                <div className="magnific-dropdown-scroll flex-1 overflow-y-auto pr-1">
+                <div className="magnific-dropdown-scroll flex-1 overflow-y-auto pr-1 nodrag nowheel">
                   <AssistantResultPanel error={error} hasOutput={hasOutput} output={output} />
                 </div>
               )}
@@ -379,32 +596,85 @@ export function AssistantNode(props: NodeProps<FlowNode>) {
           </div>
 
           <div className="mt-4 flex items-center justify-between">
-            <div className="text-xs text-white/40">
-              {isRunning ? FOOTER_RUNNING_LABEL : FOOTER_IDLE_LABEL}
+            <div className="relative flex items-center gap-2">
+              <button
+                ref={exportButtonRef}
+                type="button"
+                disabled={isRunning}
+                onClick={() => setShowExportDropdown((open) => !open)}
+                className={cn(
+                  "inline-flex h-[30px] items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition",
+                  isRunning
+                    ? "cursor-default border-white/[0.06] bg-white/[0.04] text-white/42"
+                    : "border-white/[0.08] bg-white/[0.06] text-white/72 hover:bg-white/[0.1] hover:text-white",
+                )}
+                title={getExportModeLabel(resolvedExportMode)}
+              >
+                <span>{isRunning ? FOOTER_RUNNING_LABEL : getExportModeLabel(resolvedExportMode)}</span>
+                {!isRunning ? <ChevronDown size={12} className="text-white/40" /> : null}
+              </button>
+              <PickerDropdown
+                anchorRef={exportButtonRef}
+                isOpen={showExportDropdown && !isRunning}
+                onClose={() => setShowExportDropdown(false)}
+                items={[
+                  {
+                    key: "list",
+                    label: "Export As List",
+                    hint: "Export results as list items",
+                  },
+                  {
+                    key: "text",
+                    label: "Export As Text",
+                    hint: "Export results as plain text",
+                  },
+                ]}
+                activeKey={resolvedExportMode}
+                onPick={(key) => setExportMode(key as AssistantExportMode)}
+                minWidth={EXPORT_DROPDOWN_MIN_WIDTH}
+                matchAnchorWidth={false}
+              />
+              {promptCount > 1 && (
+                <div
+                  title={`Batch Mode: Running ${promptCount} prompt tasks`}
+                  className="flex h-7 items-center justify-center rounded-full border border-white/[0.08] px-2.5 py-1 text-2xs font-bold text-white/80 select-none"
+                  style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
+                >
+                  x{promptCount}
+                </div>
+              )}
             </div>
             <button
               type="button"
-              onClick={handleRun}
+              onClick={handleRunOrCancel}
               className={cn(
-                "nodrag nowheel inline-flex h-10 w-10 items-center justify-center rounded-full transition",
+                "nodrag nowheel inline-flex h-10 w-10 items-center justify-center rounded-full transition cursor-pointer",
                 isRunning
-                  ? "bg-white/[0.08] text-white/70"
+                  ? hovered
+                    ? "bg-rose-600 text-white"
+                    : "bg-white/[0.08] text-white/70"
                   : "bg-white text-black hover:bg-white/90",
               )}
-              title={isRunning ? "Running" : "Run assistant"}
+              title={isRunning ? (hovered ? "Cancel generation" : "Running") : "Run assistant"}
             >
-              {isRunning ? <RefreshCw size={16} strokeWidth={1.8} className="animate-spin" /> : <Play size={16} strokeWidth={1.8} fill="currentColor" />}
+              {isRunning ? (
+                hovered ? <X size={16} strokeWidth={1.8} /> : <RefreshCw size={16} strokeWidth={1.8} className="animate-spin" />
+              ) : (
+                <Play size={16} strokeWidth={1.8} fill="currentColor" />
+              )}
             </button>
           </div>
         </div>
 
-        <ResizeHandle
+        <DualResizeHandle
           minWidth={MIN_WIDTH}
           maxWidth={MAX_WIDTH}
+          minHeight={MIN_HEIGHT}
+          maxHeight={MAX_HEIGHT}
           currentWidth={width}
-          nodeId={rfId}
-          onResize={(nextWidth) => useBoardStore.getState().updateNodeData(rfId, { nodeWidth: nextWidth })}
-          onResizeEnd={(nextWidth) => persistNodeData(rfId, { nodeWidth: Math.round(nextWidth) })}
+          currentHeight={height}
+          onResize={onResize}
+          onResizeEnd={onResizeEnd}
           forceVisible={!!selected}
         />
 

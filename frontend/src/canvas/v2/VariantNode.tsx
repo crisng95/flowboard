@@ -12,7 +12,7 @@
  */
 import { useRef, useState, useCallback, useMemo, useEffect } from "react";
 import { type NodeProps, Handle, Position, useEdges, useConnection } from "@xyflow/react";
-import { Copy, Layers, Palette, Sparkles, Play, Type } from "lucide-react";
+import { Copy, Layers, Palette, Play, RefreshCw, Type, X } from "lucide-react";
 
 import { useBoardStore, type FlowNode } from "../../store/board";
 import { useGenerationStore } from "../../store/generation";
@@ -376,8 +376,12 @@ export function VariantNode(props: NodeProps<FlowNode>) {
   const upstreamText = ((upstreamTextNode?.data?.prompt as string) ?? "").trim();
 
   /* ── Run handler ──────────────────────────────────────────────────────── */
-  const handleRun = async () => {
-    if (isProcessing || runInFlight.current) return;
+  const handleRunOrCancel = async () => {
+    if (isProcessing) {
+      useGenerationStore.getState().cancelActiveRequest(rfId);
+      return;
+    }
+    if (runInFlight.current) return;
     runInFlight.current = true;
     try {
       console.log("Running variant graph:", config);
@@ -695,20 +699,21 @@ export function VariantNode(props: NodeProps<FlowNode>) {
               {/* Play Button — absolute anchored bottom-right */}
               <button
                 type="button"
-                disabled={isProcessing}
                 onMouseDown={stopNodeAction}
                 onDoubleClick={stopNodeAction}
-                onClick={handleRun}
+                onClick={handleRunOrCancel}
                 className={cn(
-                  "nodrag nowheel absolute right-3 bottom-3 p-2 rounded-full border transition-all duration-150 z-30 shadow-sm",
+                  "nodrag nowheel absolute right-3 bottom-3 p-2 rounded-full border transition-all duration-150 z-30 shadow-sm cursor-pointer",
                   isProcessing
-                    ? "bg-[#8f939b] border-[#8f939b] text-white/45 cursor-not-allowed"
-                    : "bg-[#f3f4f6] border-[#f3f4f6] text-[#1c2027] hover:bg-white hover:border-white hover:scale-[1.06] cursor-pointer"
+                    ? hovered
+                      ? "bg-rose-600 border-rose-600 text-white hover:bg-rose-700 hover:border-rose-700"
+                      : "bg-[#8f939b]/20 border-[#8f939b]/25 text-white/70"
+                    : "bg-[#f3f4f6] border-[#f3f4f6] text-[#1c2027] hover:bg-white hover:border-white hover:scale-[1.06]"
                 )}
-                title="Run Variant Generation"
+                title={isProcessing ? (hovered ? "Cancel generation" : "Running") : "Run Variant Generation"}
               >
                 {isProcessing ? (
-                  <Sparkles size={14} className="animate-spin" />
+                  hovered ? <X size={14} strokeWidth={2} /> : <RefreshCw size={14} strokeWidth={2} className="animate-spin" />
                 ) : (
                   <Play size={14} strokeWidth={2} fill="currentColor" />
                 )}

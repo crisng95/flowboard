@@ -8,13 +8,19 @@ import {
   getRequest,
   mediaUrl,
   patchNode,
+  cancelActivity,
   type RequestDTO,
 } from "../api/client";
 import { useBoardStore, type FlowNode } from "./board";
 import { supabase } from "../cloud/supabase";
 import { normalizeImageModelKey, useSettingsStore, type ImageModelKey } from "./settings";
 
-type PollEntry = { requestId: number; timerId: ReturnType<typeof setTimeout> | null };
+type PollEntry = {
+  requestId: number;
+  timerId: ReturnType<typeof setTimeout> | null;
+  requestIds?: number[];
+  timerIds?: (ReturnType<typeof setTimeout> | null)[];
+};
 
 /**
  * commitNodeData — pair an in-memory node-data update with a best-effort
@@ -135,6 +141,103 @@ function pollRequest(
   reschedule(handlers.firstDelayMs ?? POLL_INTERVAL_MS);
 }
 
+function pollRequestBatch(
+  store: PollStoreApi,
+  rfId: string,
+  requestIds: number[],
+  handlers: {
+    onDone: (results: RequestDTO[]) => void;
+    onError: (errMsg: string) => void;
+    firstDelayMs?: number;
+  },
+): void {
+  const { get, set } = store;
+  const networkRetries: Record<number, number> = {};
+  const statusCache: Record<number, string> = {};
+  const results: Record<number, RequestDTO> = {};
+
+  const clearActive = () =>
+    set((s) => {
+      const next = { ...s.active };
+      delete next[rfId];
+      return { active: next };
+    });
+
+  const reschedule = (idx: number, reqId: number, delay: number) => {
+    const timerId = setTimeout(() => tick(idx, reqId), delay);
+    set((s) => {
+      const entry = s.active[rfId];
+      if (!entry) return {};
+      const timerIds = [...(entry.timerIds ?? [])];
+      timerIds[idx] = timerId;
+      return { active: { ...s.active, [rfId]: { ...entry, timerIds } } };
+    });
+  };
+
+  async function tick(idx: number, requestId: number) {
+    if (get().active[rfId] === undefined) return;
+    try {
+      const req = await getRequest(requestId);
+      networkRetries[requestId] = 0;
+      statusCache[requestId] = req.status;
+
+      if (req.status === "running" || req.status === "queued") {
+        useBoardStore.getState().updateNodeData(rfId, { status: "running" });
+        reschedule(idx, requestId, POLL_INTERVAL_MS);
+      } else if (req.status === "done") {
+        results[requestId] = req;
+        checkAllDone();
+      } else if (req.status === "canceled") {
+        commitNodeData(rfId, { status: "idle" });
+        clearActive();
+      } else {
+        const errMsg =
+          req.status === "timeout"
+            ? `Timed out after 5 minutes (${req.error ?? "video_timeout"})`
+            : (req.error ?? "generation_failed");
+        commitNodeData(rfId, { status: "error", error: errMsg });
+        handlers.onError(errMsg);
+        clearActive();
+      }
+    } catch (err) {
+      networkRetries[requestId] = (networkRetries[requestId] ?? 0) + 1;
+      if (networkRetries[requestId] >= POLL_MAX_NETWORK_RETRIES) {
+        const msg = err instanceof Error ? err.message : "network error";
+        commitNodeData(rfId, { status: "error", error: msg });
+        handlers.onError(msg);
+        clearActive();
+        return;
+      }
+      reschedule(idx, requestId, POLL_INTERVAL_MS);
+    }
+  }
+
+  function checkAllDone() {
+    if (requestIds.every((id) => statusCache[id] === "done")) {
+      const orderedResults = requestIds.map((id) => results[id]);
+      handlers.onDone(orderedResults);
+      clearActive();
+    }
+  }
+
+  // Register active BEFORE the first tick so the guard sees a live entry.
+  set((s) => ({
+    active: {
+      ...s.active,
+      [rfId]: {
+        requestId: requestIds[0],
+        timerId: null,
+        requestIds,
+        timerIds: new Array(requestIds.length).fill(null),
+      },
+    },
+  }));
+
+  requestIds.forEach((reqId, idx) => {
+    reschedule(idx, reqId, handlers.firstDelayMs ?? POLL_INTERVAL_MS);
+  });
+}
+
 interface GenerationState {
   active: Record<string, PollEntry>;
   openDialog: { rfId: string | null; prompt: string };
@@ -189,6 +292,17 @@ interface GenerationState {
     },
   ): Promise<void>;
 
+  dispatchAssistantBatch(
+    rfId: string,
+    opts: {
+      prompts: string[];
+      systemPrompt?: string;
+      attachments?: AssistantAttachmentInput[];
+      attachmentSummary?: AssistantAttachmentSummary[];
+      model?: "flow_gemini";
+    },
+  ): Promise<void>;
+
   refineImage(
     rfId: string,
     opts: { prompt: string; refMediaIds?: string[]; aspectRatio?: string },
@@ -211,6 +325,7 @@ interface GenerationState {
   runNodeGraph(rfId: string): Promise<void>;
 
   cancelGeneration(rfId: string): void;
+  cancelActiveRequest(rfId: string): Promise<void>;
   clearError(): void;
 }
 
@@ -413,6 +528,13 @@ export function collectSelectedListTextPrompts(node: { id: string; data: Record<
     .filter(Boolean);
 }
 
+export function parseAssistantOutputList(text: string): string[] {
+  return text
+    .split(/\n\s*\n/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+}
+
 /**
  * Collect text prompts from a source node, supporting list selection,
  * assistant output, or fallback to the standard prompt field.
@@ -423,7 +545,11 @@ export function collectSelectedTextPrompts(node: { id: string; data: Record<stri
     return collectSelectedListTextPrompts(node);
   }
   if (nodeType === "assistant") {
-    return [((node.data.assistantOutput as string | undefined) ?? "").trim()].filter(Boolean);
+    const output = ((node.data.assistantOutput as string | undefined) ?? "").trim();
+    if (node.data.assistantExportMode === "list") {
+      return parseAssistantOutputList(output);
+    }
+    return [output].filter(Boolean);
   }
   return [((node.data.prompt as string | undefined) ?? "").trim()].filter(Boolean);
 }
@@ -1265,12 +1391,24 @@ async function runNodeDirect(
         if (!wantsText) continue;
         const text = cleanText(sourceNode.data.assistantOutput);
         if (!text) continue;
-        items.push({
-          id: `${sourceNode.id}-assistant-${items.length + 1}`,
-          kind: "text",
-          title: cleanText(sourceNode.data.title) ?? `Assistant ${items.length + 1}`,
-          text,
-        });
+        if (sourceNode.data.assistantExportMode === "list") {
+          const blocks = parseAssistantOutputList(text);
+          blocks.forEach((block, idx) => {
+            items.push({
+              id: `${sourceNode.id}-assistant-${items.length + idx + 1}`,
+              kind: "text",
+              title: cleanText(sourceNode.data.title) ?? `Assistant ${items.length + idx + 1}`,
+              text: block,
+            });
+          });
+        } else {
+          items.push({
+            id: `${sourceNode.id}-assistant-${items.length + 1}`,
+            kind: "text",
+            title: cleanText(sourceNode.data.title) ?? `Assistant ${items.length + 1}`,
+            text,
+          });
+        }
         continue;
       }
 
@@ -1492,26 +1630,59 @@ async function runNodeDirect(
   }
 
   if (nodeType === "assistant") {
-    const textEdge = board.edges.find((e) => e.target === rfId && e.targetHandle === "target-text");
-    const textSourceNode = textEdge ? board.nodes.find((n) => n.id === textEdge.source) : null;
-    const upstreamPrompts = textSourceNode
-      ? (textSourceNode.data.type === "list"
-          ? collectSelectedListTextPrompts(textSourceNode as { id: string; data: Record<string, unknown> })
-          : [getUpstreamTextPrompt(rfId)].filter(Boolean))
-      : [];
-    const prompt = ((node.data.assistantPrompt as string | undefined) ?? "").trim();
-    const finalPrompt = [prompt, ...upstreamPrompts].filter(Boolean).join("\n\n");
-    const { attachments, summary } = await buildAssistantAttachments(rfId);
-    if (!finalPrompt && attachments.length === 0) {
-      throw new Error("assistant_node_missing_prompt_or_inputs");
-    }
-    await get().dispatchAssistant(rfId, {
-      prompt: finalPrompt,
-      systemPrompt: ((node.data.systemPrompt as string | undefined) ?? "").trim(),
-      attachments,
-      attachmentSummary: summary,
-      model: ((node.data.assistantModel as "flow_gemini" | undefined) ?? "flow_gemini"),
+    const textSources = board.edges
+      .filter((e) => e.target === rfId && e.targetHandle === "target-text")
+      .map((e) => board.nodes.find((n) => n.id === e.source))
+      .filter((n): n is FlowNode => !!n);
+    const plainTextSources = textSources.filter((src) => {
+      const type = src.data?.type ?? src.type;
+      return type !== "list" && type !== "assistant";
     });
+    const listLikeSources = textSources.filter((src) => {
+      const type = src.data?.type ?? src.type;
+      return type === "list" || type === "assistant";
+    });
+    const plainTextPrompts = plainTextSources.flatMap((src) => collectSelectedTextPrompts(src as any));
+    const listLikePrompts = listLikeSources.flatMap((src) => collectSelectedTextPrompts(src as any));
+    const { attachments, summary } = await buildAssistantAttachments(rfId);
+
+    const isBatchMode = listLikePrompts.length > 1;
+
+    if (isBatchMode) {
+      const batchPrompts = listLikePrompts.map((p) => {
+        const prompt = ((node.data.assistantPrompt as string | undefined) ?? "").trim();
+        let finalPrompt = [prompt, ...plainTextPrompts, p].filter(Boolean).join("\n\n");
+        if (resolveAssistantExportMode(node, board) === "list") {
+          finalPrompt += "\n\nReturn the final answer as a clean list of standalone text items. No intro or closing note. Keep one item per paragraph or bullet.";
+        }
+        return finalPrompt;
+      });
+
+      await get().dispatchAssistantBatch(rfId, {
+        prompts: batchPrompts,
+        systemPrompt: ((node.data.systemPrompt as string | undefined) ?? "").trim(),
+        attachments,
+        attachmentSummary: summary,
+        model: ((node.data.assistantModel as "flow_gemini" | undefined) ?? "flow_gemini"),
+      });
+    } else {
+      const upstreamPrompts = [...plainTextPrompts, ...listLikePrompts];
+      const prompt = ((node.data.assistantPrompt as string | undefined) ?? "").trim();
+      let finalPrompt = [prompt, ...upstreamPrompts].filter(Boolean).join("\n\n");
+      if (resolveAssistantExportMode(node, board) === "list") {
+        finalPrompt += "\n\nReturn the final answer as a clean list of standalone text items. No intro or closing note. Keep one item per paragraph or bullet.";
+      }
+      if (!finalPrompt && attachments.length === 0) {
+        throw new Error("assistant_node_missing_prompt_or_inputs");
+      }
+      await get().dispatchAssistant(rfId, {
+        prompt: finalPrompt,
+        systemPrompt: ((node.data.systemPrompt as string | undefined) ?? "").trim(),
+        attachments,
+        attachmentSummary: summary,
+        model: ((node.data.assistantModel as "flow_gemini" | undefined) ?? "flow_gemini"),
+      });
+    }
     return;
   }
 
@@ -2711,6 +2882,114 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     );
   },
 
+  async dispatchAssistantBatch(rfId, opts) {
+    if (supabase) {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session) {
+        useBoardStore.getState().setShowAuthModal(true);
+        return;
+      }
+    }
+
+    const boardId = useBoardStore.getState().boardId;
+    if (boardId === null) {
+      set({ error: "no board loaded" });
+      return;
+    }
+
+    const existing = get().active[rfId];
+    if (existing) {
+      if (existing.timerIds) {
+        existing.timerIds.forEach((id) => id && clearTimeout(id));
+      } else if (existing.timerId !== null) {
+        clearTimeout(existing.timerId);
+      }
+    }
+
+    commitNodeData(rfId, {
+      status: "queued",
+      assistantStatus: "queued",
+      assistantError: null,
+      assistantOutput: "",
+      assistantModel: opts.model ?? "flow_gemini",
+      attachmentsSummary: opts.attachmentSummary ?? [],
+      error: null,
+    });
+
+    const nodeDbId = parseInt(rfId, 10);
+    try {
+      const reqPromises = opts.prompts.map((prompt) =>
+        createRequest({
+          type: "text_gen",
+          node_id: Number.isNaN(nodeDbId) ? undefined : nodeDbId,
+          params: {
+            prompt,
+            system_prompt: opts.systemPrompt,
+            attachments: opts.attachments ?? [],
+            model: "gemini-3-flash-preview",
+          },
+        })
+      );
+      const reqDtos = await Promise.all(reqPromises);
+      const requestIds = reqDtos.map((r) => r.id);
+
+      pollRequestBatch(
+        { get, set },
+        rfId,
+        requestIds,
+        {
+          onDone: (orderedResults) => {
+            const texts = orderedResults.map((req) => typeof req.result["text"] === "string" ? req.result["text"] : "");
+            const combinedText = texts.join("\n\n");
+
+            commitNodeData(rfId, {
+              status: "done",
+              assistantStatus: "done",
+              assistantOutput: combinedText,
+              assistantError: null,
+              error: null,
+            });
+            const dbId = parseInt(rfId, 10);
+            if (!Number.isNaN(dbId)) {
+              patchNode(dbId, {
+                status: "done",
+                data: {
+                  assistantOutput: combinedText,
+                  assistantStatus: "done",
+                  assistantError: null,
+                  systemPrompt: opts.systemPrompt ?? null,
+                  assistantModel: opts.model ?? "flow_gemini",
+                  attachmentsSummary: opts.attachmentSummary ?? [],
+                  renderedAt: new Date().toISOString(),
+                  error: null,
+                },
+              }).catch(() => {});
+            }
+          },
+          onError: (errMsg) => {
+            commitNodeData(rfId, {
+              status: "error",
+              assistantStatus: "error",
+              assistantError: errMsg,
+              error: errMsg,
+            });
+            set({ error: errMsg });
+          },
+        }
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "assistant request failed";
+      commitNodeData(rfId, {
+        status: "error",
+        assistantStatus: "error",
+        assistantError: message,
+        error: message,
+      });
+      set({ error: message });
+      return;
+    }
+  },
+
   async refineImage(rfId, opts) {
     const projectId = await get().ensureProjectId();
     if (projectId === null) return;
@@ -2896,6 +3175,29 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     });
   },
 
+  async cancelActiveRequest(rfId) {
+    const entry = get().active[rfId];
+    if (entry) {
+      if (entry.timerIds) {
+        entry.timerIds.forEach((id) => id && clearTimeout(id));
+      } else if (entry.timerId !== null) {
+        clearTimeout(entry.timerId);
+      }
+      try {
+        const ids = entry.requestIds ?? [entry.requestId];
+        await Promise.all(ids.map((id) => cancelActivity(id).catch(() => {})));
+      } catch (err) {
+        console.warn(`[Flowboard] Failed to cancel batch requests for ${rfId} on backend:`, err);
+      }
+    }
+    commitNodeData(rfId, { status: "idle", assistantStatus: "idle", error: null, assistantError: null });
+    set((s) => {
+      const next = { ...s.active };
+      delete next[rfId];
+      return { active: next };
+    });
+  },
+
   clearError() {
     set({ error: null });
   },
@@ -2943,6 +3245,42 @@ function buildVariantPrompt(axisKey: string, instruction: string): string {
     cleaned = cleaned.slice(0, 280).trim();
   }
   return axis.template.replace("{instruction}", cleaned);
+}
+
+export type AssistantExportMode = "list" | "text";
+
+export function isAssistantExportMode(value: unknown): value is AssistantExportMode {
+  return value === "list" || value === "text";
+}
+
+export function isAssistantListLikeTextSource(node: any, board: any): boolean {
+  const type = node.data?.type ?? node.type;
+  if (type === "list") {
+    const listItems = Array.isArray(node.data?.listItems) ? node.data.listItems : [];
+    const isTextList = listItems.length > 0 && listItems[0]?.kind === "text";
+    const hasTextIncoming = board.edges.some((e: any) => e.target === node.id && e.targetHandle === "target-text");
+    return isTextList || hasTextIncoming;
+  }
+  if (type === "assistant") {
+    return resolveAssistantExportMode(node, board) === "list";
+  }
+  return false;
+}
+
+export function resolveAssistantExportMode(node: any, board: any): AssistantExportMode {
+  if (isAssistantExportMode(node.data?.assistantExportMode)) {
+    return node.data.assistantExportMode;
+  }
+  const seen = new Set();
+  const rawSources = board.edges
+    .filter((edge: any) => edge.target === node.id && edge.targetHandle === "target-text")
+    .flatMap((edge: any) => {
+      if (seen.has(edge.source)) return [];
+      seen.add(edge.source);
+      const srcNode = board.nodes.find((entry: any) => entry.id === edge.source);
+      return srcNode ? [srcNode] : [];
+    });
+  return rawSources.some((sourceNode: any) => isAssistantListLikeTextSource(sourceNode, board)) ? "list" : "text";
 }
 
 
