@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { StaggerChildren, StaggerItem, ScaleIn, PageTransition } from "./ui/motion";
+import { Avatar, AvatarImage } from "./ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuGroup,
+} from "./ui/dropdown-menu";
 import { ReactFlowProvider, useReactFlow, useViewport } from "@xyflow/react";
 import {
   ArrowLeft,
@@ -9,16 +18,13 @@ import {
   Home,
   LayoutGrid,
   List,
-  LogOut,
   Map as MapIcon,
   MoreHorizontal,
   Plus,
   Pencil,
   Search,
-  ShieldCheck,
   Sparkles,
   Trash2,
-  UserCircle2,
   Upload,
   X,
   Loader2,
@@ -191,130 +197,156 @@ function userAvatarUrl(session: any): string | null {
 }
 
 function AccountMenu({ session }: { session: any }) {
-  const [open, setOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [signingOut, setSigningOut] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const [localAvatar, setLocalAvatar] = useState<string | null>(() => {
+    return localStorage.getItem("flowboard.guest.avatar");
+  });
+
   const setShowAuthModal = useBoardStore((s) => s.setShowAuthModal);
   const setShowExtensionModal = useBoardStore((s) => s.setShowExtensionModal);
   const isLoggedIn = Boolean(session?.user);
   const displayName = isLoggedIn ? userDisplayName(session) : "Guest";
   const email = session?.user?.email ?? "Work locally first. Sign in only when you want sync.";
-  const avatar = userAvatarUrl(session);
-
-  useEffect(() => {
-    if (!open) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      if (rootRef.current?.contains(event.target as Node)) return;
-      setOpen(false);
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open]);
-
-  async function handleTrigger() {
-    setOpen((value) => !value);
-  }
+  const avatar = isLoggedIn ? userAvatarUrl(session) : localAvatar;
 
   async function handleSignOut() {
     if (!supabase || signingOut) return;
     setSigningOut(true);
     try {
       await signOutWithCleanup();
-      setOpen(false);
     } finally {
       setSigningOut(false);
     }
   }
 
+  async function handleAvatarChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const base64Avatar = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement("canvas");
+            canvas.width = 96;
+            canvas.height = 96;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, 96, 96);
+              resolve(canvas.toDataURL("image/jpeg", 0.85));
+            } else {
+              reject(new Error("Canvas context error"));
+            }
+          };
+          img.onerror = () => reject(new Error("Image load error"));
+          img.src = String(e.target?.result ?? "");
+        };
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+
+      if (isLoggedIn && supabase) {
+        const { error } = await supabase.auth.updateUser({
+          data: { avatar_url: base64Avatar }
+        });
+        if (error) throw error;
+      } else {
+        localStorage.setItem("flowboard.guest.avatar", base64Avatar);
+        setLocalAvatar(base64Avatar);
+      }
+    } catch (err) {
+      console.error("Failed to update avatar:", err);
+    } finally {
+      event.target.value = "";
+    }
+  }
+
   return (
-    <div className="flowboard-account-menu" ref={rootRef}>
-      <button
-        type="button"
-        className={`magnific-avatar flowboard-account-menu__trigger${open ? " is-open" : ""}`}
-        aria-label={isLoggedIn ? "Open account menu" : "Open guest menu"}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => void handleTrigger()}
-      >
-        {avatar ? (
-          <img src={avatar} alt="" referrerPolicy="no-referrer" />
-        ) : isLoggedIn ? (
-          <span>{displayName.slice(0, 1).toUpperCase()}</span>
-        ) : (
-          <UserCircle2 size={19} />
-        )}
-      </button>
-
-      {open && (
-        <div className="flowboard-account-popover" role="menu">
-          <div className="flowboard-account-popover__card">
-            <div className="flowboard-account-popover__identity">
-              <div className="flowboard-account-popover__avatar">
-                {avatar ? <img src={avatar} alt="" referrerPolicy="no-referrer" /> : <AppLogo className="size-full" />}
-              </div>
-              <div className="flowboard-account-popover__identity-text">
-                <strong title={displayName}>{displayName}</strong>
-                <span title={email}>{email}</span>
-              </div>
-            </div>
-
-            {isLoggedIn ? (
-              <>
-                <div className="flowboard-account-popover__items">
-                  <button
-                    type="button"
-                    className="flowboard-account-popover__item"
-                    onClick={() => {
-                      setOpen(false);
-                      setShowExtensionModal(true);
-                    }}
-                  >
-                    <ShieldCheck size={20} />
-                    <span>Install / connect extension</span>
-                  </button>
+    <div className="flowboard-account-menu">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={handleAvatarChange}
+      />
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="magnific-avatar flowboard-account-menu__trigger outline-none cursor-pointer flex items-center justify-center p-0"
+            style={{ width: 38, height: 38, borderRadius: 14 }}
+            aria-label={isLoggedIn ? "Open account menu" : "Open guest menu"}
+          >
+            <Avatar className="w-full h-full border-0 bg-transparent flex items-center justify-center">
+              {avatar ? (
+                <AvatarImage src={avatar} alt={displayName} className="size-full rounded-2xl object-cover" />
+              ) : (
+                <div className="size-full flex items-center justify-center p-2 rounded-2xl bg-gradient-to-br from-[#fff4d8] to-[#ff9e3d]">
+                  <AppLogo className="size-full text-[#16130d]" />
                 </div>
+              )}
+            </Avatar>
+          </button>
+        </DropdownMenuTrigger>
 
-                <button
-                  type="button"
-                  className="flowboard-account-popover__logout"
-                  onClick={() => void handleSignOut()}
-                  disabled={signingOut}
-                >
-                  <LogOut size={20} />
-                  {signingOut ? "Logging out..." : "Log out"}
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className="flowboard-account-popover__primary"
-                  onClick={() => {
-                    setOpen(false);
-                    setShowAuthModal(true, "sign_in");
-                  }}
-                >
-                  Sign in to sync
-                </button>
-                <button
-                  type="button"
-                  className="flowboard-account-popover__secondary"
-                  onClick={() => setOpen(false)}
-                >
-                  Continue locally
-                </button>
-              </>
-            )}
+        <DropdownMenuContent className="w-64 bg-[#16161a] border border-white/[0.08] rounded-xl p-1.5 shadow-2xl">
+          <div className="px-2.5 py-3 flex items-center gap-3">
+            <Avatar className="size-10 border-0 bg-transparent flex items-center justify-center">
+              {avatar ? (
+                <AvatarImage src={avatar} alt={displayName} className="size-full rounded-xl object-cover" />
+              ) : (
+                <div className="size-full flex items-center justify-center p-2 rounded-xl bg-gradient-to-br from-[#fff4d8] to-[#ff9e3d]">
+                  <AppLogo className="size-full text-[#16130d]" />
+                </div>
+              )}
+            </Avatar>
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-bold text-white truncate" title={displayName}>
+                {displayName}
+              </span>
+              <span className="text-xs text-white/50 truncate" title={email}>
+                {email}
+              </span>
+            </div>
           </div>
-        </div>
-      )}
+
+          <DropdownMenuSeparator />
+
+          <DropdownMenuGroup>
+            <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
+              Change avatar
+            </DropdownMenuItem>
+            {isLoggedIn && (
+              <DropdownMenuItem onClick={() => setShowExtensionModal(true)}>
+                Connect extension
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuGroup>
+
+          <DropdownMenuSeparator />
+
+          {isLoggedIn ? (
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={signingOut}
+              onClick={() => void handleSignOut()}
+            >
+              {signingOut ? "Logging out..." : "Log out"}
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem
+              className="text-[#ff9e3d] focus:bg-[#ff9e3d]/10 focus:text-[#ff9e3d]"
+              onClick={() => setShowAuthModal(true, "sign_in")}
+            >
+              Sign in to sync
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
