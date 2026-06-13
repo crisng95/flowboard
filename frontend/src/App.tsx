@@ -729,7 +729,7 @@ function CanvasStatusBar({
             value={String(Math.round(zoom * 100))}
             onChange={(e) => void zoomTo(Number(e.target.value) / 100, { duration: 180 })}
           >
-            {[50, 75, 100, 125, 150].map((value) => (
+            {[5, 10, 25, 50, 75, 100, 125, 150, 200].map((value) => (
               <option key={value} value={value}>
                 {value}%
               </option>

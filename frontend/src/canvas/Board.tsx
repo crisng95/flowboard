@@ -706,6 +706,8 @@ export function Board({
         panOnScroll
         fitView
         proOptions={{ hideAttribution: true }}
+        minZoom={0.05}
+        maxZoom={2}
       >
         <Background variant={BackgroundVariant.Dots} gap={24} size={1.3} color="rgba(255,255,255,0.15)" />
         {showMiniMap ? <MiniMap pannable zoomable /> : null}
