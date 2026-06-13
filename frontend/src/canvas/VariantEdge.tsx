@@ -60,20 +60,34 @@ export function VariantEdge({
           strokeWidth: 4.5,
         }}
       />
-      {/* Animated beam foreground */}
+      {/* Animated beam foreground - Outer droplet part (head and tail) */}
+      {isRunning && (
+        <BaseEdge
+          id={id + "-droplet-outer"}
+          path={edgePath}
+          style={{
+            ...style,
+            stroke: "rgba(233, 213, 255, 0.6)",
+            strokeWidth: 4.8,
+            strokeLinecap: "round" as const,
+          }}
+          className="animated-beam-droplet-outer"
+        />
+      )}
+      {/* Animated beam foreground - Inner droplet part (bright center body) */}
       {isRunning && (
         <BaseEdge
           id={id}
           path={edgePath}
           style={{
             ...style,
-            stroke: "#e9d5ff",
-            strokeWidth: 5.5,
+            stroke: "#ffffff",
+            strokeWidth: 5.8,
             strokeLinecap: "round" as const,
-            filter: "drop-shadow(0 0 4px rgba(192, 132, 252, 0.9))",
+            filter: "drop-shadow(0 0 5px rgba(192, 132, 252, 0.9))",
           }}
           markerEnd={markerEnd}
-          className="animated-beam-droplet"
+          className="animated-beam-droplet-inner"
         />
       )}
       {pin !== null && pin >= 0 && (

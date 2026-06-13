@@ -313,20 +313,35 @@
   animation: dash-flow 0.6s linear infinite;
 }
 
-/* Animated Beam connection line animation (Fluid pipe simulation) */
-@keyframes beam-loop-fluid {
+/* Animated Beam connection line animation (Fluid droplet pipe simulation) */
+@keyframes beam-loop-outer {
   from {
     stroke-dashoffset: 0;
   }
   to {
-    stroke-dashoffset: -300;
+    stroke-dashoffset: -800;
   }
 }
 
-.animated-beam-droplet {
-  stroke-dasharray: 100 200;
+@keyframes beam-loop-inner {
+  from {
+    stroke-dashoffset: -25;
+  }
+  to {
+    stroke-dashoffset: -825;
+  }
+}
+
+.animated-beam-droplet-outer {
+  stroke-dasharray: 100 700;
   stroke-linecap: round;
-  animation: beam-loop-fluid 1.5s linear infinite;
+  animation: beam-loop-outer 1.4s linear infinite;
+}
+
+.animated-beam-droplet-inner {
+  stroke-dasharray: 50 750;
+  stroke-linecap: round;
+  animation: beam-loop-inner 1.4s linear infinite;
 }
 
 /* Let React Flow manage edge/node layer ordering.
