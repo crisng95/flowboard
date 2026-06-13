@@ -434,6 +434,7 @@ function SpacesPage({
       </aside>
 
       <header className="magnific-spaces__header">
+        <div />
         <div className="magnific-header-actions">
           <AccountMenu session={session} />
         </div>
