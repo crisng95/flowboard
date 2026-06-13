@@ -281,7 +281,8 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
   }
 
   function setAspect(next: AspectOption) {
-    if (isRunning) {
+    const hasMedia = !!(mediaId || mediaIds.length > 0);
+    if (isRunning || hasMedia) {
       // Queue for after generation completes
       const delta = { pendingAspectRatio: ASPECT_TO_FLOW[next] };
       useBoardStore.getState().updateNodeData(rfId, delta);

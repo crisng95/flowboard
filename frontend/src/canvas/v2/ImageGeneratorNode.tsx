@@ -213,12 +213,13 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     event.stopPropagation();
   }
   function setAspect(value: AspectOption) {
-    if (isRunning) {
-      // Generation in progress — queue the change, don't resize yet
+    const hasMedia = !!(mediaId || mediaIds.length > 0);
+    if (isRunning || hasMedia) {
+      // Generation in progress or has existing media — queue the change, don't resize yet
       useBoardStore.getState().updateNodeData(rfId, { pendingAspectKey: value });
       persistNodeData(rfId, { pendingAspectKey: value });
     } else {
-      // No active generation — apply immediately
+      // No active generation and no media — apply immediately
       useBoardStore.getState().updateNodeData(rfId, { aspectKey: value, pendingAspectKey: null });
       persistNodeData(rfId, { aspectKey: value, pendingAspectKey: null });
     }
