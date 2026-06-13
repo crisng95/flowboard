@@ -53,8 +53,8 @@ export function SelectionContextMenu({
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 min-w-[200px] rounded-xl border border-white/[0.08] shadow-2xl py-1.5"
-      style={{ left: position.x, top: position.y, backgroundColor: "#1a1a1a" }}
+      className="fixed z-50 min-w-[200px] rounded-xl border border-white/[0.08] bg-[#16161a] p-1.5 shadow-2xl animate-in fade-in-0 zoom-in-95 duration-100 ease-out"
+      style={{ left: position.x, top: position.y }}
       role="menu"
       aria-label="Selection actions"
     >
@@ -62,11 +62,11 @@ export function SelectionContextMenu({
         type="button"
         onClick={handleGroup}
         disabled={!canGroup}
-        className="flex items-center gap-2.5 w-full px-3 py-2 text-sm text-white/85 hover:text-white hover:bg-white/[0.06] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="flex items-center gap-2.5 w-full px-2.5 py-2 text-xs font-semibold rounded-lg text-white/85 hover:text-white hover:bg-white/[0.08] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
-        <Layers size={14} strokeWidth={1.75} className="text-white/60" />
+        <Layers size={14} strokeWidth={2} className="text-white/60" />
         <span className="flex-1 text-left">Group nodes</span>
-        <kbd className="text-[10px] text-white/40 font-mono">Ctrl+G</kbd>
+        <kbd className="text-[10px] text-white/40 font-mono tracking-widest bg-white/[0.05] px-1.5 py-0.5 rounded border border-white/[0.05]">Ctrl+G</kbd>
       </button>
     </div>
   );
