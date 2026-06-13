@@ -56,25 +56,26 @@ export function VariantEdge({
         path={edgePath}
         style={{
           ...style,
-          stroke: "rgba(124, 92, 255, 0.15)",
-          strokeWidth: 2,
+          stroke: "rgba(124, 92, 255, 0.12)",
+          strokeWidth: 4.5,
         }}
       />
       {/* Animated beam foreground */}
-      <BaseEdge
-        id={id}
-        path={edgePath}
-        style={{
-          ...style,
-          stroke: isRunning ? "#c084fc" : "#a78bfa",
-          strokeWidth: isRunning ? 2.5 : 2,
-          filter: isRunning
-            ? "drop-shadow(0 0 5px rgba(192, 132, 252, 0.8))"
-            : "drop-shadow(0 0 3px rgba(167, 139, 250, 0.6))",
-        }}
-        markerEnd={markerEnd}
-        className={isRunning ? "animated-beam-foreground-running" : "animated-beam-foreground"}
-      />
+      {isRunning && (
+        <BaseEdge
+          id={id}
+          path={edgePath}
+          style={{
+            ...style,
+            stroke: "#e9d5ff",
+            strokeWidth: 5.5,
+            strokeLinecap: "round" as const,
+            filter: "drop-shadow(0 0 4px rgba(192, 132, 252, 0.9))",
+          }}
+          markerEnd={markerEnd}
+          className="animated-beam-droplet"
+        />
+      )}
       {pin !== null && pin >= 0 && (
         <EdgeLabelRenderer>
           <div
