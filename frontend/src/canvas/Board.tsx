@@ -9,6 +9,7 @@ import {
   applyNodeChanges,
   useReactFlow,
   useUpdateNodeInternals,
+  useViewport,
   type Connection,
   type Edge,
   type EdgeChange,
@@ -173,6 +174,35 @@ export function Board({
   showMiniMap?: boolean;
   showControls?: boolean;
 }) {
+  const { zoom } = useViewport();
+  
+  // Dynamic grid scaling based on zoom thresholds
+  const gridParams = (() => {
+    let gap = 24;
+    let size = 1.3;
+    let opacity = 0.15;
+
+    if (zoom < 0.08) {
+      gap = 24 * 16; // 384
+      size = 3.5;
+      opacity = 0.35;
+    } else if (zoom < 0.18) {
+      gap = 24 * 8; // 192
+      size = 2.5;
+      opacity = 0.28;
+    } else if (zoom < 0.45) {
+      gap = 24 * 4; // 96
+      size = 1.8;
+      opacity = 0.22;
+    } else if (zoom < 0.8) {
+      gap = 24 * 2; // 48
+      size = 1.4;
+      opacity = 0.18;
+    }
+
+    return { gap, size, color: `rgba(255,255,255,${opacity})` };
+  })();
+
   const nodes = useBoardStore((s) => s.nodes);
   const edges = useBoardStore((s) => s.edges);
   const toolMode = useBoardStore((s) => s.toolMode);
@@ -709,7 +739,7 @@ export function Board({
         minZoom={0.05}
         maxZoom={2}
       >
-        <Background variant={BackgroundVariant.Dots} gap={24} size={1.3} color="rgba(255,255,255,0.15)" />
+        <Background variant={BackgroundVariant.Dots} gap={gridParams.gap} size={gridParams.size} color={gridParams.color} style={{ transition: "all 0.15s ease-out" }} />
         {showMiniMap ? <MiniMap pannable zoomable /> : null}
         {showControls ? <Controls /> : null}
         {contextMenu && (
