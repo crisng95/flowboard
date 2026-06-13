@@ -313,20 +313,20 @@
   animation: dash-flow 0.6s linear infinite;
 }
 
-/* Animated Beam connection line animation */
-@keyframes beam-loop-droplet {
+/* Animated Beam connection line animation (Fluid pipe simulation) */
+@keyframes beam-loop-fluid {
   from {
     stroke-dashoffset: 0;
   }
   to {
-    stroke-dashoffset: -800;
+    stroke-dashoffset: -300;
   }
 }
 
 .animated-beam-droplet {
-  stroke-dasharray: 70 800;
+  stroke-dasharray: 100 200;
   stroke-linecap: round;
-  animation: beam-loop-droplet 0.8s linear infinite;
+  animation: beam-loop-fluid 1.5s linear infinite;
 }
 
 /* Let React Flow manage edge/node layer ordering.
