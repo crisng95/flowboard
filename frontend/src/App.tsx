@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence } from "framer-motion";
+import { StaggerChildren, StaggerItem, ScaleIn, PageTransition } from "./ui/motion";
 import { ReactFlowProvider, useReactFlow, useViewport } from "@xyflow/react";
 import {
   ArrowLeft,
@@ -476,11 +478,11 @@ function SpacesPage({
         {loading && boards.length === 0 && tab === "my" ? (
           <div className="magnific-empty-state">Loading spaces...</div>
         ) : (
-          <div className={layoutMode === "grid" ? "magnific-space-grid" : "magnific-space-list"}>
+          <StaggerChildren className={layoutMode === "grid" ? "magnific-space-grid" : "magnific-space-list"}>
             {tab === "my"
               ? visibleBoards.map((board, index) => (
+              <StaggerItem key={board.id}>
               <article
-                key={board.id}
                 className="magnific-space-card"
                 onClick={() => void selectProject(board.id)}
               >
@@ -561,12 +563,13 @@ function SpacesPage({
                   <span>{formatRelativeTime(board.created_at)}</span>
                 </div>
               </article>
+              </StaggerItem>
                 ))
               : visibleTemplates.map((template, index) => {
                 const templateThumb = createBoardThumbnail(template.snapshot.nodes, template.snapshot.edges);
                 return (
+                  <StaggerItem key={template.id}>
                   <article
-                    key={template.id}
                     className="magnific-space-card"
                     onClick={() => void handleCreateFromTemplate(template)}
                   >
@@ -588,15 +591,17 @@ function SpacesPage({
                       <span>{template.updatedLabel}</span>
                     </div>
                   </article>
+                  </StaggerItem>
                 );
               })}
-          </div>
+          </StaggerChildren>
         )}
       </main>
 
+      <AnimatePresence>
       {newSpaceOpen ? (
         <div className="magnific-modal-backdrop">
-          <div className="magnific-modal-card">
+          <ScaleIn className="magnific-modal-card">
             <div className="magnific-modal-card__header">
               <div>
                 <h3>Create new space</h3>
@@ -617,13 +622,15 @@ function SpacesPage({
                 Create
               </button>
             </div>
-          </div>
+          </ScaleIn>
         </div>
       ) : null}
+      </AnimatePresence>
 
+      <AnimatePresence>
       {renameTarget ? (
         <div className="magnific-modal-backdrop">
-          <div className="magnific-modal-card">
+          <ScaleIn className="magnific-modal-card">
             <div className="magnific-modal-card__header">
               <div>
                 <h3>Rename space</h3>
@@ -644,9 +651,10 @@ function SpacesPage({
                 Save
               </button>
             </div>
-          </div>
+          </ScaleIn>
         </div>
       ) : null}
+      </AnimatePresence>
 
       {coverTarget !== null ? (
         <div className="magnific-modal-backdrop">
@@ -1112,17 +1120,23 @@ export function App() {
 
   return (
     <>
-      {currentView === "spaces" ? (
-        <SpacesPage
-          thumbnails={spaceThumbnails}
-          onUploadCover={handleUploadCover}
-          onUseSnapshotCover={handleUseSnapshotCover}
-          onClearCustomCover={handleClearCustomCover}
-          session={session}
-        />
-      ) : (
-        <CanvasPage session={session} />
-      )}
+      <AnimatePresence mode="wait">
+        {currentView === "spaces" ? (
+          <PageTransition key="spaces">
+            <SpacesPage
+              thumbnails={spaceThumbnails}
+              onUploadCover={handleUploadCover}
+              onUseSnapshotCover={handleUseSnapshotCover}
+              onClearCustomCover={handleClearCustomCover}
+              session={session}
+            />
+          </PageTransition>
+        ) : (
+          <PageTransition key="canvas">
+            <CanvasPage session={session} />
+          </PageTransition>
+        )}
+      </AnimatePresence>
       <Toaster />
       <ResultViewerV2 />
       

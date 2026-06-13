@@ -33,6 +33,31 @@
     --text: #f5f5f5;
     --muted: #ababab;
     --accent: #3b3b3b;
+
+    /* ── shadcn/ui CSS variable bridge ──────────────────────────────
+       Maps shadcn's expected HSL vars to our design tokens so any
+       shadcn component inherits the dark theme automatically.
+       Format: H S% L% (no hsl() wrapper — shadcn uses hsl(var(--x))) */
+    --background: 0 0% 7%;           /* #111111 canvas bg */
+    --foreground: 0 0% 96%;          /* #f5f5f5 ink-primary */
+    --card: 0 0% 10%;                /* #1a1a1a surface-2 */
+    --card-foreground: 0 0% 96%;
+    --popover: 0 0% 8%;              /* #141414 panel */
+    --popover-foreground: 0 0% 96%;
+    --primary: 255 100% 67%;         /* #7c5cff accent */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 15%;           /* #262626 surface-3 */
+    --secondary-foreground: 0 0% 67%; /* #ababab ink-muted */
+    --muted-bg: 0 0% 12%;
+    --muted-foreground: 0 0% 67%;
+    --accent-hsl: 255 100% 67%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;        /* red-500 */
+    --destructive-foreground: 0 0% 100%;
+    --border-hsl: 0 0% 17%;          /* #2a2a2a line-subtle */
+    --input: 0 0% 15%;
+    --ring: 255 100% 67%;            /* accent for focus rings */
+    --radius: 0.5rem;
   }
 
   html,
