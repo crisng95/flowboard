@@ -182,17 +182,17 @@ export function AddNodePanel({ onClose, position }: { onClose: () => void; posit
         />
       </div>
 
-      <div ref={listRef} className="py-2 min-h-0 overflow-y-auto img-gen-prompt" style={{ maxHeight: listMaxHeight }}>
+      <div ref={listRef} className="p-1.5 min-h-0 overflow-y-auto img-gen-prompt" style={{ maxHeight: listMaxHeight }}>
         {filtered.map((cat) => (
           <div key={cat.name}>
-            <div className="px-3 pt-2 pb-1 text-[10px] font-semibold text-white/30 uppercase tracking-wider">
+            <div className="px-2.5 pt-2 pb-1 text-[10px] font-semibold text-white/30 uppercase tracking-wider">
               {cat.name}
             </div>
             {cat.nodes.map((node) => (
               <button
                 key={node.type}
                 onClick={() => handleAdd(node.type)}
-                className="flex items-center gap-2.5 w-full px-3 py-2 text-sm transition-colors text-white/80 hover:text-white hover:bg-white/[0.06] cursor-pointer"
+                className="flex items-center gap-2.5 w-full px-2.5 py-2 text-xs font-semibold rounded-lg transition-colors text-white/80 hover:text-white hover:bg-white/[0.08] cursor-pointer"
                 title={node.label}
               >
                 <node.icon size={16} strokeWidth={1.5} className="shrink-0 text-white/50" />
@@ -202,7 +202,7 @@ export function AddNodePanel({ onClose, position }: { onClose: () => void; posit
           </div>
         ))}
         {filtered.length === 0 && (
-          <div className="px-3 py-4 text-sm text-white/30 text-center">No results</div>
+          <div className="px-2.5 py-4 text-xs text-white/30 text-center">No results</div>
         )}
       </div>
     </div>
