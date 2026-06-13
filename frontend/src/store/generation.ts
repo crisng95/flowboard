@@ -614,15 +614,7 @@ type AssistantAttachmentSummary = {
   mimeType: string;
 };
 
-function binaryToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    const chunk = bytes.subarray(offset, offset + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-  return btoa(binary);
-}
+
 
 function inferAttachmentMime(kind: "image" | "video", candidate: string): string {
   if (kind === "video") return "video/mp4";
