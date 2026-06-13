@@ -105,6 +105,21 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
     }
   }, [isRunning]);
 
+  // Track previous isRunning to detect generation completion (true → false)
+  const wasRunningRef = useRef(false);
+  useEffect(() => {
+    if (wasRunningRef.current && !isRunning) {
+      // Generation just finished — apply any pending aspect ratio
+      const pending = useBoardStore.getState().nodes.find((n) => n.id === rfId)?.data.pendingAspectRatio as string | undefined;
+      if (pending) {
+        const delta = { aspectRatio: pending, pendingAspectRatio: null };
+        useBoardStore.getState().updateNodeData(rfId, delta);
+        persistNodeData(rfId, delta);
+      }
+    }
+    wasRunningRef.current = isRunning;
+  }, [isRunning, rfId]);
+
   const prompt = (data.prompt as string | undefined) ?? "";
   const mediaIds = Array.isArray(data.mediaIds)
     ? data.mediaIds.filter((m): m is string => typeof m === "string" && !!m)
@@ -112,6 +127,12 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
   const mediaId = mediaIds[0] ?? (data.mediaId as string | undefined);
   const shortId = data.shortId as string | undefined;
   const aspectRatio = ((data.aspectRatio as string | undefined) === "VIDEO_ASPECT_RATIO_PORTRAIT" ? "9:16" : "16:9") as AspectOption;
+  // pendingAspectRatio: chosen by user while generation is running, applied on completion
+  const pendingAspectFlowValue = data.pendingAspectRatio as string | undefined;
+  const pendingAspectRatio = pendingAspectFlowValue
+    ? ((pendingAspectFlowValue === "VIDEO_ASPECT_RATIO_PORTRAIT" ? "9:16" : "16:9") as AspectOption)
+    : null;
+  const displayAspectRatio = pendingAspectRatio ?? aspectRatio;
   const videoModel = ((data.videoModel as VideoModelFamily | undefined) ?? "veo");
   const videoQuality = ((data.videoQuality as VideoQuality | undefined) ?? "fast");
   const omniFlashDuration = ((data.omniFlashDuration as OmniFlashDuration | undefined) ?? 4);
@@ -260,7 +281,15 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
   }
 
   function setAspect(next: AspectOption) {
-    persistDelta({ aspectRatio: ASPECT_TO_FLOW[next] });
+    if (isRunning) {
+      // Queue for after generation completes
+      const delta = { pendingAspectRatio: ASPECT_TO_FLOW[next] };
+      useBoardStore.getState().updateNodeData(rfId, delta);
+      persistNodeData(rfId, delta);
+    } else {
+      // Apply immediately
+      persistDelta({ aspectRatio: ASPECT_TO_FLOW[next], pendingAspectRatio: null });
+    }
     setShowAspectPicker(false);
   }
 
@@ -665,14 +694,17 @@ export function VideoGeneratorNode(props: NodeProps<FlowNode>) {
                   className="nodrag nowheel flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
                   style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
                 >
-                  {aspectRatio} <DropdownCaret className="text-white/50" />
+                  {pendingAspectRatio && (
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" title="Will apply after generation" />
+                  )}
+                  {displayAspectRatio} <DropdownCaret className="text-white/50" />
                 </button>
                 <PickerDropdown
                   anchorRef={aspectButtonRef}
                   isOpen={showAspectPicker}
                   onClose={() => setShowAspectPicker(false)}
                   items={ASPECT_OPTIONS.map((option) => ({ key: option, label: option }))}
-                  activeKey={aspectRatio}
+                  activeKey={displayAspectRatio}
                   onPick={(key) => setAspect(key as AspectOption)}
                   minWidth={86}
                   matchAnchorWidth={false}

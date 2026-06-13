@@ -61,6 +61,20 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     }
   }, [isRunning]);
 
+  // Track previous isRunning to detect generation completion (true → false)
+  const wasRunningRef = useRef(false);
+  useEffect(() => {
+    if (wasRunningRef.current && !isRunning) {
+      // Generation just finished — apply any pending aspect
+      const pending = useBoardStore.getState().nodes.find((n) => n.id === rfId)?.data.pendingAspectKey as AspectOption | undefined;
+      if (pending) {
+        useBoardStore.getState().updateNodeData(rfId, { aspectKey: pending, pendingAspectKey: null });
+        persistNodeData(rfId, { aspectKey: pending, pendingAspectKey: null });
+      }
+    }
+    wasRunningRef.current = isRunning;
+  }, [isRunning, rfId]);
+
   const mediaIds = Array.isArray(data.mediaIds)
     ? data.mediaIds.filter((m): m is string => typeof m === "string" && !!m)
     : [];
@@ -76,6 +90,11 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     ),
   );
   const aspectKey = (data.aspectKey as AspectOption | undefined) ?? "1:1";
+  // pendingAspectKey: chosen by user but not yet applied to the node layout.
+  // It will be committed to aspectKey only after generation completes.
+  const pendingAspectKey = (data.pendingAspectKey as AspectOption | undefined) ?? null;
+  // The aspect shown in the picker button (pending overrides display, but not layout)
+  const displayAspectKey = pendingAspectKey ?? aspectKey;
   const modelKey = normalizeImageModelKey(data.modelKey as string | undefined);
   const shortId = data.shortId as string | undefined;
 
@@ -194,8 +213,15 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     event.stopPropagation();
   }
   function setAspect(value: AspectOption) {
-    useBoardStore.getState().updateNodeData(rfId, { aspectKey: value });
-    persistNodeData(rfId, { aspectKey: value });
+    if (isRunning) {
+      // Generation in progress — queue the change, don't resize yet
+      useBoardStore.getState().updateNodeData(rfId, { pendingAspectKey: value });
+      persistNodeData(rfId, { pendingAspectKey: value });
+    } else {
+      // No active generation — apply immediately
+      useBoardStore.getState().updateNodeData(rfId, { aspectKey: value, pendingAspectKey: null });
+      persistNodeData(rfId, { aspectKey: value, pendingAspectKey: null });
+    }
     setShowAspectPicker(false);
   }
   function setModel(key: ActiveImageModelKey) {
@@ -520,14 +546,17 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
                   className="nodrag nowheel flex h-7 items-center gap-1 rounded-full border border-white/[0.06] px-2.5 py-1 text-2xs font-medium text-white/78 hover:bg-white/[0.07] hover:text-white transition-colors whitespace-nowrap"
                   style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
                 >
-                  {aspectKey} <DropdownCaret className="text-white/50" />
+                  {pendingAspectKey && (
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" title="Will apply after generation" />
+                  )}
+                  {displayAspectKey} <DropdownCaret className="text-white/50" />
                 </button>
                 <PickerDropdown
                   anchorRef={aspectButtonRef}
                   isOpen={showAspectPicker}
                   onClose={() => setShowAspectPicker(false)}
                   items={ASPECT_OPTIONS.map((option) => ({ key: option, label: option }))}
-                  activeKey={aspectKey}
+                  activeKey={displayAspectKey}
                   onPick={(key) => setAspect(key as AspectOption)}
                   minWidth={86}
                   matchAnchorWidth={false}
