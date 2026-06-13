@@ -71,12 +71,46 @@ export interface UploadFlow {
 export function useUploadFlow(
   rfId: string,
   data: FlowboardNodeData,
+  selected?: boolean,
 ): UploadFlow {
   const [uploading, setUploading] = useState(false);
   const [uploadJustFinished, setUploadJustFinished] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!selected) return;
+
+    const handlePaste = (e: ClipboardEvent) => {
+      const activeEl = document.activeElement;
+      if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA")) {
+        return;
+      }
+
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const files: File[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      }
+
+      if (files.length > 0) {
+        e.preventDefault();
+        void uploadOwn(files[0]);
+      }
+    };
+
+    window.addEventListener("paste", handlePaste);
+    return () => {
+      window.removeEventListener("paste", handlePaste);
+    };
+  }, [selected, rfId]);
 
   // Brief "✓ Uploaded" pulse — fades on its own ~1.4s timer so the
   // success moment registers before the node settles into the filled

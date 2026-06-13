@@ -51,7 +51,7 @@ function normaliseStatus(status: any): "idle" | "queued" | "running" | "done" | 
 
 export function UploadNode(props: NodeProps<FlowNode>) {
   const { id: rfId, data, selected } = props;
-  const flow = useUploadFlow(rfId, data);
+  const flow = useUploadFlow(rfId, data, selected);
   const { width: nodeWidth, onResize, onResizeEnd } = useNodeWidth({
     nodeId: rfId,
     data,

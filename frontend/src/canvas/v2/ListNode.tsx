@@ -433,6 +433,39 @@ export function ListNode(props: NodeProps<FlowNode>) {
     await processFiles(mediaFiles);
   }, [processFiles]);
 
+  useEffect(() => {
+    if (!selected) return;
+
+    const handlePaste = (e: ClipboardEvent) => {
+      const activeEl = document.activeElement;
+      if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA")) {
+        return;
+      }
+
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const files: File[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.startsWith("image/") || item.type.startsWith("video/")) {
+          const file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      }
+
+      if (files.length > 0) {
+        e.preventDefault();
+        processFiles(files);
+      }
+    };
+
+    window.addEventListener("paste", handlePaste);
+    return () => {
+      window.removeEventListener("paste", handlePaste);
+    };
+  }, [selected, processFiles]);
+
   const toggleImageFit = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     const nextFit = imageFit === "cover" ? "contain" : "cover";
