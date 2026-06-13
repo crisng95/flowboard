@@ -188,17 +188,27 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
     return 1;
   })();
 
+  const combineRefs = data.combineRefs === true;
+
   const batchTaskCount = promptCount > 1 && imageCountUpstream === 1
     ? promptCount
-    : batchMode === "cross"
-      ? promptCount * imageCountUpstream
-      : Math.min(promptCount, imageCountUpstream);
+    : (promptCount === 1 && imageCountUpstream > 1 && combineRefs)
+      ? 1
+      : batchMode === "cross"
+        ? promptCount * imageCountUpstream
+        : Math.min(promptCount, imageCountUpstream);
 
-  const toggleBatchMode = useCallback(() => {
-    const nextMode = batchMode === "cross" ? "zip" : "cross";
-    useBoardStore.getState().updateNodeData(rfId, { batchMode: nextMode });
-    persistNodeData(rfId, { batchMode: nextMode });
-  }, [rfId, batchMode]);
+  const toggleBatchModeOrCombineRefs = useCallback(() => {
+    if (promptCount > 1 && imageCountUpstream > 1) {
+      const nextMode = batchMode === "cross" ? "zip" : "cross";
+      useBoardStore.getState().updateNodeData(rfId, { batchMode: nextMode });
+      persistNodeData(rfId, { batchMode: nextMode });
+    } else if (promptCount === 1 && imageCountUpstream > 1) {
+      const nextCombine = !combineRefs;
+      useBoardStore.getState().updateNodeData(rfId, { combineRefs: nextCombine });
+      persistNodeData(rfId, { combineRefs: nextCombine });
+    }
+  }, [rfId, promptCount, imageCountUpstream, batchMode, combineRefs]);
 
   function setPrompt(value: string) {
     useBoardStore.getState().updateNodeData(rfId, { prompt: value });
@@ -479,16 +489,18 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
                 type="button"
                 onMouseDown={stopNodeAction}
                 onDoubleClick={stopNodeAction}
-                onClick={promptCount > 1 && imageCountUpstream > 1 ? toggleBatchMode : undefined}
-                disabled={!(promptCount > 1 && imageCountUpstream > 1)}
-                title={promptCount > 1 && imageCountUpstream > 1 ? `Batch Mode: ${batchMode === "cross" ? "Cross Product (Generate every prompt for every image)" : "Zip Paired (Generate prompts matched with images by index)"}` : `Generating ${batchTaskCount} batch items`}
-                className={cn(
-                  "nodrag nowheel absolute left-4 bottom-3 z-40 flex h-7 items-center justify-center rounded-full border border-white/[0.08] px-2.5 py-1 text-2xs font-bold text-white/80 transition-all whitespace-nowrap",
-                  promptCount > 1 && imageCountUpstream > 1 ? "hover:bg-white/[0.08] hover:text-white cursor-pointer" : "cursor-default"
-                )}
+                onClick={toggleBatchModeOrCombineRefs}
+                title={
+                  promptCount > 1 && imageCountUpstream > 1
+                    ? `Batch Mode: ${batchMode === "cross" ? "Cross Product (Generate every prompt for every image)" : "Zip Paired (Generate prompts matched with images by index)"}`
+                    : combineRefs
+                      ? "Combined Mode: Send all images in list as references for 1 image"
+                      : `Batch Mode: Generate ${batchTaskCount} images (one per image in list)`
+                }
+                className="nodrag nowheel absolute left-4 bottom-3 z-40 flex h-7 items-center justify-center rounded-full border border-white/[0.08] px-2.5 py-1 text-2xs font-bold text-white/80 transition-all whitespace-nowrap hover:bg-white/[0.08] hover:text-white cursor-pointer"
                 style={{ backgroundColor: "rgba(28, 32, 39, 0.78)", backdropFilter: "blur(12px) saturate(1.15)" }}
               >
-                x{batchTaskCount}
+                {combineRefs && promptCount === 1 && imageCountUpstream > 1 ? "combined" : `x${batchTaskCount}`}
               </button>
             )}
 

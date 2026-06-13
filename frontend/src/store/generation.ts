@@ -1576,8 +1576,9 @@ async function runNodeDirect(
       refMediaIds.length >= 2 &&
       upstreamPrompts.length === refMediaIds.length;
 
+    const combineRefs = node.data.combineRefs === true;
     const isMultiImageMode =
-      !isPairedMode && refMediaIds.length >= 2 && upstreamPrompts.length <= 1;
+      !isPairedMode && refMediaIds.length >= 2 && upstreamPrompts.length <= 1 && combineRefs;
 
     if (isPairedMode) {
       // -- Mode A: Paired dispatch --------------------------------------------
@@ -1591,6 +1592,22 @@ async function runNodeDirect(
         variantCount: upstreamPrompts.length,
         imageModel,
         prompts: upstreamPrompts,
+        sourceMediaIds: refMediaIds,
+        skipSpawningNodes: true,
+      });
+      return;
+    }
+
+    if (!combineRefs && upstreamPrompts.length <= 1 && refMediaIds.length >= 2) {
+      // -- Mode D: Batch dispatch (N images from N references, 1 prompt) ------
+      // Generate N images, one for each reference image in the list.
+      await get().dispatchGeneration(rfId, {
+        prompt,
+        kind: "image",
+        aspectRatio,
+        variantCount: refMediaIds.length,
+        imageModel,
+        prompts: Array(refMediaIds.length).fill(prompt),
         sourceMediaIds: refMediaIds,
         skipSpawningNodes: true,
       });
