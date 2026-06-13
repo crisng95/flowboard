@@ -56,7 +56,7 @@ export function VariantEdge({
         path={edgePath}
         style={{
           ...style,
-          stroke: "rgba(124, 92, 255, 0.12)",
+          stroke: isRunning ? "rgba(233, 213, 255, 0.2)" : "rgba(124, 92, 255, 0.12)",
           strokeWidth: 4.5,
         }}
       />
