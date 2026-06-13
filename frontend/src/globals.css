@@ -313,6 +313,26 @@
   animation: dash-flow 0.6s linear infinite;
 }
 
+/* Animated Beam connection line animation */
+@keyframes beam-loop {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -200;
+  }
+}
+
+.animated-beam-foreground {
+  stroke-dasharray: 40 160;
+  animation: beam-loop 2.4s linear infinite;
+}
+
+.animated-beam-foreground-running {
+  stroke-dasharray: 50 100;
+  animation: beam-loop 1.2s linear infinite;
+}
+
 /* Let React Flow manage edge/node layer ordering.
    Hard-coding `.react-flow__edges` below `.react-flow__nodes` hides sub-flow
    edges behind large group nodes even though the connections still exist.

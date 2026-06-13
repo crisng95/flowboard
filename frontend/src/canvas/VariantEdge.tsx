@@ -46,22 +46,34 @@ export function VariantEdge({
 
   const pin = (data?.sourceVariantIdx ?? null) as number | null;
 
-  const edgeStyle = isRunning
-    ? {
-        ...style,
-        strokeDasharray: "8 6",
-        strokeLinecap: "round" as const,
-      }
-    : style;
+
 
   return (
     <>
+      {/* Background static line */}
+      <BaseEdge
+        id={id + "-bg"}
+        path={edgePath}
+        style={{
+          ...style,
+          stroke: "rgba(124, 92, 255, 0.15)",
+          strokeWidth: 2,
+        }}
+      />
+      {/* Animated beam foreground */}
       <BaseEdge
         id={id}
         path={edgePath}
-        style={edgeStyle}
+        style={{
+          ...style,
+          stroke: isRunning ? "#c084fc" : "#a78bfa",
+          strokeWidth: isRunning ? 2.5 : 2,
+          filter: isRunning
+            ? "drop-shadow(0 0 5px rgba(192, 132, 252, 0.8))"
+            : "drop-shadow(0 0 3px rgba(167, 139, 250, 0.6))",
+        }}
         markerEnd={markerEnd}
-        className={isRunning ? "animated-dash" : undefined}
+        className={isRunning ? "animated-beam-foreground-running" : "animated-beam-foreground"}
       />
       {pin !== null && pin >= 0 && (
         <EdgeLabelRenderer>
