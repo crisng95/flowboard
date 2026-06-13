@@ -324,7 +324,7 @@
 }
 
 .animated-beam-droplet {
-  stroke-dasharray: 30 800;
+  stroke-dasharray: 70 800;
   stroke-linecap: round;
   animation: beam-loop-droplet 0.8s linear infinite;
 }
