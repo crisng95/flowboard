@@ -603,7 +603,8 @@ function getUpstreamTextPrompt(targetRfId: string): string {
 
 type AssistantAttachmentInput = {
   mimeType: string;
-  data: string;
+  mediaId?: string;
+  data?: string;
 };
 
 type AssistantAttachmentSummary = {
@@ -691,16 +692,14 @@ async function buildAssistantAttachments(targetRfId: string): Promise<{
     if (!isMediaSourceType(sourceType)) continue;
     const candidates = collectAssistantAttachmentCandidates(sourceNode);
     for (const [index, candidate] of candidates.entries()) {
-      const response = await fetch(candidate.url);
-      if (!response.ok) {
-        throw new Error(`Failed to load upstream ${candidate.kind} (${response.status})`);
-      }
-      const blob = await response.blob();
-      const bytes = new Uint8Array(await blob.arrayBuffer());
-      const mimeType = blob.type || inferAttachmentMime(candidate.kind, candidate.url);
+      // Extract mediaId from candidate.url (which is of the form "/media/<mediaId>")
+      const urlParts = candidate.url.split("/");
+      const mediaId = urlParts[urlParts.length - 1];
+      if (!mediaId) continue;
+      const mimeType = inferAttachmentMime(candidate.kind, candidate.url);
       attachments.push({
         mimeType,
-        data: binaryToBase64(bytes),
+        mediaId,
       });
       summary.push({
         id: `${sourceNode.id}-${candidate.kind}-${index}`,
@@ -1389,25 +1388,39 @@ async function runNodeDirect(
 
       if (sourceType === "assistant") {
         if (!wantsText) continue;
-        const text = cleanText(sourceNode.data.assistantOutput);
-        if (!text) continue;
-        if (sourceNode.data.assistantExportMode === "list") {
-          const blocks = parseAssistantOutputList(text);
-          blocks.forEach((block, idx) => {
-            items.push({
-              id: `${sourceNode.id}-assistant-${items.length + idx + 1}`,
-              kind: "text",
-              title: cleanText(sourceNode.data.title) ?? `Assistant ${items.length + idx + 1}`,
-              text: block,
-            });
+        const upstreamListItems = Array.isArray(sourceNode.data.listItems) ? sourceNode.data.listItems : [];
+        if (sourceNode.data.assistantExportMode === "list" && upstreamListItems.length > 0) {
+          upstreamListItems.forEach((item, idx) => {
+            if (item && item.kind === "text" && item.text) {
+              items.push({
+                id: `${sourceNode.id}-assistant-${items.length + idx + 1}`,
+                kind: "text",
+                title: item.title ?? `Assistant ${items.length + idx + 1}`,
+                text: item.text,
+              });
+            }
           });
         } else {
-          items.push({
-            id: `${sourceNode.id}-assistant-${items.length + 1}`,
-            kind: "text",
-            title: cleanText(sourceNode.data.title) ?? `Assistant ${items.length + 1}`,
-            text,
-          });
+          const text = cleanText(sourceNode.data.assistantOutput);
+          if (!text) continue;
+          if (sourceNode.data.assistantExportMode === "list") {
+            const blocks = parseAssistantOutputList(text);
+            blocks.forEach((block, idx) => {
+              items.push({
+                id: `${sourceNode.id}-assistant-${items.length + idx + 1}`,
+                kind: "text",
+                title: cleanText(sourceNode.data.title) ?? `Assistant ${items.length + idx + 1}`,
+                text: block,
+              });
+            });
+          } else {
+            items.push({
+              id: `${sourceNode.id}-assistant-${items.length + 1}`,
+              kind: "text",
+              title: cleanText(sourceNode.data.title) ?? `Assistant ${items.length + 1}`,
+              text,
+            });
+          }
         }
         continue;
       }
@@ -2840,10 +2853,36 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       {
         onDone: (req) => {
           const text = typeof req.result["text"] === "string" ? req.result["text"] : "";
+          
+          const board = useBoardStore.getState();
+          const node = board.nodes.find((n) => n.id === rfId);
+          
+          let listItems: any[] = [];
+          if (node) {
+            const exportMode = resolveAssistantExportMode(node, board);
+            if (exportMode === "list") {
+              const subItems = parseAssistantOutputList(text);
+              subItems.forEach((subText, subIdx) => {
+                listItems.push({
+                  id: `single-item-${subIdx + 1}-${Math.random().toString(36).substr(2, 9)}`,
+                  kind: "text",
+                  title: `Text Item ${listItems.length + 1}`,
+                  text: subText,
+                  mediaId: null,
+                  flowMediaId: null,
+                  mediaUrl: null,
+                  imageUrl: null,
+                  status: "done",
+                });
+              });
+            }
+          }
+
           commitNodeData(rfId, {
             status: "done",
             assistantStatus: "done",
             assistantOutput: text,
+            listItems: listItems.length > 0 ? listItems : undefined,
             assistantError: null,
             error: null,
           });
@@ -2855,6 +2894,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                 assistantOutput: text,
                 assistantStatus: "done",
                 assistantError: null,
+                listItems: listItems.length > 0 ? listItems : undefined,
                 systemPrompt: opts.systemPrompt ?? null,
                 assistantModel: opts.model ?? "flow_gemini",
                 attachmentsSummary: opts.attachmentSummary ?? [],
@@ -2940,12 +2980,42 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         {
           onDone: (orderedResults) => {
             const texts = orderedResults.map((req) => typeof req.result["text"] === "string" ? req.result["text"] : "");
-            const combinedText = texts.join("\n\n");
+            
+            const board = useBoardStore.getState();
+            const node = board.nodes.find((n) => n.id === rfId);
+            if (!node) return;
+
+            const exportMode = resolveAssistantExportMode(node, board);
+            let combinedText = "";
+            let listItems: any[] = [];
+            
+            if (exportMode === "list") {
+              texts.forEach((text, idx) => {
+                const cleanedText = text.trim();
+                if (cleanedText) {
+                  listItems.push({
+                    id: `batch-${idx}-item-${Math.random().toString(36).substr(2, 9)}`,
+                    kind: "text",
+                    title: `Text Item ${listItems.length + 1}`,
+                    text: cleanedText,
+                    mediaId: null,
+                    flowMediaId: null,
+                    mediaUrl: null,
+                    imageUrl: null,
+                    status: "done",
+                  });
+                }
+              });
+              combinedText = listItems.map((item) => item.text).join("\n\n");
+            } else {
+              combinedText = texts.join("\n\n");
+            }
 
             commitNodeData(rfId, {
               status: "done",
               assistantStatus: "done",
               assistantOutput: combinedText,
+              listItems: listItems.length > 0 ? listItems : undefined,
               assistantError: null,
               error: null,
             });
@@ -2957,6 +3027,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                   assistantOutput: combinedText,
                   assistantStatus: "done",
                   assistantError: null,
+                  listItems: listItems.length > 0 ? listItems : undefined,
                   systemPrompt: opts.systemPrompt ?? null,
                   assistantModel: opts.model ?? "flow_gemini",
                   attachmentsSummary: opts.attachmentSummary ?? [],

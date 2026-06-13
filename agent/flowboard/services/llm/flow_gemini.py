@@ -175,13 +175,13 @@ class FlowGeminiProvider:
         self,
         user_prompt: str,
         system_prompt: Optional[str],
-        attachments: Optional[list[str]],
+        attachments: Optional[list[Any]],
     ) -> dict[str, Any]:
         """Assemble the ``input_data`` JSON for the Control-Plane request.
 
         - Non-string ``system_prompt`` is a hard error: we refuse to enqueue a
           job that would silently drop the system instruction (Req 6.4).
-        - Each attachment is read and base64-encoded; a per-attachment failure
+        - Each attachment is resolved, read, and base64-encoded; a per-attachment failure
           is logged (with a redacted path) and skipped so the remaining valid
           attachments still go through (Req 7.2).
         - ``system_prompt`` / ``attachments`` keys are added only when present
@@ -191,20 +191,67 @@ class FlowGeminiProvider:
             # Raise BEFORE building/enqueuing anything (Req 6.4).
             raise LLMError("flow_gemini: system_prompt could not be encoded as systemInstruction")
 
+        from flowboard.services import media as media_service
+        # Run event loop to resolve async fetch if needed
+        import asyncio
+
         atts: list[dict[str, str]] = []
-        for path in attachments or []:
+        for att in attachments or []:
             try:
-                raw = Path(path).read_bytes()
-                atts.append(
-                    {
-                        "mimeType": _guess_mime(path),
-                        "data": base64.b64encode(raw).decode("ascii"),
-                    }
-                )
+                # If attachment is passed as a dict with mediaId from frontend
+                if isinstance(att, dict) and "mediaId" in att:
+                    media_id = att["mediaId"]
+                    mime_type = att.get("mimeType") or "image/png"
+                    
+                    cached = media_service.cached_path(media_id)
+                    if cached is None:
+                        # fetch from stored URL synchronously (run_until_complete helper if inside async run)
+                        try:
+                            loop = asyncio.get_event_loop()
+                        except RuntimeError:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                        
+                        if loop.is_running():
+                            # we are already inside a running loop (run is async)
+                            # so we must import and await, but _build_input_data is sync.
+                            # Let's change _build_input_data to async or run it via a future.
+                            # Actually, we can run the fetch using a helper.
+                            # Let's make fetch_and_cache run inside the existing loop.
+                            coro = media_service.fetch_and_cache(media_id)
+                            # since we are in a running loop, we can schedule it:
+                            fut = asyncio.run_coroutine_threadsafe(coro, loop)
+                            result = fut.result(timeout=30.0)
+                        else:
+                            result = loop.run_until_complete(media_service.fetch_and_cache(media_id))
+                        
+                        if result is not None:
+                            _, _, cached = result
+
+                    if cached is not None:
+                        raw = Path(cached).read_bytes()
+                        atts.append(
+                            {
+                                "mimeType": mime_type,
+                                "data": base64.b64encode(raw).decode("ascii"),
+                            }
+                        )
+                    else:
+                        logger.warning("flow_gemini: could not resolve mediaId %s", media_id)
+                else:
+                    # Legacy string path fallback
+                    path = str(att)
+                    raw = Path(path).read_bytes()
+                    atts.append(
+                        {
+                            "mimeType": _guess_mime(path),
+                            "data": base64.b64encode(raw).decode("ascii"),
+                        }
+                    )
             except Exception as exc:  # noqa: BLE001 - skip & continue (Req 7.2)
                 logger.warning(
                     "flow_gemini: skipped attachment %s (%s)",
-                    _redact_path(path),
+                    _redact_path(str(att)),
                     type(exc).__name__,
                 )
 
