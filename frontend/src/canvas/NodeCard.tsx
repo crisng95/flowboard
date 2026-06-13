@@ -5,6 +5,7 @@ import { useGenerationStore } from "../store/generation";
 import { mediaUrl, patchEdge, patchNode, uploadImage, uploadImageFromUrl } from "../api/client";
 import { requestAutoBrief } from "../api/autoBrief";
 import { useReferencesStore } from "../store/references";
+import { downloadFile } from "../lib/download";
 
 const ICON: Record<string, string> = {
   character: "◎",
@@ -1607,17 +1608,11 @@ export function NodeCard(props: NodeProps<FlowNode>) {
     if (ids.length === 0) return;
     const safeTitle = (data.title || data.type).replace(/[^A-Za-z0-9_-]+/g, "_");
     const ext = downloadExt(data.type);
-    // `<a download>` only honours the suggested filename when the resource
-    // is same-origin — `/media/<id>` *is* same-origin (proxied by FastAPI),
-    // so the title-based filename sticks.
     ids.forEach((mid, i) => {
-      const a = document.createElement("a");
-      a.href = mediaUrl(mid);
+      const url = mediaUrl(mid);
       const suffix = ids.length > 1 ? `-${i + 1}` : "";
-      a.download = `${safeTitle}-${data.shortId}${suffix}.${ext}`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      const filename = `${safeTitle}-${data.shortId}${suffix}.${ext}`;
+      void downloadFile(url, filename);
     });
   }
 

@@ -16,6 +16,7 @@ import { mediaUrl } from "../api/client";
 import { useBoardStore } from "../store/board";
 import { useGenerationStore } from "../store/generation";
 import { cn } from "../lib/utils";
+import { downloadFile } from "../lib/download";
 
 const VIDEO_MODEL_LABELS: Record<string, string> = {
   lite: "Lite",
@@ -109,11 +110,10 @@ export function ResultViewerV2() {
 
   const downloadCurrent = useCallback(() => {
     if (!currentMediaRef) return;
-    const a = document.createElement("a");
-    a.href = resolveMediaSrc(currentMediaRef);
+    const url = resolveMediaSrc(currentMediaRef);
     const extension = currentEntry?.kind === "video" ? "mp4" : "png";
-    a.download = `${currentEntry?.title ?? data?.title ?? "media"}-${activeIdx + 1}.${extension}`;
-    a.click();
+    const filename = `${currentEntry?.title ?? data?.title ?? "media"}-${activeIdx + 1}.${extension}`;
+    void downloadFile(url, filename);
   }, [activeIdx, currentEntry?.kind, currentEntry?.title, currentMediaRef, data?.title]);
 
   const onKeyDown = useCallback(
