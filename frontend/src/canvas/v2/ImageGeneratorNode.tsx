@@ -464,7 +464,7 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
             <div 
               className={cn("px-4 pb-1 transition-all duration-300 ease-out", promptFocused ? "pt-4" : "pt-2")}
               style={{ 
-                paddingBottom: (promptCount > 1 && imageCountUpstream > 1) ? 40 : 4
+                paddingBottom: (promptCount > 1 || imageCountUpstream > 1) ? 40 : 4
               }}
             >
               <textarea
@@ -513,7 +513,11 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
                   ? "max-h-[48px] opacity-100 translate-y-0"
                   : "max-h-0 opacity-0 translate-y-1 overflow-hidden",
               )}
-              style={{ paddingLeft: (promptCount > 1 || imageCountUpstream > 1) ? 64 : 12 }}
+              style={{ 
+                paddingLeft: (promptCount > 1 || imageCountUpstream > 1) 
+                  ? (combineRefs && promptCount === 1 && imageCountUpstream > 1 ? 96 : 64) 
+                  : 12 
+              }}
             >
               {/* Standard Image count stepper (Only shown when not in batch list mode) */}
               {!(promptCount > 1 || imageCountUpstream > 1) && (
