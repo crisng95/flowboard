@@ -434,11 +434,6 @@ function SpacesPage({
       </aside>
 
       <header className="magnific-spaces__header">
-        <button type="button" className="magnific-filter-pill">
-          <span className="magnific-filter-pill__dot" />
-          Personal project
-          <ChevronDown size={14} />
-        </button>
         <div className="magnific-header-actions">
           <AccountMenu session={session} />
         </div>
@@ -714,7 +709,6 @@ function CanvasStatusBar({
 
   return (
     <div className="magnific-canvas__status nowheel nodrag">
-      <button type="button" className="magnific-page-pill">Page 1</button>
       <div className="magnific-canvas__status-actions">
         <button
           type="button"
@@ -800,11 +794,6 @@ function CanvasPage({ session }: { session: any }) {
           <button type="button" className="magnific-back-button" onClick={() => setView("spaces")} aria-label="Back to spaces">
             <ArrowLeft size={16} />
           </button>
-          <span className="magnific-breadcrumb-pill">
-            <span className="magnific-filter-pill__dot" />
-            Personal project
-          </span>
-          <span className="magnific-breadcrumb-sep">/</span>
           <strong>{boardName || "Untitled space"}</strong>
         </div>
         <div className="magnific-header-actions">
