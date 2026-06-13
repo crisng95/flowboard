@@ -30,8 +30,8 @@ const buttonVariants = cva(
           "bg-surface-2 text-ink-primary border border-line-subtle " +
           "hover:bg-surface-3 hover:border-line-strong",
         primary:
-          "bg-accent text-white shadow-[0_2px_12px_rgba(124,92,255,0.35)] " +
-          "hover:bg-accent-600 hover:shadow-[0_4px_16px_rgba(124,92,255,0.5)]",
+          "bg-[#f7f4ed] text-[#111217] font-bold shadow-sm " +
+          "hover:bg-[#e3dfd6]",
         run:
           "bg-run-gradient text-white shadow-[0_4px_14px_rgba(124,92,255,0.45)] " +
           "hover:bg-run-gradient-hover hover:shadow-[0_6px_20px_rgba(124,92,255,0.6)] " +

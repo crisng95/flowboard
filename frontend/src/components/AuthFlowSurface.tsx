@@ -297,8 +297,9 @@ export function AuthFlowSurface({
 
             <Button
               type="submit"
+              variant="primary"
               disabled={actionDisabled || !canSubmit}
-              className="w-full h-10 rounded-xl font-semibold bg-accent hover:bg-accent/90 transition-all flex items-center justify-center gap-2 mt-4"
+              className="w-full h-10 rounded-xl transition-all flex items-center justify-center gap-2 mt-4"
             >
               {loading ? (
                 <Loader2 size={15} className="animate-spin" />
@@ -322,9 +323,10 @@ export function AuthFlowSurface({
           <div className="space-y-3">
             <Button
               type="button"
+              variant="primary"
               disabled={loading || googleLoading || !email.trim() || !hasSupabaseConfig}
               onClick={() => void handleResendConfirmation()}
-              className="w-full h-10 rounded-xl font-semibold bg-accent hover:bg-accent/90 transition-all flex items-center justify-center gap-2"
+              className="w-full h-10 rounded-xl transition-all flex items-center justify-center gap-2"
             >
               {loading ? <Loader2 size={15} className="animate-spin" /> : <Mail size={15} />}
               Resend confirmation email
