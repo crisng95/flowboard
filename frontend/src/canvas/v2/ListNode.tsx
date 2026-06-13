@@ -12,7 +12,8 @@ import {
   RefreshCw,
   Plus,
   ChevronDown,
-  AlertTriangle
+  AlertTriangle,
+  X
 } from "lucide-react";
 
 import { type FlowNode } from "../../store/board";
@@ -25,7 +26,6 @@ import { persistNodeData } from "./shared/persistNodeData";
 import { ResizeHandle } from "./shared/ResizeHandle";
 import { useNodeWidth } from "./shared/useNodeWidth";
 import { HandleBadge } from "./shared/HandleBadge";
-import { EmptyState } from "./shared/EmptyState";
 import { PickerDropdown } from "./shared/PickerDropdown";
 import { edgeHandleClass } from "./shared/edgeHandle";
 import { targetHandleDropState } from "./shared/handleClassParts";
@@ -110,6 +110,9 @@ export function ListNode(props: NodeProps<FlowNode>) {
   const status = data.status || "idle";
   const isRunning = status === "running" || status === "queued";
 
+  const [isAddingText, setIsAddingText] = useState(false);
+  const [addingTextValue, setAddingTextValue] = useState("");
+
   const [simulatedProgress, setSimulatedProgress] = useState(2);
   useEffect(() => {
     if (isRunning) {
@@ -159,7 +162,9 @@ export function ListNode(props: NodeProps<FlowNode>) {
   })();
 
   const dynamicMinHeight = (() => {
-    if (listItems.length === 0) return 180;
+    if (listItems.length === 0) {
+      return nodeWidth - 40; // Perfect square: width minus standard padding
+    }
     if (listViewMode === "grid") {
       const rows = gridLayout.rows;
       const gap = 8;
@@ -316,8 +321,12 @@ export function ListNode(props: NodeProps<FlowNode>) {
 
   const handlePlusClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    uploadInputRef.current?.click();
-  }, []);
+    if (lockedType === "text") {
+      setIsAddingText(true);
+    } else {
+      uploadInputRef.current?.click();
+    }
+  }, [lockedType]);
 
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -404,6 +413,47 @@ export function ListNode(props: NodeProps<FlowNode>) {
     useBoardStore.getState().updateNodeData(rfId, { imageFit: nextFit });
     persistNodeData(rfId, { imageFit: nextFit });
   }, [rfId, imageFit]);
+
+  const confirmAddText = useCallback(() => {
+    const trimmed = addingTextValue.trim();
+    if (!trimmed) {
+      setIsAddingText(false);
+      return;
+    }
+    const newItem = {
+      id: `text-item-${Date.now()}`,
+      kind: "text" as const,
+      title: trimmed,
+      text: trimmed,
+    };
+    const nextItems = [...listItems, newItem];
+
+    useBoardStore.getState().updateNodeData(rfId, {
+      listItems: nextItems,
+      renderedAt: new Date().toISOString(),
+    });
+    persistNodeData(rfId, {
+      listItems: nextItems,
+      renderedAt: new Date().toISOString(),
+    });
+
+    setAddingTextValue("");
+    setIsAddingText(false);
+  }, [rfId, listItems, addingTextValue]);
+
+  const cancelAddText = useCallback(() => {
+    setIsAddingText(false);
+    setAddingTextValue("");
+  }, []);
+
+  const handleTextareaKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      confirmAddText();
+    } else if (e.key === "Escape") {
+      cancelAddText();
+    }
+  }, [confirmAddText, cancelAddText]);
 
   const buildSelectionPatch = useCallback((nextIndexes: number[]) => {
     const mediaItems = (nextIndexes.length > 0
@@ -588,7 +638,7 @@ export function ListNode(props: NodeProps<FlowNode>) {
           <div 
             className="flex-1 pb-3 pr-2 overflow-y-auto img-gen-prompt"
           >
-          {listItems.length === 0 ? (
+          {listItems.length === 0 && !isAddingText ? (
             isRunning ? (
               <div 
                 className="grid grid-cols-3 gap-2 pb-2"
@@ -617,229 +667,296 @@ export function ListNode(props: NodeProps<FlowNode>) {
                 })}
               </div>
             ) : (
-              <EmptyState
-                Icon={List}
-                title="Empty List"
-                hint="Connect Text or Media upstream nodes, then run to import items."
-                actionLabel="Import Upstream"
-                onAction={handleRun}
-                minHeight={140}
-              />
+              <div className="flex flex-col items-center justify-center h-full min-h-[220px] select-none text-center p-4">
+                <List className="size-10 text-white/20 mb-3" />
+                <h3 className="text-[15px] font-semibold text-white/90 mb-1">No elements yet</h3>
+                <p className="text-xs text-white/40 mb-6">Add elements to this list</p>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setIsAddingText(true)}
+                    className="flex items-center justify-center h-9 px-4 rounded-full bg-white/[0.06] border border-white/[0.08] text-sm font-semibold text-white/80 hover:text-white hover:bg-white/[0.12] transition-all cursor-pointer"
+                  >
+                    <Type size={14} className="mr-2" />
+                    Add text
+                  </button>
+                  <button
+                    onClick={() => uploadInputRef.current?.click()}
+                    className="flex items-center justify-center h-9 px-4 rounded-full bg-white/[0.06] border border-white/[0.08] text-sm font-semibold text-white/80 hover:text-white hover:bg-white/[0.12] transition-all cursor-pointer"
+                  >
+                    <ImageUp size={14} className="mr-2" />
+                    Add media
+                  </button>
+                </div>
+              </div>
             )
-          ) : (listViewMode === "grid" && lockedType !== "text") ? (
-            /* Grid View - Beautiful dynamic grid layout matching user constraints */
-            <div 
-              className="grid gap-2 pb-2"
-              style={{
-                gridTemplateColumns: `repeat(${gridLayout.cols}, ${gridThumbSize}px)`,
-                gridAutoRows: `${gridThumbSize}px`,
-              }}
-            >
-              {listItems.map((item, idx) => {
-                const isSelected = listSelectedIndexes.includes(idx);
-                const isMedia = item.kind === "image" || item.kind === "video";
-                const isItemVideo = item.kind === "video";
-                const url = isMedia && item.mediaId ? mediaUrl(String(item.mediaId)) : (item.mediaUrl as string);
-                const hasActiveSelections = listSelectedIndexes.length > 0;
-                const shouldDim = hasActiveSelections && !isSelected;
-                const itemStatus = typeof item.status === "string" ? item.status : undefined;
-                // Req 3.4: an errored video slot (status "error" or a non-pending slot
-                // that never produced a mediaId) renders an error frame instead of video.
-                const isVideoError = isItemVideo && itemStatus !== "pending" && (itemStatus === "error" || item.mediaId == null);
-                const videoPoster = typeof item.imageUrl === "string" ? item.imageUrl : undefined;
-
-                return (
-                  <div
-                    key={item.id as string || idx}
-                    onClick={(e) => toggleItemSelection(idx, e)}
-                    onDoubleClick={() => {
-                      if (isMedia && item.mediaId) {
-                        useGenerationStore.getState().openResultViewer(rfId, idx);
-                      }
-                    }}
-                    className={cn(
-                      "relative rounded-[13px] overflow-hidden aspect-square border transition-all duration-150 select-none bg-[#1d1d1d]",
-                      listSelectionMode ? "cursor-pointer" : "cursor-default",
-                      listSelectionMode 
-                        ? isSelected 
-                          ? "border-accent ring-[2px] ring-accent opacity-100" 
-                          : "border-white/[0.04] opacity-40 hover:opacity-60"
-                        : shouldDim
-                          ? "border-white/[0.04] opacity-40 hover:opacity-60"
-                          : "border-white/[0.04] hover:border-white/[0.12]"
-                    )}
-                  >
-                    {isVideoError ? (
-                      /* Req 3.4: error frame for a failed video slot, keeps the video badge */
-                      <>
-                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-2 bg-[#1d1d1d] text-red-400/80">
-                          <AlertTriangle size={18} />
-                          <span className="text-[9px] text-white/50 text-center leading-snug line-clamp-2">
-                            {String(item.error || "Failed")}
-                          </span>
-                        </div>
-                        <div className="absolute top-1 right-1 p-0.5 rounded bg-black/60 text-white/90">
-                          <Video size={10} />
-                        </div>
-                      </>
-                    ) : isItemVideo && url ? (
-                      /* Req 5.1: playable video thumbnail; Req 5.6: keep the video badge */
-                      <>
-                        <VideoListThumb src={url} poster={videoPoster} fit={imageFit} />
-                        <div className="absolute top-1 right-1 p-0.5 rounded bg-black/60 text-white/90">
-                          <Video size={10} />
-                        </div>
-                      </>
-                    ) : isMedia && url ? (
-                      <img
-                        src={url}
-                        alt={String(item.title)}
-                        draggable={false}
-                        className={cn(
-                          "absolute inset-0 size-full transition-all duration-200",
-                          imageFit === "contain" ? "object-contain bg-black/40" : "object-cover"
-                        )}
-                      />
-                    ) : (
-                      <div className="absolute inset-0 p-2 flex flex-col justify-between">
-                        <Type size={12} className="text-white/40" />
-                        <span className="text-[10px] text-white/70 line-clamp-3 leading-snug">
-                          {String(item.text || item.title || "")}
-                        </span>
-                      </div>
-                    )}
-
-                    {/* Circular Selection Overlay Checkbox (Exactly matching mockup Image 2) */}
-                    {listSelectionMode && (
-                      <div className="absolute top-2 right-2 z-10">
-                        <div className={cn(
-                          "size-5 rounded-full flex items-center justify-center border text-[9px] font-bold transition-all shadow-md",
-                          isSelected 
-                            ? "bg-accent border-accent text-white" 
-                            : "border-white/40 bg-black/40 text-transparent"
-                        )}>
-                          {isSelected && <Check size={12} strokeWidth={3} />}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
           ) : (
-            /* List View - Perfect rows matching mockup Image 1 */
-            <div className="flex flex-col gap-0 pb-2">
-              {listItems.map((item, idx) => {
-                const isSelected = listSelectedIndexes.includes(idx);
-                const isMedia = item.kind === "image" || item.kind === "video";
-                const isItemVideo = item.kind === "video";
-                const url = isMedia && item.mediaId ? mediaUrl(String(item.mediaId)) : (item.mediaUrl as string);
-                const hasActiveSelections = listSelectedIndexes.length > 0;
-                const shouldDim = hasActiveSelections && !isSelected;
-                const isTextItem = item.kind === "text" || lockedType === "text";
-                const itemStatus = typeof item.status === "string" ? item.status : undefined;
-                // Req 3.4: an errored video slot renders an error frame instead of video.
-                const isVideoError = isItemVideo && itemStatus !== "pending" && (itemStatus === "error" || item.mediaId == null);
-                const videoPoster = typeof item.imageUrl === "string" ? item.imageUrl : undefined;
-
-                // Resolution mock/logic
-                const res = item.width && item.height 
-                  ? `${item.width} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ${item.height}` 
-                  : `1119 ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ${1660 + (idx * 3) % 20}`; // Fallback resolution matching mockup style
-
-                return (
-                  <div
-                    key={item.id as string || idx}
-                    onClick={(e) => toggleItemSelection(idx, e)}
-                    onDoubleClick={() => {
-                      if (isMedia && item.mediaId) {
-                        useGenerationStore.getState().openResultViewer(rfId, idx);
-                      }
+            <div className="flex flex-col gap-2.5 h-full">
+              {listItems.length > 0 && (
+                (listViewMode === "grid" && lockedType !== "text") ? (
+                  /* Grid View - Beautiful dynamic grid layout matching user constraints */
+                  <div 
+                    className="grid gap-2 pb-2"
+                    style={{
+                      gridTemplateColumns: `repeat(${gridLayout.cols}, ${gridThumbSize}px)`,
+                      gridAutoRows: `${gridThumbSize}px`,
                     }}
-                    className={cn(
-                      "flex items-center py-3 border-b border-white/[0.04] transition-all duration-150 select-none",
-                      isTextItem ? "px-1 gap-2.5" : "px-2 gap-3.5",
-                      listSelectionMode ? "cursor-pointer" : "cursor-default",
-                      listSelectionMode 
-                        ? isSelected 
-                          ? "bg-accent/5 opacity-100" 
-                          : "opacity-40 hover:opacity-60"
-                        : shouldDim
-                          ? "opacity-40 hover:opacity-60"
-                          : "hover:bg-white/[0.02]"
-                    )}
                   >
-                    {/* Checkbox badge in List View */}
-                    {listSelectionMode && (
-                      <div className={cn(
-                        "size-5 rounded-full flex items-center justify-center border text-[10px] font-bold shrink-0 transition-all shadow-sm",
-                        isSelected 
-                          ? "bg-accent border-accent text-white" 
-                          : "border-white/30 bg-black/30 text-transparent"
-                      )}>
-                        {isSelected && <Check size={11} strokeWidth={3} />}
-                      </div>
-                    )}
+                    {listItems.map((item, idx) => {
+                      const isSelected = listSelectedIndexes.includes(idx);
+                      const isMedia = item.kind === "image" || item.kind === "video";
+                      const isItemVideo = item.kind === "video";
+                      const url = isMedia && item.mediaId ? mediaUrl(String(item.mediaId)) : (item.mediaUrl as string);
+                      const hasActiveSelections = listSelectedIndexes.length > 0;
+                      const shouldDim = hasActiveSelections && !isSelected;
+                      const itemStatus = typeof item.status === "string" ? item.status : undefined;
+                      // Req 3.4: an errored video slot (status "error" or a non-pending slot
+                      // that never produced a mediaId) renders an error frame instead of video.
+                      const isVideoError = isItemVideo && itemStatus !== "pending" && (itemStatus === "error" || item.mediaId == null);
+                      const videoPoster = typeof item.imageUrl === "string" ? item.imageUrl : undefined;
 
-                    {isTextItem ? (
-                      /* Clean Text Layout matching user mockup perfectly */
-                      <div className="flex-1 min-w-0 pr-1">
-                        <p className="text-[13px] text-white/90 font-normal leading-relaxed line-clamp-2 select-text selection:bg-accent/30">
-                          {String(item.text || item.title || "")}
-                        </p>
-                      </div>
-                    ) : (
-                      /* Media (Image / Video) Layout */
-                      <>
-                        {/* Thumbnail */}
-                        {isVideoError ? (
-                          /* Req 3.4: error frame for a failed video slot, keeps the video badge */
-                          <div className="relative size-[40px] rounded-[6px] overflow-hidden bg-black/25 shrink-0 border border-white/[0.06] flex items-center justify-center text-red-400/80">
-                            <AlertTriangle size={16} />
-                            <div className="absolute bottom-0.5 right-0.5 p-0.5 rounded bg-black/60 text-white/90">
-                              <Video size={8} />
-                            </div>
-                          </div>
-                        ) : isItemVideo && url ? (
-                          /* Req 5.1: playable video thumbnail; Req 5.6: keep the video badge */
-                          <div className="relative size-[40px] rounded-[6px] overflow-hidden bg-black/25 shrink-0 border border-white/[0.06]">
-                            <VideoListThumb src={url} poster={videoPoster} fit={imageFit} />
-                            <div className="absolute bottom-0.5 right-0.5 p-0.5 rounded bg-black/60 text-white/90">
-                              <Video size={8} />
-                            </div>
-                          </div>
-                        ) : isMedia && url ? (
-                          <div className="relative size-[40px] rounded-[6px] overflow-hidden bg-black/25 shrink-0 border border-white/[0.06]">
+                      return (
+                        <div
+                          key={item.id as string || idx}
+                          onClick={(e) => toggleItemSelection(idx, e)}
+                          onDoubleClick={() => {
+                            if (isMedia && item.mediaId) {
+                              useGenerationStore.getState().openResultViewer(rfId, idx);
+                            }
+                          }}
+                          className={cn(
+                            "relative rounded-[13px] overflow-hidden aspect-square border transition-all duration-150 select-none bg-[#1d1d1d]",
+                            listSelectionMode ? "cursor-pointer" : "cursor-default",
+                            listSelectionMode 
+                              ? isSelected 
+                                ? "border-accent ring-[2px] ring-accent opacity-100" 
+                                : "border-white/[0.04] opacity-40 hover:opacity-60"
+                              : shouldDim
+                                ? "border-white/[0.04] opacity-40 hover:opacity-60"
+                                : "border-white/[0.04] hover:border-white/[0.12]"
+                          )}
+                        >
+                          {isVideoError ? (
+                            /* Req 3.4: error frame for a failed video slot, keeps the video badge */
+                            <>
+                              <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-2 bg-[#1d1d1d] text-red-400/80">
+                                <AlertTriangle size={18} />
+                                <span className="text-[9px] text-white/50 text-center leading-snug line-clamp-2">
+                                  {String(item.error || "Failed")}
+                                </span>
+                              </div>
+                              <div className="absolute top-1 right-1 p-0.5 rounded bg-black/60 text-white/90">
+                                <Video size={10} />
+                              </div>
+                            </>
+                          ) : isItemVideo && url ? (
+                            /* Req 5.1: playable video thumbnail; Req 5.6: keep the video badge */
+                            <>
+                              <VideoListThumb src={url} poster={videoPoster} fit={imageFit} />
+                              <div className="absolute top-1 right-1 p-0.5 rounded bg-black/60 text-white/90">
+                                <Video size={10} />
+                              </div>
+                            </>
+                          ) : isMedia && url ? (
                             <img
                               src={url}
                               alt={String(item.title)}
                               draggable={false}
                               className={cn(
-                                "size-full transition-all duration-200",
+                                "absolute inset-0 size-full transition-all duration-200",
                                 imageFit === "contain" ? "object-contain bg-black/40" : "object-cover"
                               )}
                             />
-                          </div>
-                        ) : (
-                          <div className="size-[40px] rounded-[6px] bg-white/[0.04] flex items-center justify-center shrink-0 border border-white/[0.06]">
-                            <Type size={14} className="text-white/40" />
-                          </div>
-                        )}
+                          ) : (
+                            <div className="absolute inset-0 p-2 flex flex-col justify-between">
+                              <Type size={12} className="text-white/40" />
+                              <span className="text-[10px] text-white/70 line-clamp-3 leading-snug">
+                                {String(item.text || item.title || "")}
+                              </span>
+                            </div>
+                          )}
 
-                        {/* Title & Resolution Subtext */}
-                        <div className="flex-1 min-w-0 flex flex-col justify-center">
-                          <span className="text-sm font-semibold text-white/90 truncate leading-none mb-1">
-                            {String(item.title || "")}
-                          </span>
-                          <span className="text-3xs text-white/45 font-medium leading-none">
-                            {res}
-                          </span>
+                          {/* Circular Selection Overlay Checkbox (Exactly matching mockup Image 2) */}
+                          {listSelectionMode && (
+                            <div className="absolute top-2 right-2 z-10">
+                              <div className={cn(
+                                "size-5 rounded-full flex items-center justify-center border text-[9px] font-bold transition-all shadow-md",
+                                isSelected 
+                                  ? "bg-accent border-accent text-white" 
+                                  : "border-white/40 bg-black/40 text-transparent"
+                              )}>
+                                {isSelected && <Check size={12} strokeWidth={3} />}
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      </>
-                    )}
+                      );
+                    })}
                   </div>
-                );
-              })}
+                ) : (
+                  /* List View - Perfect rows matching mockup Image 1 */
+                  <div className="flex flex-col gap-0 pb-2">
+                    {listItems.map((item, idx) => {
+                      const isSelected = listSelectedIndexes.includes(idx);
+                      const isMedia = item.kind === "image" || item.kind === "video";
+                      const isItemVideo = item.kind === "video";
+                      const url = isMedia && item.mediaId ? mediaUrl(String(item.mediaId)) : (item.mediaUrl as string);
+                      const hasActiveSelections = listSelectedIndexes.length > 0;
+                      const shouldDim = hasActiveSelections && !isSelected;
+                      const isTextItem = item.kind === "text" || lockedType === "text";
+                      const itemStatus = typeof item.status === "string" ? item.status : undefined;
+                      // Req 3.4: an errored video slot renders an error frame instead of video.
+                      const isVideoError = isItemVideo && itemStatus !== "pending" && (itemStatus === "error" || item.mediaId == null);
+                      const videoPoster = typeof item.imageUrl === "string" ? item.imageUrl : undefined;
+
+                      // Resolution mock/logic
+                      const res = item.width && item.height 
+                        ? `${item.width} × ${item.height}` 
+                        : `1119 × ${1660 + (idx * 3) % 20}`; // Fallback resolution matching mockup style
+
+                      return (
+                        <div
+                          key={item.id as string || idx}
+                          onClick={(e) => toggleItemSelection(idx, e)}
+                          onDoubleClick={() => {
+                            if (isMedia && item.mediaId) {
+                              useGenerationStore.getState().openResultViewer(rfId, idx);
+                            }
+                          }}
+                          className={cn(
+                            "flex items-center py-3 border-b border-white/[0.04] transition-all duration-150 select-none",
+                            isTextItem ? "px-1 gap-2.5" : "px-2 gap-3.5",
+                            listSelectionMode ? "cursor-pointer" : "cursor-default",
+                            listSelectionMode 
+                              ? isSelected 
+                                ? "bg-accent/5 opacity-100" 
+                                : "opacity-40 hover:opacity-60"
+                              : shouldDim
+                                ? "opacity-40 hover:opacity-60"
+                                : "hover:bg-white/[0.02]"
+                          )}
+                        >
+                          {/* Checkbox badge in List View */}
+                          {listSelectionMode && (
+                            <div className={cn(
+                              "size-5 rounded-full flex items-center justify-center border text-[10px] font-bold shrink-0 transition-all shadow-md",
+                              isSelected 
+                                ? "bg-accent border-accent text-white" 
+                                : "border-white/30 bg-black/30 text-transparent"
+                            )}>
+                              {isSelected && <Check size={11} strokeWidth={3} />}
+                            </div>
+                          )}
+
+                          {isTextItem ? (
+                            /* Clean Text Layout matching user mockup perfectly */
+                            <div className="flex-1 min-w-0 pr-1">
+                              <p className="text-[13px] text-white/90 font-normal leading-relaxed line-clamp-2 select-text selection:bg-accent/30">
+                                {String(item.text || item.title || "")}
+                              </p>
+                            </div>
+                          ) : (
+                            /* Media (Image / Video) Layout */
+                            <>
+                              {/* Thumbnail */}
+                              {isVideoError ? (
+                                /* Req 3.4: error frame for a failed video slot, keeps the video badge */
+                                <div className="relative size-[40px] rounded-[6px] overflow-hidden bg-black/25 shrink-0 border border-white/[0.06] flex items-center justify-center text-red-400/80">
+                                  <AlertTriangle size={16} />
+                                  <div className="absolute bottom-0.5 right-0.5 p-0.5 rounded bg-black/60 text-white/90">
+                                    <Video size={8} />
+                                  </div>
+                                </div>
+                              ) : isItemVideo && url ? (
+                                /* Req 5.1: playable video thumbnail; Req 5.6: keep the video badge */
+                                <div className="relative size-[40px] rounded-[6px] overflow-hidden bg-black/25 shrink-0 border border-white/[0.06]">
+                                  <VideoListThumb src={url} poster={videoPoster} fit={imageFit} />
+                                  <div className="absolute bottom-0.5 right-0.5 p-0.5 rounded bg-black/60 text-white/90">
+                                    <Video size={8} />
+                                  </div>
+                                </div>
+                              ) : isMedia && url ? (
+                                <div className="relative size-[40px] rounded-[6px] overflow-hidden bg-black/25 shrink-0 border border-white/[0.06]">
+                                  <img
+                                    src={url}
+                                    alt={String(item.title)}
+                                    draggable={false}
+                                    className={cn(
+                                      "size-full transition-all duration-200",
+                                      imageFit === "contain" ? "object-contain bg-black/40" : "object-cover"
+                                    )}
+                                  />
+                                </div>
+                              ) : (
+                                <div className="size-[40px] rounded-[6px] bg-white/[0.04] flex items-center justify-center shrink-0 border border-white/[0.06]">
+                                  <Type size={14} className="text-white/40" />
+                                </div>
+                              )}
+
+                              {/* Title & Resolution Subtext */}
+                              <div className="flex-1 min-w-0 flex flex-col justify-center">
+                                <span className="text-sm font-semibold text-white/90 truncate leading-none mb-1">
+                                  {String(item.title || "")}
+                                </span>
+                                <span className="text-3xs text-white/45 font-medium leading-none">
+                                  {res}
+                                </span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+              )}
+
+              {/* Inline Text Input Editor Card */}
+              {isAddingText && (
+                <div className="bg-[#222] border border-white/[0.08] rounded-xl p-3.5 flex flex-col gap-3 w-full mb-3 shadow-md">
+                  <textarea
+                    className="w-full bg-transparent border-0 outline-none resize-none text-[13px] text-white/95 placeholder-white/30 h-[60px] nodrag nowheel"
+                    placeholder="Type text and press Enter..."
+                    autoFocus
+                    value={addingTextValue}
+                    onChange={(e) => setAddingTextValue(e.target.value)}
+                    onKeyDown={handleTextareaKeyDown}
+                  />
+                  <div className="flex items-center justify-between">
+                    <div className="size-[26px] rounded-full bg-white/[0.04] border border-white/[0.06] flex items-center justify-center text-[11px] font-bold text-white/50 cursor-pointer select-none hover:bg-white/[0.08] hover:text-white transition-colors">
+                      Aa
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        className="flex items-center justify-center size-[26px] rounded-full bg-white/[0.06] border border-white/[0.08] text-white/50 hover:text-white transition-all cursor-pointer"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="15 3 21 3 21 9" />
+                          <polyline points="9 21 3 21 3 15" />
+                          <line x1="21" y1="3" x2="14" y2="10" />
+                          <line x1="3" y1="21" x2="10" y2="14" />
+                        </svg>
+                      </button>
+                      <div className="flex items-center rounded-full bg-white/[0.04] border border-white/[0.06] p-0.5">
+                        <button
+                          type="button"
+                          onClick={cancelAddText}
+                          className="p-1.5 rounded-full text-white/40 hover:text-red-400 hover:bg-white/[0.06] transition-colors cursor-pointer"
+                        >
+                          <X size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={confirmAddText}
+                          className="p-1.5 rounded-full text-white/40 hover:text-green-400 hover:bg-white/[0.06] transition-colors cursor-pointer"
+                        >
+                          <Check size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
           </div>
