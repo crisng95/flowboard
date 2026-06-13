@@ -433,14 +433,10 @@ function SpacesPage({
             <Home size={16} />
           </button>
         </div>
-      </aside>
-
-      <header className="magnific-spaces__header">
-        <div />
-        <div className="magnific-header-actions">
+        <div className="magnific-rail__bottom">
           <AccountMenu session={session} />
         </div>
-      </header>
+      </aside>
 
       <main className="magnific-spaces__content">
         <div className="magnific-spaces__hero">

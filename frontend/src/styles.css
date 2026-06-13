@@ -6089,8 +6089,15 @@ button:disabled {
 
 .magnific-spaces__content {
   margin-left: 64px;
-  padding: 104px 32px 32px;
+  padding: 48px 32px 32px;
   min-height: 100vh;
+}
+
+.magnific-rail__bottom .flowboard-account-popover {
+  bottom: 0;
+  left: 56px;
+  top: auto;
+  right: auto;
 }
 
 .magnific-spaces__hero h1 {
