@@ -78,8 +78,8 @@ export function PickerDropdown({
     <div
       ref={portalRef}
       className={cn(
-        "fixed rounded-[20px] border shadow-[0_18px_48px_rgba(0,0,0,0.42)] z-[9999] nowheel overflow-hidden",
-        "bg-[#1f232b] border-white/[0.06]",
+        "fixed rounded-xl border shadow-2xl z-[9999] nowheel overflow-hidden",
+        "bg-[#16161a] border-white/[0.08]",
         className,
       )}
       style={{
@@ -92,13 +92,13 @@ export function PickerDropdown({
       onMouseDown={(event) => event.stopPropagation()}
     >
       <div
-        className="overflow-y-auto magnific-dropdown-scroll p-[6px]"
+        className="overflow-y-auto magnific-dropdown-scroll p-1.5"
         style={{ maxHeight: position.maxHeight }}
       >
         {items.map((item) => {
           const active = multiSelect
-            ? (activeKeys ?? []).includes(item.key)
-            : item.key === activeKey;
+             ? (activeKeys ?? []).includes(item.key)
+             : item.key === activeKey;
           const disabled = !!item.disabled;
 
           return renderItem ? (
@@ -110,31 +110,31 @@ export function PickerDropdown({
               disabled={disabled}
               onClick={() => onPick(item.key)}
               className={cn(
-                "w-full rounded-[12px] px-2.5 py-[7px] text-left transition-colors flex items-center gap-2",
+                "w-full rounded-lg px-2.5 py-2 text-left transition-colors flex items-center gap-2.5 text-xs font-semibold outline-none",
                 disabled
-                  ? "cursor-not-allowed text-white/25"
+                  ? "cursor-not-allowed opacity-50 text-white/40"
                   : active
-                  ? "bg-white/[0.10] text-white"
-                  : "text-white/74 hover:bg-white/[0.055] hover:text-white",
+                  ? "bg-white/[0.08] text-white"
+                  : "text-white/80 hover:bg-white/[0.08] hover:text-white",
               )}
             >
               {multiSelect && (
                 <div
                   className={cn(
-                    "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border",
-                    active ? "border-white/80 bg-white/10 text-white" : "border-white/24 bg-transparent",
+                    "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-md border transition-colors",
+                    active ? "border-accent/80 bg-accent/15 text-accent" : "border-white/24 bg-transparent",
                   )}
                 >
-                  {active && <Check size={9} strokeWidth={3} />}
+                  {active && <Check size={10} strokeWidth={3} />}
                 </div>
               )}
               <div className="min-w-0 flex-1">
-                <div className="truncate text-[12px] font-medium leading-4">{item.label}</div>
+                <div className="truncate text-xs font-semibold leading-4">{item.label}</div>
                 {item.hint && (
-                  <div className="mt-0.5 text-[9px] leading-3 text-white/42">{item.hint}</div>
+                  <div className="mt-0.5 text-[10px] leading-3 text-white/40">{item.hint}</div>
                 )}
               </div>
-              {!multiSelect && active && <Check size={11} strokeWidth={2.5} className="shrink-0 text-[#8d89ff]" />}
+              {!multiSelect && active && <Check size={14} strokeWidth={2.5} className="shrink-0 text-accent" />}
               {item.badge && (
                 <span className="shrink-0 rounded-md bg-white/[0.07] px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] text-white/52">
                   {item.badge}

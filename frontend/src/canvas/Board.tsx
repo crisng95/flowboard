@@ -37,6 +37,7 @@ import { ListNode } from "./v2/ListNode";
 import { AssistantNode } from "./v2/AssistantNode";
 import { SelectionContextMenu } from "./SelectionContextMenu";
 import { DashedConnectionLine } from "./DashedConnectionLine";
+import { ImageUp, Layers, Video, List, Bot } from "lucide-react";
 
 // V2 components are opt-in via `localStorage.flowboard_ui = "v2"`. For
 // the Concepta fork, V2 introduces the new `reference` and `concept`
@@ -150,18 +151,26 @@ function DropAddPopover({
       aria-label="Add connected node"
     >
       <button type="button" className="drop-popover__btn" onClick={() => handle("reference")}>
-        <span className="drop-popover__icon">▣</span> Image Generator
+        <ImageUp size={16} strokeWidth={1.5} className="drop-popover__icon" />
+        <span className="min-w-0 flex-1 text-left">Image Generator</span>
       </button>
       {!isText && (
         <button type="button" className="drop-popover__btn" onClick={() => handle("variant")}>
-          <span className="drop-popover__icon">◇</span> Variant
+          <Layers size={16} strokeWidth={1.5} className="drop-popover__icon" />
+          <span className="min-w-0 flex-1 text-left">Variant</span>
         </button>
       )}
       <button type="button" className="drop-popover__btn" onClick={() => handle("video")}>
-        <span className="drop-popover__icon">▶</span> Video Generator
+        <Video size={16} strokeWidth={1.5} className="drop-popover__icon" />
+        <span className="min-w-0 flex-1 text-left">Video Generator</span>
       </button>
       <button type="button" className="drop-popover__btn" onClick={() => handle("list")}>
-        <span className="drop-popover__icon">☰</span> List
+        <List size={16} strokeWidth={1.5} className="drop-popover__icon" />
+        <span className="min-w-0 flex-1 text-left">List</span>
+      </button>
+      <button type="button" className="drop-popover__btn" onClick={() => handle("assistant")}>
+        <Bot size={16} strokeWidth={1.5} className="drop-popover__icon" />
+        <span className="min-w-0 flex-1 text-left">Assistant</span>
       </button>
     </div>
   );

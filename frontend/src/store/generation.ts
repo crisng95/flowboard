@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Edge } from "@xyflow/react";
+import { toast } from "sonner";
 import {
   ensureBoardProject,
   createRequest,
@@ -2133,6 +2134,8 @@ async function dispatchEditDerived(
       const result = (req.result ?? {}) as Record<string, unknown>;
       const mapped = mapResult(result);
       const renderedAt = new Date().toISOString();
+      const label = requestType === "gen_part" ? "Part" : "Variant";
+      toast.success(`${label} generated successfully!`);
       useBoardStore.getState().updateNodeData(rfId, {
         status: "done",
         mediaId: mapped.mediaId,
@@ -2535,6 +2538,8 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                 stampedVideoQuality = `abra_r2v_${duration}s`;
               }
             }
+            const kindLabel = kind === "video" ? "Video" : "Image";
+            toast.success(`${kindLabel} generated successfully!`);
             const renderedAt = new Date().toISOString();
             useBoardStore.getState().updateNodeData(rfId, {
               status: "done",
@@ -2845,6 +2850,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       {
         onDone: (req) => {
           const text = typeof req.result["text"] === "string" ? req.result["text"] : "";
+          toast.success("Assistant request completed successfully!");
           
           const board = useBoardStore.getState();
           const node = board.nodes.find((n) => n.id === rfId);
@@ -2972,6 +2978,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         {
           onDone: (orderedResults) => {
             const texts = orderedResults.map((req) => typeof req.result["text"] === "string" ? req.result["text"] : "");
+            toast.success("Assistant batch requests completed successfully!");
             
             const board = useBoardStore.getState();
             const node = board.nodes.find((n) => n.id === rfId);
@@ -3109,6 +3116,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       firstDelayMs: 800,
       onDone: (req) => {
         const mediaIds = (req.result["media_ids"] as string[] | undefined) ?? [];
+        toast.success("Image refined successfully!");
         const mediaId = mediaIds[0];
         // edit_image still routes through the user's image model setting.
         const stampedImageModel = req.params["image_model"] as string | undefined;

@@ -9,6 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuGroup,
+  DropdownMenuLabel,
 } from "./ui/dropdown-menu";
 import { ReactFlowProvider, useReactFlow, useViewport } from "@xyflow/react";
 import {
@@ -28,6 +29,10 @@ import {
   Upload,
   X,
   Loader2,
+  ImageIcon,
+  PlugZap,
+  LogOut,
+  LogIn,
 } from "lucide-react";
 
 import { getAuthMe, mediaUrl, type AuthMe, createBoard, createNode, createEdge, patchNode } from "./api/client";
@@ -35,7 +40,7 @@ import * as localDb from "./api/localStorageDb";
 import { Board } from "./canvas/Board";
 import { AddNodePalette } from "./canvas/AddNodePalette";
 import { AppLogo } from "./components/AppLogo";
-import { Toaster } from "./components/Toaster";
+import { Toaster } from "./ui/toaster";
 import { ResultViewerV2 } from "./components/ResultViewerV2";
 import { AuthGateModal } from "./components/AuthGateModal";
 import { ExtensionGateModal } from "./components/ExtensionGateModal";
@@ -293,9 +298,14 @@ function AccountMenu({ session }: { session: any }) {
           </button>
         </DropdownMenuTrigger>
 
-        <DropdownMenuContent className="w-64 bg-[#16161a] border border-white/[0.08] rounded-xl p-1.5 shadow-2xl">
+        <DropdownMenuContent
+          className="w-64 bg-[#16161a] border border-white/[0.08] rounded-xl p-1.5 shadow-2xl"
+          align="end"
+          sideOffset={8}
+        >
+          {/* ── Identity header ── */}
           <div className="px-2.5 py-3 flex items-center gap-3">
-            <Avatar className="size-10 border-0 bg-transparent flex items-center justify-center">
+            <Avatar className="size-10 border-0 bg-transparent flex items-center justify-center shrink-0">
               {avatar ? (
                 <AvatarImage src={avatar} alt={displayName} className="size-full rounded-xl object-cover" />
               ) : (
@@ -304,11 +314,22 @@ function AccountMenu({ session }: { session: any }) {
                 </div>
               )}
             </Avatar>
-            <div className="flex flex-col min-w-0">
-              <span className="text-sm font-bold text-white truncate" title={displayName}>
-                {displayName}
-              </span>
-              <span className="text-xs text-white/50 truncate" title={email}>
+            <div className="flex flex-col min-w-0 gap-0.5">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="text-sm font-bold text-white truncate" title={displayName}>
+                  {displayName}
+                </span>
+                <span
+                  className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full tracking-wide ${
+                    isLoggedIn
+                      ? "bg-accent/15 text-accent"
+                      : "bg-white/[0.08] text-white/40"
+                  }`}
+                >
+                  {isLoggedIn ? "PRO" : "GUEST"}
+                </span>
+              </div>
+              <span className="text-xs text-white/40 truncate" title={email}>
                 {email}
               </span>
             </div>
@@ -316,33 +337,48 @@ function AccountMenu({ session }: { session: any }) {
 
           <DropdownMenuSeparator />
 
+          {/* ── Account section ── */}
           <DropdownMenuGroup>
+            <DropdownMenuLabel>Tài khoản</DropdownMenuLabel>
             <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
-              Change avatar
+              <ImageIcon className="mr-2 h-3.5 w-3.5 text-white/50" />
+              Đổi ảnh đại diện
             </DropdownMenuItem>
-            {isLoggedIn && (
-              <DropdownMenuItem onClick={() => setShowExtensionModal(true)}>
-                Connect extension
-              </DropdownMenuItem>
-            )}
           </DropdownMenuGroup>
+
+          {/* ── Advanced section (logged-in only) ── */}
+          {isLoggedIn && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Nâng cao</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => setShowExtensionModal(true)}>
+                  <PlugZap className="mr-2 h-3.5 w-3.5 text-white/50" />
+                  Kết nối extension
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </>
+          )}
 
           <DropdownMenuSeparator />
 
+          {/* ── Auth action ── */}
           {isLoggedIn ? (
             <DropdownMenuItem
               variant="destructive"
               disabled={signingOut}
               onClick={() => void handleSignOut()}
             >
-              {signingOut ? "Logging out..." : "Log out"}
+              <LogOut className="mr-2 h-3.5 w-3.5" />
+              {signingOut ? "Đang đăng xuất..." : "Đăng xuất"}
             </DropdownMenuItem>
           ) : (
             <DropdownMenuItem
               className="text-[#ff9e3d] focus:bg-[#ff9e3d]/10 focus:text-[#ff9e3d]"
               onClick={() => setShowAuthModal(true, "sign_in")}
             >
-              Sign in to sync
+              <LogIn className="mr-2 h-3.5 w-3.5" />
+              Đăng nhập để đồng bộ
             </DropdownMenuItem>
           )}
         </DropdownMenuContent>

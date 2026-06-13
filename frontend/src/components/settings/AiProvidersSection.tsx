@@ -10,6 +10,7 @@ import {
 } from "../../api/client";
 import { ProviderCard } from "./ProviderCard";
 import { ProviderSetupModal } from "./ProviderSetupModal";
+import { toast } from "sonner";
 
 /**
  * Single-provider model — one AI provider serves all 3 features
@@ -112,7 +113,6 @@ export function AiProvidersSection() {
   const [test, setTest] = useState<ConnectionTestResult>(INITIAL_TEST);
   const [applying, setApplying] = useState(false);
   const [helpFor, setHelpFor] = useState<LLMProviderName | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
 
   const aliveRef = useRef(true);
   useEffect(() => {
@@ -169,11 +169,6 @@ export function AiProvidersSection() {
     }
   }, [current, pending, config]);
 
-  function showToast(msg: string) {
-    setToast(msg);
-    setTimeout(() => setToast(null), 4000);
-  }
-
   function handleSelect(name: LLMProviderName) {
     if (name === pending) return;
     setPending(name);
@@ -203,7 +198,7 @@ export function AiProvidersSection() {
         vision: pending,
         planner: pending,
       });
-      showToast(`AI provider switched to ${labelOf(pending)}.`);
+      toast.success(`AI provider switched to ${labelOf(pending)}.`);
       await refresh();
       // Broadcast so the badge + ForcedSetupGate refresh immediately
       // instead of waiting up to 30s for their own poll. Plain window
@@ -213,7 +208,7 @@ export function AiProvidersSection() {
       // Tests stay valid after Apply — provider hasn't changed, we
       // just persisted the selection.
     } catch (err) {
-      showToast(
+      toast.error(
         `Couldn't apply: ${err instanceof Error ? err.message : String(err)}`,
       );
     } finally {
@@ -374,12 +369,6 @@ export function AiProvidersSection() {
               <CliReference provider={pending} />
             </>
           )}
-        </div>
-      )}
-
-      {toast && (
-        <div className="ai-providers-section__toast" role="alert">
-          {toast}
         </div>
       )}
 

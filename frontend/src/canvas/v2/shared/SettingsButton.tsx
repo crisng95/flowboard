@@ -1,10 +1,10 @@
 /**
  * SettingsButton - gear icon that opens the per-node settings drawer.
  *
- * Lives in the reveal bar of every node, mirroring Magnific''s gear
- * affordance. Clicking toggles the drawer for the node it''s rendered
+ * Lives in the reveal bar of every node, mirroring Magnific's gear
+ * affordance. Clicking toggles the drawer for the node it's rendered
  * inside; the drawer itself (`SettingsDrawer`) is portaled into the
- * card''s right edge by the consumer.
+ * card's right edge by the consumer.
  *
  * Visually mirrors `IconChip` so the reveal bar stays consistent.
  */
@@ -13,6 +13,7 @@ import type { MouseEvent } from "react";
 
 import { cn } from "../../../lib/utils";
 import { useNodeSettingsStore } from "../../../store/nodeSettings";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../../ui/tooltip";
 
 export interface SettingsButtonProps {
   nodeId: string;
@@ -39,26 +40,34 @@ export function SettingsButton({
   }
 
   return (
-    <button
-      type="button"
-      onMouseDown={stopInteraction}
-      onDoubleClick={stopInteraction}
-      onClick={handleClick}
-      title={label}
-      aria-label={label}
-      aria-expanded={isOpen}
-      className={cn(
-        "shrink-0 size-7 inline-flex items-center justify-center rounded-full",
-        "nodrag nowheel",
-        "text-2xs transition-all duration-150",
-        "border",
-        isOpen
-          ? "bg-accent/10 border-accent/40 text-white"
-          : "bg-white/[0.03] border-white/[0.08] text-ink-muted hover:bg-white/[0.07] hover:text-ink-primary",
-        className,
-      )}
-    >
-      <SettingsIcon size={12} strokeWidth={1.75} />
-    </button>
+    <TooltipProvider delayDuration={600}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onMouseDown={stopInteraction}
+            onDoubleClick={stopInteraction}
+            onClick={handleClick}
+            aria-label={label}
+            aria-expanded={isOpen}
+            className={cn(
+              "shrink-0 size-7 inline-flex items-center justify-center rounded-full",
+              "nodrag nowheel",
+              "text-2xs transition-all duration-150",
+              "border",
+              isOpen
+                ? "bg-accent/10 border-accent/40 text-white"
+                : "bg-white/[0.03] border-white/[0.08] text-ink-muted hover:bg-white/[0.07] hover:text-ink-primary",
+              className,
+            )}
+          >
+            <SettingsIcon size={12} strokeWidth={1.75} />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top">
+          <p>{label}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }

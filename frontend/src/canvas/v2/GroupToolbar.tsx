@@ -6,6 +6,14 @@
  * color palette.
  *
  * Buttons (left to right):
+/**
+ * GroupToolbar - floating action bar that hovers above a selected
+ * group node. Uses React Flow's <NodeToolbar> so positioning tracks
+ * the node automatically (incl. zoom + pan). Mirrors the toolbar in
+ * the Magnific reference: small pill of icon buttons + a 6-swatch
+ * color palette.
+ *
+ * Buttons (left to right):
  *   - Color swatches (palette of 6)
  *   - Lock toggle
  *   - Duplicate group
@@ -17,6 +25,7 @@ import { NodeToolbar, Position } from "@xyflow/react";
 import { Copy, Lock, Trash2, Ungroup, Unlock } from "lucide-react";
 
 import { useBoardStore } from "../../store/board";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../ui/tooltip";
 
 // 9-swatch premium synchronized palette matching NoteNode & the reference image
 const PALETTE: string[] = [
@@ -73,32 +82,39 @@ export function GroupToolbar({
         onDoubleClick={(e) => e.stopPropagation()}
       >
         <div className="relative flex items-center shrink-0">
-          <button
-            type="button"
-            onMouseDown={(e) => e.stopPropagation()}
-            onDoubleClick={(e) => e.stopPropagation()}
-            onClick={() => setPaletteOpen((v) => !v)}
-            className="nodrag nowheel h-7 px-2 flex items-center justify-center gap-1.5 rounded-full transition-colors hover:bg-white/[0.08]"
-            style={{
-              backgroundColor: paletteOpen ? "rgba(255,255,255,0.08)" : "transparent",
-              cursor: "pointer",
-            }}
-            title="Color"
-          >
-            {color === "transparent" ? (
-              <div className="relative w-3.5 h-3.5 rounded-full border border-white/40 flex items-center justify-center bg-white overflow-hidden shrink-0">
-                <div className="w-[18px] h-[1.5px] bg-red-500 rotate-[45deg]" />
-              </div>
-            ) : (
-              <div
-                className="w-3.5 h-3.5 rounded-full border border-white/20 shrink-0"
-                style={{ backgroundColor: color }}
-              />
-            )}
-            <span className="text-[7px] text-white/50 select-none">
-              {paletteOpen ? "▲" : "▼"}
-            </span>
-          </button>
+          <TooltipProvider delayDuration={600}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  onClick={() => setPaletteOpen((v) => !v)}
+                  className="nodrag nowheel h-7 px-2 flex items-center justify-center gap-1.5 rounded-full transition-colors hover:bg-white/[0.08]"
+                  style={{
+                    backgroundColor: paletteOpen ? "rgba(255,255,255,0.08)" : "transparent",
+                    cursor: "pointer",
+                  }}
+                  aria-label="Color"
+                >
+                  {color === "transparent" ? (
+                    <div className="relative w-3.5 h-3.5 rounded-full border border-white/40 flex items-center justify-center bg-white overflow-hidden shrink-0">
+                      <div className="w-[18px] h-[1.5px] bg-red-500 rotate-[45deg]" />
+                    </div>
+                  ) : (
+                    <div
+                      className="w-3.5 h-3.5 rounded-full border border-white/20 shrink-0"
+                      style={{ backgroundColor: color }}
+                    />
+                  )}
+                  <span className="text-[7px] text-white/50 select-none">
+                    {paletteOpen ? "▲" : "▼"}
+                  </span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top"><p>Color</p></TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
 
           {paletteOpen && (
             <div
@@ -198,24 +214,30 @@ function ToolbarButton({
   disabled?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      onMouseDown={(e) => e.stopPropagation()}
-      onDoubleClick={(e) => e.stopPropagation()}
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-      disabled={disabled}
-      title={label}
-      aria-label={label}
-      className={`nodrag nowheel w-7 h-7 flex items-center justify-center rounded-full transition-colors ${
-        disabled ? "opacity-50 cursor-not-allowed" : ""
-      }`}
-      style={{
-        color: danger ? "#ef4444" : active ? "#f5f5f5" : "rgba(245,245,245,0.7)",
-        backgroundColor: active ? "rgba(255,255,255,0.08)" : "transparent",
-      }}
-    >
-      {children}
-    </button>
+    <TooltipProvider delayDuration={600}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onClick(); }}
+            disabled={disabled}
+            aria-label={label}
+            className={`nodrag nowheel w-7 h-7 flex items-center justify-center rounded-full transition-colors ${
+              disabled ? "opacity-50 cursor-not-allowed" : ""
+            }`}
+            style={{
+              color: danger ? "#ef4444" : active ? "#f5f5f5" : "rgba(245,245,245,0.7)",
+              backgroundColor: active ? "rgba(255,255,255,0.08)" : "transparent",
+            }}
+          >
+            {children}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top"><p>{label}</p></TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 

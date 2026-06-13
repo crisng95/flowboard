@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Copy, Download, Loader2, LogOut, Play, RefreshCw, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Copy, Download, LogOut, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { cloudApiBaseUrl, hasSupabaseConfig, supabase } from "./supabase";
 import { AuthFlowSurface } from "../components/AuthFlowSurface";
@@ -9,6 +9,7 @@ import {
   type AuthFlowMode,
 } from "./auth";
 import { EXTENSION_DOWNLOAD_URL, EXTENSION_INSTALL_NOTE } from "../constants/extension";
+import { toast } from "sonner";
 import "./cloud-portal.css";
 
 type PairingPayload = {
@@ -67,8 +68,6 @@ export function CloudPortal() {
   const [session, setSession] = useState<Session | null>(null);
   const [authMode, setAuthMode] = useState<AuthFlowMode>("sign_in");
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [pairing, setPairing] = useState<PairingPayload | null>(null);
   const [prompt, setPrompt] = useState("A luminous crystal flower inside a cinematic cosmic forest");
   const [lastRequestId, setLastRequestId] = useState<string | null>(null);
@@ -86,17 +85,19 @@ export function CloudPortal() {
     return () => data.subscription.unsubscribe();
   }, []);
 
-  async function runAction(action: () => Promise<void>) {
+  async function runAction(action: () => Promise<string | void>, loadingMessage = "Working...") {
     setBusy(true);
-    setError(null);
-    setMessage(null);
-    try {
-      await action();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+    toast.promise(action(), {
+      loading: loadingMessage,
+      success: (msg) => {
+        setBusy(false);
+        return msg || "Success!";
+      },
+      error: (err) => {
+        setBusy(false);
+        return err instanceof Error ? err.message : String(err);
+      }
+    });
   }
 
   if (!hasSupabaseConfig || !supabase) {
@@ -134,7 +135,8 @@ export function CloudPortal() {
                   await signOutWithCleanup();
                   setPairing(null);
                   setLastRequestId(null);
-                })}
+                  return "Signed out successfully.";
+                }, "Signing out...")}
               >
                 <LogOut size={16} /> Sign out
               </button>
@@ -145,7 +147,7 @@ export function CloudPortal() {
               onModeChange={setAuthMode}
               onAuthenticated={() => {
                 setAuthMode("sign_in");
-                setMessage("Account ready. Pair the extension to continue.");
+                toast.success("Account ready. Pair the extension to continue.");
               }}
             />
           )}
@@ -170,8 +172,8 @@ export function CloudPortal() {
                 secret,
               });
               setPairing({ controlPlaneBaseUrl: cloudApiBaseUrl, clientId: result.client_id, pairingSecret: secret, mode: "cloud-worker" });
-              setMessage("Pairing token created.");
-            })}><RefreshCw size={16} /> Generate pairing token</button>
+              return "Pairing token created.";
+            }, "Generating pairing token...")}><RefreshCw size={16} /> Generate pairing token</button>
           </div>
           <p className="muted cloud-panel__footnote">{EXTENSION_INSTALL_NOTE}</p>
           {pairing && (
@@ -189,15 +191,13 @@ export function CloudPortal() {
           <button disabled={!session || busy} onClick={() => runAction(async () => {
             const result = await postWorker<{ request_id: string }>("/api/beta/smoke-request", token, { prompt, provider: "flow", expected_output: "image" });
             setLastRequestId(result.request_id);
-            setMessage("Queued request created. Watch the extension status for running/completed.");
-          })}><Play size={16} /> Queue Flow request</button>
+            return "Queued request created. Watch the extension status for running/completed.";
+          }, "Queueing Flow request...")}><Play size={16} /> Queue Flow request</button>
           {lastRequestId && <div className="request-id"><CheckCircle2 size={16} /> request_id: <code>{lastRequestId}</code></div>}
         </div>
       </section>
 
-      {(message || error || busy) && (
-        <div className={`cloud-toast ${error ? "error" : ""}`}>{busy ? <Loader2 className="spin" size={16} /> : null}{error || message || "Working..."}</div>
-      )}
+      {/* Toast notifications are handled globally by Sonner Toaster */}
     </main>
   );
 }

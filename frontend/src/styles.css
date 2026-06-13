@@ -1276,12 +1276,12 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 0;
-  padding: 8px 0;
+  padding: 6px;
   border-radius: 12px;
   background: #1a1a1a;
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
-  min-width: 240px;
+  min-width: 200px;
   animation: drop-popover-in 120ms ease-out;
 }
 @keyframes drop-popover-in {
@@ -1293,22 +1293,22 @@ button:disabled {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 8px 12px;
-  font-size: 14px;
+  padding: 8px 10px;
+  font-size: 12px;
   line-height: 16px;
   border: 0;
-  border-radius: 0;
+  border-radius: 8px;
   background: transparent;
   color: rgba(255, 255, 255, 0.8);
   cursor: pointer;
   text-align: left;
-  font-weight: 500;
+  font-weight: 600;
   transition: color 150ms ease, background-color 150ms ease;
 }
 .drop-popover__btn:hover,
 .drop-popover__btn:focus-visible {
   outline: none;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.08);
   color: #fff;
 }
 .drop-popover__icon {
@@ -2644,61 +2644,6 @@ button:disabled {
   background: var(--panel);
   border-radius: 4px;
   color: #c5b3ff;
-}
-
-/* ── Toaster ─────────────────────────────────────────────────────────────────── */
-
-.toaster {
-  position: fixed;
-  top: 24px;
-  right: 24px;
-  z-index: 100;
-  max-width: 320px;
-  min-width: 280px;
-  background: var(--panel-higher);
-  border-radius: 8px;
-  border-left: 2px solid var(--error);
-}
-
-.toaster__body {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 10px 12px;
-}
-
-.toaster__icon {
-  font-size: 14px;
-  color: var(--error);
-  flex-shrink: 0;
-  font-weight: 700;
-  line-height: 1.6;
-}
-
-.toaster__msg {
-  font-size: 13px;
-  line-height: 1.5;
-  flex: 1;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  color: var(--text);
-}
-
-.toaster__close {
-  font-size: 14px;
-  color: var(--muted);
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  flex-shrink: 0;
-  line-height: 1.6;
-}
-
-.toaster__close:hover {
-  color: var(--text);
 }
 
 /* ── Chat Sidebar ─────────────────────────────────────────────────────────────── */

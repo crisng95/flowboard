@@ -15,6 +15,7 @@ import type { LucideIcon } from "lucide-react";
 import type { MouseEvent } from "react";
 
 import { cn } from "../../../lib/utils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../../ui/tooltip";
 
 export interface RunButtonProps {
   onClick: () => void;
@@ -45,33 +46,41 @@ export function RunButton({
   }
 
   return (
-    <button
-      type="button"
-      onMouseDown={stopInteraction}
-      onDoubleClick={stopInteraction}
-      onClick={handleClick}
-      disabled={disabled}
-      title={label}
-      aria-label={label}
-      className={cn(
-        "shrink-0 size-8 rounded-full inline-flex items-center justify-center",
-        "nodrag nowheel",
-        "transition-all duration-150",
-        "disabled:opacity-40 disabled:cursor-not-allowed",
-        "hover:scale-105 active:scale-95",
-        busy && "animate-pulse-soft",
-      )}
-      style={{
-        background:
-          "linear-gradient(135deg, #9d80ff 0%, #7c5cff 50%, #5e3ee5 100%)",
-        boxShadow: "0 4px 14px rgba(124,92,255,0.4)",
-      }}
-    >
-      {busy ? (
-        <BusyIcon size={14} className="animate-spin text-white" strokeWidth={2} />
-      ) : (
-        <Icon size={14} fill="white" stroke="white" strokeWidth={0} />
-      )}
-    </button>
+    <TooltipProvider delayDuration={600}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onMouseDown={stopInteraction}
+            onDoubleClick={stopInteraction}
+            onClick={handleClick}
+            disabled={disabled}
+            aria-label={label}
+            className={cn(
+              "shrink-0 size-8 rounded-full inline-flex items-center justify-center",
+              "nodrag nowheel",
+              "transition-all duration-150",
+              "disabled:opacity-40 disabled:cursor-not-allowed",
+              "hover:scale-105 active:scale-95",
+              busy && "animate-pulse-soft",
+            )}
+            style={{
+              background:
+                "linear-gradient(135deg, #9d80ff 0%, #7c5cff 50%, #5e3ee5 100%)",
+              boxShadow: "0 4px 14px rgba(124,92,255,0.4)",
+            }}
+          >
+            {busy ? (
+              <BusyIcon size={14} className="animate-spin text-white" strokeWidth={2} />
+            ) : (
+              <Icon size={14} fill="white" stroke="white" strokeWidth={0} />
+            )}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top">
+          <p>{label}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
