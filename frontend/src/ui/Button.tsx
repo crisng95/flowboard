@@ -18,7 +18,7 @@ import { forwardRef, type ButtonHTMLAttributes } from "react";
 import { cn } from "../lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md text-sm font-medium " +
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg text-sm font-medium " +
     "transition-all duration-200 ease-out select-none " +
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-canvas " +
     "disabled:pointer-events-none disabled:opacity-40 " +
@@ -47,13 +47,13 @@ const buttonVariants = cva(
       },
       size: {
         xs: "h-6 px-2 text-xs rounded",
-        sm: "h-7 px-2.5 text-xs",
-        default: "h-8 px-3 text-sm",
-        lg: "h-9 px-4 text-sm",
-        xl: "h-10 px-5 text-sm",
-        icon: "h-8 w-8",
-        "icon-sm": "h-6 w-6",
-        "icon-lg": "h-10 w-10",
+        sm: "h-7 px-2.5 text-xs rounded-lg",
+        default: "h-8 px-3 text-sm rounded-lg",
+        lg: "h-9 px-4 text-sm rounded-xl",
+        xl: "h-10 px-5 text-sm rounded-xl",
+        icon: "h-8 w-8 rounded-lg",
+        "icon-sm": "h-6 w-6 rounded-md",
+        "icon-lg": "h-10 w-10 rounded-xl",
       },
     },
     defaultVariants: {
