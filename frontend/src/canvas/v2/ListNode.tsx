@@ -112,6 +112,7 @@ export function ListNode(props: NodeProps<FlowNode>) {
 
   const [isAddingText, setIsAddingText] = useState(false);
   const [addingTextValue, setAddingTextValue] = useState("");
+  const [dragOver, setDragOver] = useState(false);
 
   const [simulatedProgress, setSimulatedProgress] = useState(2);
   useEffect(() => {
@@ -328,8 +329,7 @@ export function ListNode(props: NodeProps<FlowNode>) {
     }
   }, [lockedType]);
 
-  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
+  const processFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
     
     const projectId = await useGenerationStore.getState().ensureProjectId();
@@ -403,9 +403,35 @@ export function ListNode(props: NodeProps<FlowNode>) {
     } else {
       useBoardStore.getState().updateNodeData(rfId, { status: "done" });
     }
-    
-    e.target.value = "";
   }, [rfId, listItems]);
+
+  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    await processFiles(files);
+    e.target.value = "";
+  }, [processFiles]);
+
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!dragOver) setDragOver(true);
+  }, [dragOver]);
+
+  const onDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+  }, []);
+
+  const onDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    
+    const files = Array.from(e.dataTransfer.files ?? []);
+    const mediaFiles = files.filter(f => f.type.startsWith("image/") || f.type.startsWith("video/"));
+    await processFiles(mediaFiles);
+  }, [processFiles]);
 
   const toggleImageFit = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -577,18 +603,23 @@ export function ListNode(props: NodeProps<FlowNode>) {
       {/* Main Node Card */}
       <div
         data-selected={selected || undefined}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
         className={cn(
           "relative overflow-visible transition-all duration-300 ease-out flex flex-col",
           "border-[3px] shadow-[0_8px_32px_rgba(0,0,0,0.7)]",
           selected || isConnectingFrom
             ? "border-accent ring-2 ring-accent/50" 
+            : dragOver
+            ? "border-accent ring-2 ring-accent/30 scale-[1.01]"
             : "border-white/[0.14] hover:border-white/[0.22]",
         )}
         style={{ 
           borderRadius: BORDER_RADIUS, 
           backgroundColor: "#1a1a1a", 
           minHeight: dynamicMinHeight,
-          maxHeight: 520
+          maxHeight: listItems.length === 0 ? undefined : 520
         }}
       >
         {/* Floating Quick Action Overlay (Clean Floating Bar above Card, matching reference & synchronized with GroupToolbar) */}
