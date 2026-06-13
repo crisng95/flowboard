@@ -158,3 +158,14 @@ export function mapAuthError(error: unknown, mode: AuthFlowMode): string {
   }
   return "Unable to sign in right now.";
 }
+
+export async function signInWithGoogle(): Promise<void> {
+  const client = getSupabaseClient();
+  const { error } = await client.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: window.location.origin,
+    },
+  });
+  if (error) throw error;
+}

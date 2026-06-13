@@ -142,7 +142,6 @@ export function CloudPortal() {
           ) : (
             <AuthFlowSurface
               mode={authMode}
-              layout="panel"
               onModeChange={setAuthMode}
               onAuthenticated={() => {
                 setAuthMode("sign_in");

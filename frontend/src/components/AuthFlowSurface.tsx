@@ -2,10 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
   CheckCircle2,
-  KeyRound,
   Loader2,
   Mail,
-  RotateCcw,
+  KeyRound,
 } from "lucide-react";
 import { hasSupabaseConfig } from "../cloud/supabase";
 import {
@@ -17,49 +16,30 @@ import {
   signInWithPassword,
   signUpWithPassword,
   updatePasswordAfterRecovery,
+  signInWithGoogle,
 } from "../cloud/auth";
+import { Button } from "../ui/Button";
+import { Input } from "../ui/input";
+import { Label } from "../ui/label";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardAction,
+  CardContent,
+  CardFooter,
+} from "../ui/card";
 
 interface AuthFlowSurfaceProps {
   mode: AuthFlowMode;
-  layout?: "modal" | "panel";
   notice?: string | null;
   onModeChange(mode: AuthFlowMode): void;
   onAuthenticated(): void;
 }
 
-const MODE_COPY: Record<
-  AuthFlowMode,
-  { title: string; subtitle: string; submit?: string }
-> = {
-  sign_in: {
-    title: "Sign in to Flowboard Cloud",
-    subtitle: "Sync your spaces and continue cloud workflows across devices.",
-    submit: "Sign In",
-  },
-  sign_up: {
-    title: "Create your Flowboard account",
-    subtitle: "Create an account, confirm your email, then come back to sync and pair the extension.",
-    submit: "Create Account",
-  },
-  forgot_password: {
-    title: "Reset your password",
-    subtitle: "We will send a recovery link if the address is eligible for password reset.",
-    submit: "Send Reset Link",
-  },
-  reset_password: {
-    title: "Choose a new password",
-    subtitle: "Set a fresh password to recover access to your Flowboard account.",
-    submit: "Update Password",
-  },
-  email_confirmation_pending: {
-    title: "Confirm your email",
-    subtitle: "Check your inbox, confirm the account, then return here to sign in.",
-  },
-};
-
 export function AuthFlowSurface({
   mode,
-  layout = "modal",
   notice: externalNotice = null,
   onModeChange,
   onAuthenticated,
@@ -68,6 +48,7 @@ export function AuthFlowSurface({
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -80,15 +61,9 @@ export function AuthFlowSurface({
     }
   }, [mode]);
 
-  const copy = MODE_COPY[mode];
-  const isPanel = layout === "panel";
-  const actionDisabled = loading || !hasSupabaseConfig;
-  const iconClassName = isPanel
-    ? "flex h-9 w-9 items-center justify-center rounded-lg bg-accent/14 text-accent border border-accent/20"
-    : "flex h-10 w-10 items-center justify-center rounded-xl bg-accent/14 text-accent border border-accent/20";
+  const actionDisabled = loading || googleLoading || !hasSupabaseConfig;
   const visibleNotice = notice ?? externalNotice;
 
-  const primaryLabel = copy.submit ?? "";
   const canSubmit = useMemo(() => {
     if (!hasSupabaseConfig) return false;
     if (mode === "email_confirmation_pending") return false;
@@ -144,6 +119,21 @@ export function AuthFlowSurface({
     }
   }
 
+  async function handleGoogleLogin() {
+    if (!hasSupabaseConfig) {
+      setError(AUTH_CONFIG_ERROR);
+      return;
+    }
+    setGoogleLoading(true);
+    setError(null);
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      setError(mapAuthError(err, mode));
+      setGoogleLoading(false);
+    }
+  }
+
   async function handleResendConfirmation() {
     if (!email.trim() || !hasSupabaseConfig) return;
     setLoading(true);
@@ -159,211 +149,233 @@ export function AuthFlowSurface({
     }
   }
 
-  return (
-    <div className="relative">
-      <div className={`relative flex items-start gap-3 ${isPanel ? "mb-5" : "mb-6"}`}>
-        <div className={iconClassName}>
-          {mode === "forgot_password" || mode === "reset_password" ? (
-            <RotateCcw size={18} />
-          ) : (
-            <KeyRound size={isPanel ? 18 : 20} />
-          )}
-        </div>
-        <div>
-          <h2 className={`${isPanel ? "text-lg" : "text-xl"} font-bold text-white leading-none`}>
-            {copy.title}
-          </h2>
-          <p className={`${isPanel ? "text-sm" : "text-xs"} text-white/45 mt-1.5 max-w-xl`}>
-            {copy.subtitle}
-          </p>
-        </div>
-      </div>
+  const titleText =
+    mode === "sign_in"
+      ? "Login to your account"
+      : mode === "sign_up"
+      ? "Create your account"
+      : mode === "forgot_password"
+      ? "Reset your password"
+      : mode === "reset_password"
+      ? "Choose a new password"
+      : "Confirm your email";
 
-      <form onSubmit={handlePrimaryAction} className="relative space-y-4">
+  const descriptionText =
+    mode === "sign_in"
+      ? "Enter your email below to login to your account"
+      : mode === "sign_up"
+      ? "Enter your details below to create a new cloud workspace"
+      : mode === "forgot_password"
+      ? "Enter your email address and we will send a password reset link"
+      : mode === "reset_password"
+      ? "Set a fresh password to recover access to your account"
+      : "Check your inbox and click the confirmation link to proceed";
+
+  return (
+    <Card className="w-full bg-[#16161a] border border-white/[0.08] shadow-2xl p-6 md:p-8">
+      <CardHeader className="flex flex-row items-start justify-between gap-3 mb-6">
+        <div className="flex flex-col min-w-0">
+          <CardTitle className="text-xl font-bold text-white leading-none">
+            {titleText}
+          </CardTitle>
+          <CardDescription className="text-xs text-white/45 mt-1.5 max-w-[240px] md:max-w-xs leading-normal">
+            {descriptionText}
+          </CardDescription>
+        </div>
+        <CardAction className="flex-shrink-0">
+          {mode === "sign_in" ? (
+            <Button
+              variant="link"
+              onClick={() => onModeChange("sign_up")}
+              className="text-xs text-accent hover:underline font-semibold p-0 h-auto"
+            >
+              Sign Up
+            </Button>
+          ) : (mode === "sign_up" || mode === "forgot_password" || mode === "email_confirmation_pending") ? (
+            <Button
+              variant="link"
+              onClick={() => onModeChange("sign_in")}
+              className="text-xs text-accent hover:underline font-semibold p-0 h-auto"
+            >
+              Sign In
+            </Button>
+          ) : null}
+        </CardAction>
+      </CardHeader>
+
+      <CardContent className="space-y-4">
         {error && (
-          <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-400">
+          <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3.5 text-xs text-red-400">
             {error}
           </div>
         )}
 
         {visibleNotice && (
-          <div className="rounded-xl border border-green-500/20 bg-green-500/10 p-4 text-sm text-green-400 flex items-start gap-2.5">
-            <CheckCircle2 className="shrink-0 mt-0.5" size={18} />
+          <div className="rounded-xl border border-green-500/20 bg-green-500/10 p-3.5 text-xs text-green-400 flex items-start gap-2">
+            <CheckCircle2 className="shrink-0 mt-0.5" size={15} />
             <span>{visibleNotice}</span>
           </div>
         )}
 
-        <div>
-          <label className="block text-xs font-semibold text-white/60 uppercase tracking-wider mb-2">
-            Email Address
-          </label>
-          <div className="relative">
-            <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-white/30">
-              <Mail size={16} />
-            </div>
-            <input
-              type="email"
-              required={mode !== "reset_password"}
-              disabled={mode === "reset_password" || loading}
-              placeholder="you@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-xl border border-white/[0.08] bg-white/[0.02] py-3 pl-10 pr-4 text-sm text-white placeholder-white/20 outline-none focus:border-accent/50 focus:bg-white/[0.04] transition-all disabled:opacity-60"
-            />
-          </div>
-        </div>
-
-        {mode !== "forgot_password" && mode !== "email_confirmation_pending" && (
-          <div>
-            <label className="block text-xs font-semibold text-white/60 uppercase tracking-wider mb-2">
-              Password
-            </label>
-            <div className="relative">
-              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-white/30">
-                <KeyRound size={16} />
+        {mode !== "email_confirmation_pending" ? (
+          <form onSubmit={handlePrimaryAction} className="space-y-4">
+            <div>
+              <Label htmlFor="email" className="mb-2 block">Email</Label>
+              <div className="relative">
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-white/30">
+                  <Mail size={14} />
+                </div>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="m@example.com"
+                  required={mode !== "reset_password"}
+                  disabled={mode === "reset_password" || loading || googleLoading}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="pl-9 h-10 rounded-xl"
+                />
               </div>
-              <input
-                type="password"
-                required
-                autoComplete={mode === "sign_in" ? "current-password" : "new-password"}
-                placeholder="••••••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-xl border border-white/[0.08] bg-white/[0.02] py-3 pl-10 pr-4 text-sm text-white placeholder-white/20 outline-none focus:border-accent/50 focus:bg-white/[0.04] transition-all"
-              />
             </div>
-          </div>
-        )}
 
-        {mode === "reset_password" && (
-          <div>
-            <label className="block text-xs font-semibold text-white/60 uppercase tracking-wider mb-2">
-              Confirm Password
-            </label>
-            <div className="relative">
-              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-white/30">
-                <KeyRound size={16} />
+            {mode !== "forgot_password" && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <Label htmlFor="password">Password</Label>
+                  {mode === "sign_in" && (
+                    <Button
+                      type="button"
+                      variant="link"
+                      className="text-xs font-semibold text-accent hover:underline p-0 h-auto"
+                      onClick={() => onModeChange("forgot_password")}
+                    >
+                      Forgot password?
+                    </Button>
+                  )}
+                </div>
+                <div className="relative">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-white/30">
+                    <KeyRound size={14} />
+                  </div>
+                  <Input
+                    id="password"
+                    type="password"
+                    required
+                    disabled={loading || googleLoading}
+                    placeholder="••••••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pl-9 h-10 rounded-xl"
+                  />
+                </div>
               </div>
-              <input
-                type="password"
-                required
-                autoComplete="new-password"
-                placeholder="Repeat the new password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full rounded-xl border border-white/[0.08] bg-white/[0.02] py-3 pl-10 pr-4 text-sm text-white placeholder-white/20 outline-none focus:border-accent/50 focus:bg-white/[0.04] transition-all"
-              />
-            </div>
-            {confirmPassword && confirmPassword !== password ? (
-              <p className="mt-2 text-xs text-amber-300">Passwords do not match yet.</p>
-            ) : null}
-          </div>
-        )}
-
-        {mode === "sign_in" && (
-          <div className="flex justify-end">
-            <button
-              type="button"
-              className="text-xs font-semibold text-accent hover:underline"
-              onClick={() => onModeChange("forgot_password")}
-            >
-              Forgot password?
-            </button>
-          </div>
-        )}
-
-        {mode !== "email_confirmation_pending" && (
-          <button
-            type="submit"
-            disabled={actionDisabled || !canSubmit}
-            className="w-full rounded-xl bg-accent py-3.5 text-sm font-semibold text-white hover:bg-accent/90 focus:ring-2 focus:ring-accent/50 disabled:opacity-50 transition-all flex items-center justify-center gap-2 mt-2 shadow-lg shadow-accent/20"
-          >
-            {loading ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <>
-                <span>{primaryLabel}</span>
-                <ArrowRight size={16} />
-              </>
             )}
-          </button>
-        )}
-      </form>
 
-      {mode === "email_confirmation_pending" && (
-        <div className="mt-5 flex flex-col gap-3">
-          <button
-            type="button"
-            disabled={loading || !email.trim() || !hasSupabaseConfig}
-            onClick={() => void handleResendConfirmation()}
-            className="w-full rounded-xl bg-accent py-3 text-sm font-semibold text-white hover:bg-accent/90 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent/20"
-          >
-            {loading ? <Loader2 size={16} className="animate-spin" /> : <Mail size={16} />}
-            Resend confirmation email
-          </button>
-          <button
-            type="button"
-            className="w-full rounded-xl border border-white/[0.08] bg-white/[0.02] py-3 text-sm font-semibold text-white/80 hover:bg-white/[0.06] transition-all"
-            onClick={() => onModeChange("sign_in")}
-          >
-            Back to sign in
-          </button>
-        </div>
-      )}
+            {mode === "reset_password" && (
+              <div>
+                <Label htmlFor="confirmPassword" className="mb-2 block">Confirm Password</Label>
+                <div className="relative">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-white/30">
+                    <KeyRound size={14} />
+                  </div>
+                  <Input
+                    id="confirmPassword"
+                    type="password"
+                    required
+                    disabled={loading || googleLoading}
+                    placeholder="Repeat the new password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="pl-9 h-10 rounded-xl"
+                  />
+                </div>
+                {confirmPassword && confirmPassword !== password && (
+                  <p className="mt-1.5 text-xs text-amber-300">Passwords do not match yet.</p>
+                )}
+              </div>
+            )}
 
-      {!hasSupabaseConfig && (
-        <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-200">
-          Sign-in is disabled until <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> are set.
-        </div>
-      )}
-
-      <div className={`relative ${isPanel ? "mt-5 pt-5" : "mt-6 pt-6"} border-t border-white/[0.06] text-center`}>
-        {mode === "sign_in" ? (
-          <p className="text-xs text-white/40">
-            New to Flowboard Cloud?{" "}
-            <button
-              type="button"
-              className="font-semibold text-accent hover:underline focus:outline-none"
-              onClick={() => onModeChange("sign_up")}
+            <Button
+              type="submit"
+              disabled={actionDisabled || !canSubmit}
+              className="w-full h-10 rounded-xl font-semibold bg-accent hover:bg-accent/90 transition-all flex items-center justify-center gap-2 mt-4"
             >
-              Create Account
-            </button>
-          </p>
-        ) : mode === "sign_up" ? (
-          <p className="text-xs text-white/40">
-            Already have an account?{" "}
-            <button
+              {loading ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : (
+                <>
+                  <span>
+                    {mode === "sign_in"
+                      ? "Login"
+                      : mode === "sign_up"
+                      ? "Register"
+                      : mode === "forgot_password"
+                      ? "Send Reset Link"
+                      : "Update Password"}
+                  </span>
+                  <ArrowRight size={15} />
+                </>
+              )}
+            </Button>
+          </form>
+        ) : (
+          <div className="space-y-3">
+            <Button
               type="button"
-              className="font-semibold text-accent hover:underline focus:outline-none"
-              onClick={() => onModeChange("sign_in")}
+              disabled={loading || googleLoading || !email.trim() || !hasSupabaseConfig}
+              onClick={() => void handleResendConfirmation()}
+              className="w-full h-10 rounded-xl font-semibold bg-accent hover:bg-accent/90 transition-all flex items-center justify-center gap-2"
             >
-              Sign In
-            </button>
-          </p>
-        ) : mode === "forgot_password" ? (
-          <p className="text-xs text-white/40">
-            Remembered it?{" "}
-            <button
+              {loading ? <Loader2 size={15} className="animate-spin" /> : <Mail size={15} />}
+              Resend confirmation email
+            </Button>
+            <Button
               type="button"
-              className="font-semibold text-accent hover:underline focus:outline-none"
+              variant="outline"
+              className="w-full h-10 rounded-xl font-semibold border-white/[0.08] hover:bg-white/[0.04]"
               onClick={() => onModeChange("sign_in")}
             >
               Back to sign in
-            </button>
-          </p>
-        ) : mode === "reset_password" ? (
-          <p className="text-xs text-white/40">
-            Need a fresh recovery link?{" "}
-            <button
-              type="button"
-              className="font-semibold text-accent hover:underline focus:outline-none"
-              onClick={() => onModeChange("forgot_password")}
-            >
-              Send another reset email
-            </button>
-          </p>
-        ) : null}
-      </div>
-    </div>
+            </Button>
+          </div>
+        )}
+      </CardContent>
+
+      {mode === "sign_in" && (
+        <CardFooter className="flex flex-col gap-2 mt-6 pt-6 border-t border-white/[0.06]">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={actionDisabled}
+            onClick={() => void handleGoogleLogin()}
+            className="w-full h-10 rounded-xl font-semibold border-white/[0.08] hover:bg-white/[0.04] transition-all flex items-center justify-center gap-2"
+          >
+            {googleLoading ? (
+              <Loader2 size={15} className="animate-spin" />
+            ) : (
+              <svg className="h-4 w-4 mr-1" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                />
+                <path
+                  fill="currentColor"
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                />
+                <path
+                  fill="currentColor"
+                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                />
+                <path
+                  fill="currentColor"
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                />
+              </svg>
+            )}
+            Login with Google
+          </Button>
+        </CardFooter>
+      )}
+    </Card>
   );
 }

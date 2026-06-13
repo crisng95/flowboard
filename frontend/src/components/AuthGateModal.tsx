@@ -28,14 +28,11 @@ export function AuthGateModal({
         onClick={onClose}
       />
 
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-white/[0.08] bg-[#16161a] p-8 shadow-2xl transition-all duration-300 md:max-w-lg">
-        <div className="absolute -left-20 -top-20 h-40 w-40 rounded-full bg-accent/20 blur-3xl pointer-events-none" />
-        <div className="absolute -right-20 -bottom-20 h-40 w-40 rounded-full bg-accent/10 blur-3xl pointer-events-none" />
-
+      <div className="relative w-full max-w-sm md:max-w-md">
         <button
           type="button"
           onClick={onClose}
-          className="absolute right-6 top-6 z-10 flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.02] text-white/50 hover:bg-white/[0.08] hover:text-white transition-all"
+          className="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.02] text-white/50 hover:bg-white/[0.08] hover:text-white transition-all"
           aria-label="Close"
         >
           <X size={16} />
@@ -43,7 +40,6 @@ export function AuthGateModal({
 
         <AuthFlowSurface
           mode={mode}
-          layout="modal"
           notice={notice}
           onModeChange={onModeChange}
           onAuthenticated={onAuthenticated}
