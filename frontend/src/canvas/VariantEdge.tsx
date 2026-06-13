@@ -67,8 +67,8 @@ export function VariantEdge({
           path={edgePath}
           style={{
             ...style,
-            stroke: "rgba(233, 213, 255, 0.6)",
-            strokeWidth: 4.8,
+            stroke: "rgba(233, 213, 255, 0.15)",
+            strokeWidth: 4.7,
             strokeLinecap: "round" as const,
           }}
           className="animated-beam-droplet-outer"
