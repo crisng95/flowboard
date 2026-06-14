@@ -9,13 +9,24 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap" rel="stylesheet" />
     <script>
-      // Reload on asset loading failure (ChunkLoadError)
+      // Reload once on JS/CSS chunk load failure (ChunkLoadError guard).
+      // Uses sessionStorage to avoid infinite reload loops.
       window.addEventListener('error', function (e) {
-        const target = e.target;
-        if (target && (target.tagName === 'SCRIPT' || target.tagName === 'LINK')) {
-          console.warn('Asset failed to load, reloading to fetch latest version...', target.src || target.href);
-          window.location.reload();
+        var target = e.target;
+        if (!target || (target.tagName !== 'SCRIPT' && target.tagName !== 'LINK')) return;
+        var src = target.src || target.href || '';
+        // Only reload for app chunk assets, not external fonts/icons
+        if (!src.includes(location.hostname) && !src.startsWith('/')) return;
+        var KEY = 'chunkReloadAt';
+        var last = parseInt(sessionStorage.getItem(KEY) || '0', 10);
+        var now = Date.now();
+        if (now - last < 15000) {
+          console.warn('Chunk reload skipped (cooldown active). Asset:', src);
+          return;
         }
+        sessionStorage.setItem(KEY, String(now));
+        console.warn('Chunk failed, reloading once:', src);
+        window.location.reload();
       }, true);
     </script>
     <title>Bboard</title>
