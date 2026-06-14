@@ -8,6 +8,16 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap" rel="stylesheet" />
+    <script>
+      // Reload on asset loading failure (ChunkLoadError)
+      window.addEventListener('error', function (e) {
+        const target = e.target;
+        if (target && (target.tagName === 'SCRIPT' || target.tagName === 'LINK')) {
+          console.warn('Asset failed to load, reloading to fetch latest version...', target.src || target.href);
+          window.location.reload();
+        }
+      }, true);
+    </script>
     <title>Bboard</title>
   </head>
   <body>
