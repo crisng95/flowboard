@@ -15,7 +15,8 @@
 param(
     [switch]$Worker,
     [switch]$Frontend,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [string]$Branch = 'main'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -104,7 +105,7 @@ if ($Frontend) {
         }
 
         Write-Step 'Deploying frontend to Cloudflare Pages'
-        & npx wrangler pages deploy dist --project-name $env:CLOUDFLARE_PAGES_PROJECT_NAME
+        & npx wrangler pages deploy dist --project-name $env:CLOUDFLARE_PAGES_PROJECT_NAME --branch $Branch
         if ($LASTEXITCODE -ne 0) {
             throw "wrangler pages deploy failed (exit $LASTEXITCODE)"
         }
