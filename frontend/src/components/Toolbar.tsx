@@ -38,7 +38,7 @@ export function Toolbar() {
     <div className="toolbar">
       <div className="flex items-center gap-2 select-none">
         <AppLogo className="size-5 shrink-0" />
-        <span className="toolbar-wordmark">Flowboard</span>
+        <span className="toolbar-wordmark">Bboard</span>
       </div>
       <span className="toolbar-sep" aria-hidden="true">/</span>
       {editing ? (

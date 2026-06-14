@@ -72,7 +72,7 @@ export function ToolbarV2() {
             backgroundClip: "text",
           }}
         >
-          Concepta
+          Bboard
         </span>
       </div>
 
