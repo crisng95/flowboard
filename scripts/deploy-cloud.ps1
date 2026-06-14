@@ -16,7 +16,7 @@ param(
     [switch]$Worker,
     [switch]$Frontend,
     [switch]$SkipBuild,
-    [string]$Branch = 'main'
+    [string]$Branch = 'feat/concepta-v1'   # production branch serving app.flowboard.bond
 )
 
 $ErrorActionPreference = 'Stop'
