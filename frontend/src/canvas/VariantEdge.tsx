@@ -9,11 +9,12 @@ import {
 import type { FlowNode } from "../store/board";
 
 /**
- * Edge variant: draws the standard bezier line plus a small chip at the
- * midpoint when the edge has a variant pin.
+ * Edge variant: thin static wire + animated gradient spark.
  *
- * When the TARGET node is running/queued, the edge renders as an
- * animated dashed line to indicate data is flowing.
+ * The spark uses stroke-dasharray + a linear gradient stroke (source → target
+ * direction) so it picks up colour as it sweeps along the edge, creating a
+ * smooth comet/energy-flow look. Two sparks run with a half-period offset so
+ * there is always something moving on the wire.
  */
 export function VariantEdge({
   id,
@@ -46,50 +47,77 @@ export function VariantEdge({
 
   const pin = (data?.sourceVariantIdx ?? null) as number | null;
 
-
+  const gradientId = `ef-grad-${id}`;
+  const glowId     = `ef-glow-${id}`;
 
   return (
     <>
-      {/* Background static line */}
+      <defs>
+        {/*
+          Spark gradient aligned with the edge direction (source → target).
+          Transparent purple at both ends → bright near-white at 65%.
+          As the dash window moves along the path, it reveals a different
+          portion of this gradient, so the spark picks up the right hue
+          depending on where it is on the wire.
+        */}
+        <linearGradient
+          id={gradientId}
+          gradientUnits="userSpaceOnUse"
+          x1={sourceX}
+          y1={sourceY}
+          x2={targetX}
+          y2={targetY}
+        >
+          <stop offset="0%"   stopColor="rgba(124,92,255,0.0)"  />
+          <stop offset="35%"  stopColor="rgba(167,139,250,0.7)" />
+          <stop offset="65%"  stopColor="rgba(240,228,255,1.0)" />
+          <stop offset="100%" stopColor="rgba(124,92,255,0.1)"  />
+        </linearGradient>
+
+        {/* Soft glow behind the spark */}
+        <filter id={glowId} x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="2.5" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+
+      {/* ── Static wire via BaseEdge ─────────────────────────────────
+           BaseEdge renders both the visual stroke AND a transparent
+           interaction path (interactionWidth=24) so the edge remains
+           clickable / selectable / deletable via ReactFlow internals.
+      ────────────────────────────────────────────────────────────── */}
       <BaseEdge
-        id={id + "-bg"}
+        id={id}
         path={edgePath}
         style={{
+          stroke: isRunning ? "rgba(124,92,255,0.28)" : "rgba(233,213,255,0.17)",
+          strokeWidth: isRunning ? 2 : 4.5,
+          strokeLinecap: "round",
+          transition: "stroke 0.35s ease, stroke-width 0.35s ease",
           ...style,
-          stroke: "rgba(233, 213, 255, 0.15)",
-          strokeWidth: 4.5,
         }}
+        markerEnd={markerEnd}
+        interactionWidth={24}
       />
-      {/* Animated beam foreground - Outer droplet part (head and tail) */}
+
+      {/* ── Animated gradient spark — only when running ──────────────── */}
       {isRunning && (
-        <BaseEdge
-          id={id + "-droplet-outer"}
-          path={edgePath}
-          style={{
-            ...style,
-            stroke: "rgba(233, 213, 255, 0.15)",
-            strokeWidth: 4.7,
-            strokeLinecap: "round" as const,
-          }}
-          className="animated-beam-droplet-outer"
+        <path
+          d={edgePath}
+          stroke={`url(#${gradientId})`}
+          strokeWidth={3}
+          fill="none"
+          strokeLinecap="round"
+          strokeDasharray="70 280"
+          className="energy-flow-spark"
+          filter={`url(#${glowId})`}
         />
       )}
-      {/* Animated beam foreground - Inner droplet part (bright center body) */}
-      {isRunning && (
-        <BaseEdge
-          id={id}
-          path={edgePath}
-          style={{
-            ...style,
-            stroke: "#ffffff",
-            strokeWidth: 5.8,
-            strokeLinecap: "round" as const,
-            filter: "drop-shadow(0 0 5px rgba(192, 132, 252, 0.9))",
-          }}
-          markerEnd={markerEnd}
-          className="animated-beam-droplet-inner"
-        />
-      )}
+
+      {/* ── Variant pin chip ─────────────────────────────────────────── */}
       {pin !== null && pin >= 0 && (
         <EdgeLabelRenderer>
           <div

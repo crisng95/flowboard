@@ -313,35 +313,25 @@
   animation: dash-flow 0.6s linear infinite;
 }
 
-/* Animated Beam connection line animation (Fluid droplet pipe simulation) */
-@keyframes beam-loop-outer {
-  from {
-    stroke-dashoffset: 0;
-  }
-  to {
-    stroke-dashoffset: -800;
-  }
+/* ── Energy Flow edge animation ───────────────────────────────────────────
+   Two keyframes with different travel distances let us run two virtual
+   sparks on ONE <path> element via animation-delay, without extra DOM.
+
+   Pattern: dash=70px gap=280px → repeat every 350px.
+   On a 700px edge  ≈ 2 sparks visible simultaneously  → always moving.
+   On a 1400px edge ≈ 4 sparks  → feels like a continuous energy stream.
+
+   linear easing is intentional: ease-in-out caused a visible "pause" at
+   the loop boundary when the comet was in the gap zone.
+─────────────────────────────────────────────────────────────────────────── */
+@keyframes energy-flow {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: -350; }
 }
 
-@keyframes beam-loop-inner {
-  from {
-    stroke-dashoffset: -25;
-  }
-  to {
-    stroke-dashoffset: -825;
-  }
-}
-
-.animated-beam-droplet-outer {
-  stroke-dasharray: 100 700;
-  stroke-linecap: round;
-  animation: beam-loop-outer 1.4s linear infinite;
-}
-
-.animated-beam-droplet-inner {
-  stroke-dasharray: 50 750;
-  stroke-linecap: round;
-  animation: beam-loop-inner 1.4s linear infinite;
+.energy-flow-spark {
+  stroke-dasharray: 70 280;
+  animation: energy-flow 1.2s linear infinite;
 }
 
 /* Let React Flow manage edge/node layer ordering.
