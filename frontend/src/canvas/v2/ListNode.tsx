@@ -13,7 +13,8 @@ import {
   Plus,
   ChevronDown,
   AlertTriangle,
-  X
+  X,
+  Copy
 } from "lucide-react";
 
 import { type FlowNode } from "../../store/board";
@@ -271,30 +272,7 @@ export function ListNode(props: NodeProps<FlowNode>) {
     void useGenerationStore.getState().runNodeGraph(rfId);
   }, [rfId, isRunning]);
 
-  const handleClear = useCallback(() => {
-    useBoardStore.getState().updateNodeData(rfId, {
-      listItems: [],
-      listSelectedIndexes: [],
-      mediaIds: [],
-      mediaId: undefined,
-      flowMediaIds: [],
-      flowMediaId: undefined,
-      variantCount: 0,
-      status: "idle",
-      error: undefined,
-    });
-    persistNodeData(rfId, {
-      listItems: [],
-      listSelectedIndexes: [],
-      mediaIds: [],
-      mediaId: undefined,
-      flowMediaIds: [],
-      flowMediaId: undefined,
-      variantCount: 0,
-      status: "idle",
-      error: undefined,
-    });
-  }, [rfId]);
+
 
   const setViewMode = useCallback((mode: "grid" | "list", e: React.MouseEvent) => {
     e.stopPropagation();
@@ -681,8 +659,17 @@ export function ListNode(props: NodeProps<FlowNode>) {
             <span className="h-4 w-px bg-white/10 mx-0.5" />
             <button
               type="button"
-              onClick={handleClear}
-              title="Clear items"
+              onClick={() => useBoardStore.getState().cloneNodeWithUpstream(rfId)}
+              title="Duplicate Node"
+              className="nodrag nowheel w-7 h-7 flex items-center justify-center rounded-full transition-colors hover:bg-white/[0.08] cursor-pointer text-white/70 hover:text-white"
+            >
+              <Copy size={13} />
+            </button>
+            <span className="h-4 w-px bg-white/10 mx-0.5" />
+            <button
+              type="button"
+              onClick={() => useBoardStore.getState().deleteNodeByRfId(rfId)}
+              title="Delete Node"
               className="nodrag nowheel w-7 h-7 flex items-center justify-center rounded-full transition-colors hover:bg-white/[0.08] cursor-pointer text-[#ef4444]"
             >
               <Trash2 size={13} />

@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState, useEffect } from "react";
-import { Handle, Position, useConnection, useEdges, type NodeProps } from "@xyflow/react";
-import { ImageUp, Play, RefreshCw, Settings, Type, X } from "lucide-react";
+import { Handle, Position, useConnection, useEdges, NodeToolbar, type NodeProps } from "@xyflow/react";
+import { ImageUp, Play, RefreshCw, Settings, Type, X, Copy, Trash2 } from "lucide-react";
 
 import { type FlowNode } from "../../store/board";
 import { useBoardStore } from "../../store/board";
@@ -287,6 +287,49 @@ export function ImageGeneratorNode(props: NodeProps<FlowNode>) {
         )}
         style={{ borderRadius: BORDER_RADIUS, backgroundColor: "#1a1a1a" }}
       >
+        {/* Floating Quick Action Overlay */}
+        <NodeToolbar position={Position.Top} offset={12} isVisible={showControls}>
+          <div 
+            onMouseDown={stopNodeAction}
+            onClick={stopNodeAction}
+            onDoubleClick={stopNodeAction}
+            className="flex items-center gap-1 px-1.5 py-1 rounded-full"
+            style={{
+              backgroundColor: "rgba(20, 20, 20, 0.92)",
+              backdropFilter: "blur(12px)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              boxShadow: "0 8px 28px -10px rgba(0,0,0,0.6)",
+            }}
+          >
+            <button
+              type="button"
+              onClick={handleGenerateOrCancel}
+              title={isRunning ? "Cancel Generation" : "Run Generator"}
+              className="nodrag nowheel w-7 h-7 flex items-center justify-center rounded-full transition-colors hover:bg-white/[0.08] cursor-pointer text-white/70 hover:text-white"
+            >
+              {isRunning ? <RefreshCw size={13} className="animate-spin" /> : <Play size={13} fill="currentColor" />}
+            </button>
+            <span className="h-4 w-px bg-white/10 mx-0.5" />
+            <button
+              type="button"
+              onClick={() => useBoardStore.getState().cloneNodeWithUpstream(rfId)}
+              title="Duplicate Node"
+              className="nodrag nowheel w-7 h-7 flex items-center justify-center rounded-full transition-colors hover:bg-white/[0.08] cursor-pointer text-white/70 hover:text-white"
+            >
+              <Copy size={13} />
+            </button>
+            <span className="h-4 w-px bg-white/10 mx-0.5" />
+            <button
+              type="button"
+              onClick={() => useBoardStore.getState().deleteNodeByRfId(rfId)}
+              title="Delete Node"
+              className="nodrag nowheel w-7 h-7 flex items-center justify-center rounded-full transition-colors hover:bg-white/[0.08] cursor-pointer text-[#ef4444]"
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
+        </NodeToolbar>
+
         {/* Image area */}
         <div
           className="relative overflow-hidden"

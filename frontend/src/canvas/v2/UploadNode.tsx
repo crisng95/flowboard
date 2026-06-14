@@ -1,8 +1,8 @@
 import { useCallback, useRef, useState } from "react";
-import { type NodeProps } from "@xyflow/react";
-import { ImageUp, Replace, Upload } from "lucide-react";
+import { type NodeProps, NodeToolbar, Position } from "@xyflow/react";
+import { ImageUp, Replace, Upload, Copy, Trash2 } from "lucide-react";
 
-import { type FlowNode } from "../../store/board";
+import { type FlowNode, useBoardStore } from "../../store/board";
 import { useGenerationStore } from "../../store/generation";
 import { cn } from "../../lib/utils";
 import { useUploadFlow, mediaUrl } from "./shared/useUploadFlow";
@@ -113,6 +113,40 @@ export function UploadNode(props: NodeProps<FlowNode>) {
       onMouseLeave={onMouseLeave}
       className="relative"
     >
+      {/* Floating Quick Action Overlay */}
+      <NodeToolbar position={Position.Top} offset={12} isVisible={showControls}>
+        <div 
+          onMouseDown={stopNodeAction}
+          onClick={stopNodeAction}
+          onDoubleClick={stopNodeAction}
+          className="flex items-center gap-1 px-1.5 py-1 rounded-full"
+          style={{
+            backgroundColor: "rgba(20, 20, 20, 0.92)",
+            backdropFilter: "blur(12px)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            boxShadow: "0 8px 28px -10px rgba(0,0,0,0.6)",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => useBoardStore.getState().cloneNodeWithUpstream(rfId)}
+            title="Duplicate Node"
+            className="nodrag nowheel w-7 h-7 flex items-center justify-center rounded-full transition-colors hover:bg-white/[0.08] cursor-pointer text-white/70 hover:text-white"
+          >
+            <Copy size={13} />
+          </button>
+          <span className="h-4 w-px bg-white/10 mx-0.5" />
+          <button
+            type="button"
+            onClick={() => useBoardStore.getState().deleteNodeByRfId(rfId)}
+            title="Delete Node"
+            className="nodrag nowheel w-7 h-7 flex items-center justify-center rounded-full transition-colors hover:bg-white/[0.08] cursor-pointer text-[#ef4444]"
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
+      </NodeToolbar>
+
       <NodeShell
         id={rfId}
         Icon={ImageUp}
