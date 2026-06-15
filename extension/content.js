@@ -16,7 +16,7 @@ window.addEventListener('FLOWBOARD_GRECAPTCHA_EXECUTE_OBSERVED', (e) => {
   if (typeof siteKey !== 'string' || !siteKey) return;
   chrome.runtime.sendMessage({
     type: 'CAPTCHA_ACTION_OBSERVED',
-    scope: scope || 'default',
+    scope: action || 'default',
     action,
     siteKey,
     href: e.detail?.href || window.location.href,

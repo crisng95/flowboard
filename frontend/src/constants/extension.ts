@@ -1,4 +1,4 @@
-export const EXTENSION_VERSION = "0.0.6";
+export const EXTENSION_VERSION = "0.0.7";
 
 export const EXTENSION_DOWNLOAD_VERSIONED_URL =
   `/downloads/flowboard-extension-v${EXTENSION_VERSION}.zip`;

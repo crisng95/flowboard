@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Flowboard Bridge",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Flowboard extension worker for authenticated Google Flow sessions.",
   "permissions": ["storage", "alarms", "tabs", "webRequest", "scripting", "declarativeNetRequest"],
   "host_permissions": [
