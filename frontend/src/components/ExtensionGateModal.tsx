@@ -57,6 +57,9 @@ export function ExtensionGateModal({ isOpen, onClose }: ExtensionGateModalProps)
 
   const pairingJson = useMemo(() => (pairing ? JSON.stringify(pairing, null, 2) : ""), [pairing]);
 
+  // Generate pairing token AND automatically push it to the extension
+  // via app_bridge.js → chrome.runtime.sendMessage({ type: 'SET_CONFIG' })
+  // so users don't need to manually copy/paste the JSON.
   async function generatePairingToken() {
     if (!supabase) return;
     setLoading(true);
@@ -87,12 +90,18 @@ export function ExtensionGateModal({ isOpen, onClose }: ExtensionGateModalProps)
       }
 
       const result = (await res.json()) as { client_id: string };
-      setPairing({
+      const newPairing: PairingPayload = {
         controlPlaneBaseUrl: cloudApiBaseUrl,
         clientId: result.client_id,
         pairingSecret: secret,
         mode: "cloud-worker",
-      });
+      };
+      setPairing(newPairing);
+
+      // Auto-push config to extension via app_bridge.js → SET_CONFIG message.
+      // If the extension is installed, this switches it to cloud-worker mode
+      // immediately without the user having to manually paste the JSON token.
+      window.postMessage({ type: "SET_CONFIG", cloudConfig: newPairing }, "*");
     } catch (err: any) {
       setError(err?.message || "Failed to generate pairing token.");
     } finally {
