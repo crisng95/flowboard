@@ -9,7 +9,7 @@ import { cn } from "../../lib/utils";
 import { persistNodeData } from "./shared/persistNodeData";
 
 const MIN_WIDTH = 200;
-const MAX_WIDTH = 600;
+const MAX_WIDTH = 2000;
 const DEFAULT_WIDTH = 320;
 
 const MIN_HEIGHT = 100;
@@ -172,14 +172,20 @@ export function TextNode(props: NodeProps<FlowNode>) {
   const text = (data.prompt as string | undefined) ?? "";
   const shortId = data.shortId as string | undefined;
 
-  const width = (data.nodeWidth as number | undefined) ?? DEFAULT_WIDTH;
-  const height = (data.nodeHeight as number | undefined) ?? DEFAULT_HEIGHT;
+  const storeWidth = (data.nodeWidth as number | undefined) ?? DEFAULT_WIDTH;
+  const storeHeight = (data.nodeHeight as number | undefined) ?? DEFAULT_HEIGHT;
+
+  const [liveW, setLiveW] = useState<number | null>(null);
+  const [liveH, setLiveH] = useState<number | null>(null);
+  const width = liveW ?? storeWidth;
+  const height = liveH ?? storeHeight;
 
   const onResize = useCallback(
     (nextW: number, nextH: number) => {
-      useBoardStore.getState().updateNodeData(rfId, { nodeWidth: nextW, nodeHeight: nextH });
+      setLiveW(nextW);
+      setLiveH(nextH);
     },
-    [rfId],
+    [],
   );
 
   const onResizeEnd = useCallback(
@@ -187,6 +193,8 @@ export function TextNode(props: NodeProps<FlowNode>) {
       const clampedW = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.round(nextW)));
       const clampedH = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, Math.round(nextH)));
       persistNodeData(rfId, { nodeWidth: clampedW, nodeHeight: clampedH });
+      setLiveW(null);
+      setLiveH(null);
     },
     [rfId],
   );

@@ -816,6 +816,8 @@ interface BoardState {
   setNodes(nodes: FlowNode[]): void;
   setEdges(edges: Edge[]): void;
   clearError(): void;
+  helperLines: { horizontal?: number; vertical?: number; color?: string };
+  setHelperLines(lines: { horizontal?: number; vertical?: number; color?: string }): void;
 }
 
 export const useBoardStore = create<BoardState>((set, get) => ({
@@ -826,6 +828,10 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   boards: [],
   nodes: [],
   edges: [],
+  helperLines: {},
+  setHelperLines(lines) {
+    set({ helperLines: lines });
+  },
   loading: false,
   error: null,
   historyPast: [],

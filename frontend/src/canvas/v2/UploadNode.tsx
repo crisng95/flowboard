@@ -14,7 +14,7 @@ import { NodeShell } from "./NodeShell";
 import { EmptyState } from "./shared/EmptyState";
 
 const MIN_WIDTH = 200;
-const MAX_WIDTH = 500;
+const MAX_WIDTH = 2000;
 const DEFAULT_WIDTH = 280;
 const HOVER_LEAVE_DELAY = 200;
 

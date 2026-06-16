@@ -2,6 +2,8 @@ import { useRef, useState } from "react";
 import { useReactFlow } from "@xyflow/react";
 
 import { patchNode } from "../../../api/client";
+import { useBoardStore, type FlowNode } from "../../../store/board";
+import { getAbsolutePosition, getResizeHelperLines, getResizeHelperLinesY, getNodeColor } from "../../utils/helperLines";
 import { cn } from "../../../lib/utils";
 
 type ResizeCorner = "tr" | "bl" | "br";
@@ -73,14 +75,97 @@ function ResizeCornerHandle({
     if (!s) return;
     const delta = (e.clientX - s.startX) / s.zoom;
     const desiredWidth = corner === "bl" ? s.startWidth - delta : s.startWidth + delta;
-    const nextWidth = Math.max(minWidth, Math.min(maxWidth, desiredWidth));
+    
+    let nextWidth = Math.max(minWidth, Math.min(maxWidth, desiredWidth));
+    let nextX = corner === "bl" && s.startNodeX !== null ? s.startNodeX + (s.startWidth - nextWidth) : null;
+
+    const node = nodeId ? getNode(nodeId) : null;
+    if (node && nodeId) {
+      const { nodes, setHelperLines } = useBoardStore.getState();
+      const absPos = getAbsolutePosition(node as FlowNode, nodes);
+
+      const isLeftChange = corner === "bl";
+      let proposedValueX = 0;
+      let paddingLeft = 20;
+      let paddingRight = 20;
+      const type = node.data?.type;
+      if (type === "group") {
+        paddingLeft = 0;
+        paddingRight = 0;
+      }
+
+      if (isLeftChange && nextX !== null) {
+        let parentX = 0;
+        if (node.parentId) {
+          const parent = nodes.find((n) => n.id === node.parentId);
+          if (parent) parentX = parent.position.x;
+        }
+        proposedValueX = nextX + parentX + paddingLeft;
+      } else {
+        proposedValueX = absPos.x + nextWidth - paddingRight;
+      }
+
+      const snapXResult = getResizeHelperLines(proposedValueX, nodeId, nodes, 12);
+
+      const measuredW = (node.measured?.width ?? node.data.nodeWidth ?? 260) as number;
+      const measuredH = (node.measured?.height ?? node.data.nodeHeight ?? 200) as number;
+      const ratio = measuredW > 0 ? measuredH / measuredW : 1;
+      const nextHeight = nextWidth * ratio;
+      const proposedValueY = absPos.y + nextHeight;
+
+      const snapYResult = getResizeHelperLinesY(proposedValueY, nodeId, nodes, 12);
+
+      let finalVertical: number | undefined = undefined;
+      let finalHorizontal: number | undefined = undefined;
+      let appliedWidth = nextWidth;
+      let appliedX = nextX;
+
+      const diffX = snapXResult.vertical !== undefined ? Math.abs(proposedValueX - snapXResult.snappedValue) : 99999;
+      const diffY = snapYResult.horizontal !== undefined ? Math.abs(proposedValueY - snapYResult.snappedBottom) : 99999;
+
+      if (diffX < 12 || diffY < 12) {
+        if (diffX <= diffY) {
+          finalVertical = snapXResult.vertical;
+          if (isLeftChange && nextX !== null) {
+            let parentX = 0;
+            if (node.parentId) {
+              const parent = nodes.find((n) => n.id === node.parentId);
+              if (parent) parentX = parent.position.x;
+            }
+            appliedX = snapXResult.snappedValue - parentX - paddingLeft;
+            appliedWidth = s.startWidth + (s.startNodeX! - appliedX);
+          } else {
+            appliedWidth = snapXResult.snappedValue - absPos.x + paddingRight;
+          }
+        } else {
+          finalHorizontal = snapYResult.horizontal;
+          const snappedHeight = snapYResult.snappedBottom - absPos.y;
+          appliedWidth = ratio > 0 ? snappedHeight / ratio : nextWidth;
+          if (isLeftChange && nextX !== null) {
+            appliedX = s.startNodeX! + (s.startWidth - appliedWidth);
+          }
+        }
+
+        appliedWidth = Math.max(minWidth, Math.min(maxWidth, appliedWidth));
+        if (isLeftChange && nextX !== null) {
+          appliedX = s.startNodeX! + (s.startWidth - appliedWidth);
+        }
+        const color = getNodeColor(node as FlowNode);
+        setHelperLines({ vertical: finalVertical, horizontal: finalHorizontal, color });
+      } else {
+        setHelperLines({});
+      }
+
+      nextWidth = appliedWidth;
+      nextX = appliedX;
+    }
+
     onResize(nextWidth);
     setLiveWidth(Math.round(nextWidth));
 
-    if (corner === "bl" && nodeId && s.startNodeX !== null) {
-      const nextX = s.startNodeX + (s.startWidth - nextWidth);
+    if (corner === "bl" && nodeId && s.startNodeX !== null && nextX !== null) {
       setNodes((nodes) =>
-        nodes.map((node) => (node.id === nodeId ? { ...node, position: { ...node.position, x: nextX } } : node)),
+        nodes.map((node) => (node.id === nodeId ? { ...node, position: { ...node.position, x: nextX! } } : node)),
       );
     }
   }
@@ -90,7 +175,85 @@ function ResizeCornerHandle({
     if (!s) return;
     const delta = (e.clientX - s.startX) / s.zoom;
     const desiredWidth = corner === "bl" ? s.startWidth - delta : s.startWidth + delta;
-    const finalWidth = Math.max(minWidth, Math.min(maxWidth, Math.round(desiredWidth)));
+    
+    let finalWidth = Math.max(minWidth, Math.min(maxWidth, desiredWidth));
+    let finalX = corner === "bl" && s.startNodeX !== null ? s.startNodeX + (s.startWidth - finalWidth) : null;
+
+    const node = nodeId ? getNode(nodeId) : null;
+    if (node && nodeId) {
+      const { nodes, setHelperLines } = useBoardStore.getState();
+      const absPos = getAbsolutePosition(node as FlowNode, nodes);
+
+      const isLeftChange = corner === "bl";
+      let proposedValueX = 0;
+      let paddingLeft = 20;
+      let paddingRight = 20;
+      const type = node.data?.type;
+      if (type === "group") {
+        paddingLeft = 0;
+        paddingRight = 0;
+      }
+
+      if (isLeftChange && finalX !== null) {
+        let parentX = 0;
+        if (node.parentId) {
+          const parent = nodes.find((n) => n.id === node.parentId);
+          if (parent) parentX = parent.position.x;
+        }
+        proposedValueX = finalX + parentX + paddingLeft;
+      } else {
+        proposedValueX = absPos.x + finalWidth - paddingRight;
+      }
+
+      const snapXResult = getResizeHelperLines(proposedValueX, nodeId, nodes, 16);
+
+      const measuredW = (node.measured?.width ?? node.data.nodeWidth ?? 260) as number;
+      const measuredH = (node.measured?.height ?? node.data.nodeHeight ?? 200) as number;
+      const ratio = measuredW > 0 ? measuredH / measuredW : 1;
+      const nextHeight = finalWidth * ratio;
+      const proposedValueY = absPos.y + nextHeight;
+      const snapYResult = getResizeHelperLinesY(proposedValueY, nodeId, nodes, 16);
+
+      let appliedWidth = finalWidth;
+      let appliedX = finalX;
+
+      const diffX = snapXResult.vertical !== undefined ? Math.abs(proposedValueX - snapXResult.snappedValue) : 99999;
+      const diffY = snapYResult.horizontal !== undefined ? Math.abs(proposedValueY - snapYResult.snappedBottom) : 99999;
+
+      if (diffX < 16 || diffY < 16) {
+        if (diffX <= diffY) {
+          if (isLeftChange && finalX !== null) {
+            let parentX = 0;
+            if (node.parentId) {
+              const parent = nodes.find((n) => n.id === node.parentId);
+              if (parent) parentX = parent.position.x;
+            }
+            appliedX = snapXResult.snappedValue - parentX - paddingLeft;
+            appliedWidth = s.startWidth + (s.startNodeX! - appliedX);
+          } else {
+            appliedWidth = snapXResult.snappedValue - absPos.x + paddingRight;
+          }
+        } else {
+          const snappedHeight = snapYResult.snappedBottom - absPos.y;
+          appliedWidth = ratio > 0 ? snappedHeight / ratio : finalWidth;
+          if (isLeftChange && finalX !== null) {
+            appliedX = s.startNodeX! + (s.startWidth - appliedWidth);
+          }
+        }
+
+        appliedWidth = Math.max(minWidth, Math.min(maxWidth, appliedWidth));
+        if (isLeftChange && finalX !== null) {
+          appliedX = s.startNodeX! + (s.startWidth - appliedWidth);
+        }
+      }
+
+      finalWidth = appliedWidth;
+      finalX = appliedX;
+      setHelperLines({});
+    } else {
+      finalWidth = Math.max(minWidth, Math.min(maxWidth, Math.round(desiredWidth)));
+    }
+
     dragStateRef.current = null;
     setIsDragging(false);
     setLiveWidth(null);
@@ -99,10 +262,12 @@ function ResizeCornerHandle({
     } catch {}
     onResizeEnd(finalWidth);
 
-    if (corner === "bl" && nodeId && s.startNodeX !== null) {
+    if (corner === "bl" && nodeId && s.startNodeX !== null && finalX !== null) {
+      setNodes((nodes) =>
+        nodes.map((node) => (node.id === nodeId ? { ...node, position: { ...node.position, x: finalX! } } : node)),
+      );
       const dbId = parseInt(nodeId, 10);
       if (!isNaN(dbId)) {
-        const finalX = s.startNodeX + (s.startWidth - finalWidth);
         patchNode(dbId, { x: Math.round(finalX) }).catch(() => {});
       }
     }

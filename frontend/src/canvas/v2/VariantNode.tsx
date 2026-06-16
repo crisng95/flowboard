@@ -32,7 +32,7 @@ import { ResizeHandle } from "./shared/ResizeHandle";
    LAYOUT CONSTANTS
    ═══════════════════════════════════════════════════════════════════════════ */
 const MIN_WIDTH = 420;
-const MAX_WIDTH = 750;
+const MAX_WIDTH = 4200;
 const DEFAULT_WIDTH = 460;
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -273,7 +273,12 @@ export function VariantNode(props: NodeProps<FlowNode>) {
 
   const showControls = hovered || !!selected;
 
-  const [width, setWidth] = useState((data.nodeWidth as number | undefined) ?? DEFAULT_WIDTH);
+  const storeWidth = (data.nodeWidth as number | undefined) ?? DEFAULT_WIDTH;
+  const [width, setWidth] = useState(storeWidth);
+
+  useEffect(() => {
+    setWidth(storeWidth);
+  }, [storeWidth]);
 
   const recordImageRatio = useCallback((idx: number, event: React.SyntheticEvent<HTMLImageElement>) => {
     const { naturalWidth, naturalHeight } = event.currentTarget;
@@ -315,9 +320,8 @@ export function VariantNode(props: NodeProps<FlowNode>) {
   const onResize = useCallback(
     (nextW: number) => {
       setWidth(nextW);
-      useBoardStore.getState().updateNodeData(rfId, { nodeWidth: nextW });
     },
-    [rfId],
+    [],
   );
 
   const onResizeEnd = useCallback(

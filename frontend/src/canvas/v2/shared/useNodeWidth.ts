@@ -1,4 +1,4 @@
-﻿/**
+/**
  * useNodeWidth - shared resize-handle wiring.
  *
  * Every Concepta node persists a user-resized `nodeWidth` on its
@@ -11,7 +11,7 @@
  * Returns the current effective width plus the two callbacks the
  * shared <ResizeHandle> expects.
  */
-import { useCallback } from "react";
+import { useCallback, useState, useEffect } from "react";
 
 import { patchNode } from "../../../api/client";
 import { useBoardStore, type FlowboardNodeData } from "../../../store/board";
@@ -37,18 +37,25 @@ export function useNodeWidth({
   max,
   fallback,
 }: UseNodeWidthOptions): UseNodeWidthResult {
-  const width = (data.nodeWidth as number | undefined) ?? fallback;
+  const storeWidth = (data.nodeWidth as number | undefined) ?? fallback;
+  const [localWidth, setLocalWidth] = useState<number>(storeWidth);
+
+  // Sync with store width changes (e.g. from undo/redo, initial load)
+  useEffect(() => {
+    setLocalWidth(storeWidth);
+  }, [storeWidth]);
 
   const onResize = useCallback(
     (next: number) => {
-      useBoardStore.getState().updateNodeData(nodeId, { nodeWidth: next });
+      setLocalWidth(next);
     },
-    [nodeId],
+    [],
   );
 
   const onResizeEnd = useCallback(
     (next: number) => {
       const clamped = Math.max(min, Math.min(max, Math.round(next)));
+      setLocalWidth(clamped);
       useBoardStore.getState().updateNodeData(nodeId, { nodeWidth: clamped });
       const dbId = parseInt(nodeId, 10);
       if (!Number.isNaN(dbId)) {
@@ -58,5 +65,5 @@ export function useNodeWidth({
     [nodeId, min, max],
   );
 
-  return { width, onResize, onResizeEnd };
+  return { width: localWidth, onResize, onResizeEnd };
 }

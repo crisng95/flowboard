@@ -19,7 +19,7 @@ import { normalizeImageModelKey, type ActiveImageModelKey } from "../../store/se
 import { FluidGradientStyles } from "./GoogleFlowStudio";
 
 const MIN_WIDTH = 300;
-const MAX_WIDTH = 600;
+const MAX_WIDTH = 3000;
 const DEFAULT_WIDTH = 400;
 const BORDER_RADIUS = 16;
 const HOVER_LEAVE_DELAY = 200;

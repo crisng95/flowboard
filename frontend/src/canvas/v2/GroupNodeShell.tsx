@@ -37,7 +37,7 @@ const EDGE_HIT_WIDTH = 10;
 
 const MIN_WIDTH = 200;
 const MIN_HEIGHT = 140;
-const MAX_WIDTH = 4000;
+const MAX_WIDTH = 2000;
 const MAX_HEIGHT = 4000;
 
 /* ═══════════════════════════════════════════════════════════════════════════

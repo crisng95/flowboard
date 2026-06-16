@@ -7,6 +7,7 @@ import {
 } from "@xyflow/react";
 
 import type { FlowNode } from "../store/board";
+import { getNodeColor, hexToRgba } from "./utils/helperLines";
 
 /**
  * Edge variant: thin static wire + animated gradient spark.
@@ -47,6 +48,11 @@ export function VariantEdge({
 
   const pin = (data?.sourceVariantIdx ?? null) as number | null;
 
+  const sourceNode = nodes.find((n) => n.id === _source);
+  const sourceNodeColor = sourceNode ? getNodeColor(sourceNode) : "#7c5cff";
+  const edgeColor = hexToRgba(sourceNodeColor, isRunning ? 0.32 : 0.18);
+  const { stroke: _unused, ...cleanStyle } = style || {};
+
   const gradientId = `ef-grad-${id}`;
   const glowId     = `ef-glow-${id}`;
 
@@ -55,10 +61,7 @@ export function VariantEdge({
       <defs>
         {/*
           Spark gradient aligned with the edge direction (source → target).
-          Transparent purple at both ends → bright near-white at 65%.
-          As the dash window moves along the path, it reveals a different
-          portion of this gradient, so the spark picks up the right hue
-          depending on where it is on the wire.
+          Transparent color at both ends → bright near-white at 65%.
         */}
         <linearGradient
           id={gradientId}
@@ -68,10 +71,10 @@ export function VariantEdge({
           x2={targetX}
           y2={targetY}
         >
-          <stop offset="0%"   stopColor="rgba(124,92,255,0.0)"  />
-          <stop offset="35%"  stopColor="rgba(167,139,250,0.7)" />
-          <stop offset="65%"  stopColor="rgba(240,228,255,1.0)" />
-          <stop offset="100%" stopColor="rgba(124,92,255,0.1)"  />
+          <stop offset="0%"   stopColor={hexToRgba(sourceNodeColor, 0.0)}  />
+          <stop offset="35%"  stopColor={hexToRgba(sourceNodeColor, 0.7)} />
+          <stop offset="65%"  stopColor="rgba(255,255,255,1.0)" />
+          <stop offset="100%" stopColor={hexToRgba(sourceNodeColor, 0.1)}  />
         </linearGradient>
 
         {/* Soft glow behind the spark */}
@@ -93,11 +96,11 @@ export function VariantEdge({
         id={id}
         path={edgePath}
         style={{
-          stroke: isRunning ? "rgba(124,92,255,0.28)" : "rgba(233,213,255,0.17)",
-          strokeWidth: isRunning ? 2 : 4.5,
+          stroke: edgeColor,
+          strokeWidth: isRunning ? 2 : 3.5,
           strokeLinecap: "round",
           transition: "stroke 0.35s ease, stroke-width 0.35s ease",
-          ...style,
+          ...cleanStyle,
         }}
         markerEnd={markerEnd}
         interactionWidth={24}

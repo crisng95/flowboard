@@ -32,7 +32,7 @@ import { edgeHandleClass } from "./shared/edgeHandle";
 import { targetHandleDropState } from "./shared/handleClassParts";
 
 const MIN_WIDTH = 460;
-const MAX_WIDTH = 700;
+const MAX_WIDTH = 4600;
 const DEFAULT_WIDTH = 580;
 const BORDER_RADIUS = 16; // Smooth outer border radius: 16px (ReactFlow V12 Canvas V2 gold standard)
 const HOVER_LEAVE_DELAY = 200;

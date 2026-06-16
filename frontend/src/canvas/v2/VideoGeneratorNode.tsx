@@ -34,7 +34,7 @@ import { useNodeWidth } from "./shared/useNodeWidth";
 import { FluidGradientStyles } from "./GoogleFlowStudio";
 
 const MIN_WIDTH = 520;
-const MAX_WIDTH = 760;
+const MAX_WIDTH = 5200;
 const DEFAULT_WIDTH = 620;
 const BORDER_RADIUS = 16;
 const HOVER_LEAVE_DELAY = 200;

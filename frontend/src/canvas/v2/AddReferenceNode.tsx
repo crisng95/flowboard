@@ -17,7 +17,7 @@ import { ReferenceLibraryModal, referenceCategoryLabel, type ReferenceCategoryKe
 import { buildCharacterPrompt } from "./shared/buildCharacterPrompt";
 
 const MIN_WIDTH = 200;
-const MAX_WIDTH = 500;
+const MAX_WIDTH = 2000;
 const DEFAULT_WIDTH = 240;
 const BORDER_RADIUS = 16;
 const HOVER_LEAVE_DELAY = 200;

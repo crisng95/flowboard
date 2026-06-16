@@ -20,6 +20,7 @@ import {
 
 import { deleteNode as apiDeleteNode } from "../api/client";
 import { useBoardStore, type FlowNode, type NodeType, registerUpdateNodeInternals } from "../store/board";
+import { getAbsolutePosition, getDragHelperLines, getNodeColor } from "./utils/helperLines";
 import { NodeCard } from "./NodeCard";
 import { VariantEdge } from "./VariantEdge";
 import { useGenerationStore } from "../store/generation";
@@ -183,30 +184,27 @@ export function Board({
   showMiniMap?: boolean;
   showControls?: boolean;
 }) {
-  const { zoom } = useViewport();
+  const { x: viewportX, y: viewportY, zoom } = useViewport();
+  const helperLines = useBoardStore((s) => s.helperLines);
   
   // Dynamic grid scaling based on zoom thresholds
   const gridParams = (() => {
     let gap = 24;
-    let size = 1.3;
-    let opacity = 0.15;
+    
+    // Tự động điều chỉnh size của dot tỷ lệ nghịch với zoom
+    // để kích thước hiển thị thực tế trên màn hình luôn tối thiểu là ~1.4px,
+    // giải quyết triệt để lỗi dot bị mờ tịt hoặc biến mất khi zoom nhỏ (zoom out).
+    const size = Math.max(1.4, 1.4 / zoom);
+    const opacity = 0.20; // Giảm opacity xuống 0.20 để các dot dịu nhẹ hơn
 
     if (zoom < 0.08) {
       gap = 24 * 16; // 384
-      size = 3.5;
-      opacity = 0.35;
     } else if (zoom < 0.18) {
       gap = 24 * 8; // 192
-      size = 2.5;
-      opacity = 0.28;
     } else if (zoom < 0.45) {
       gap = 24 * 4; // 96
-      size = 1.8;
-      opacity = 0.22;
     } else if (zoom < 0.8) {
       gap = 24 * 2; // 48
-      size = 1.4;
-      opacity = 0.18;
     }
 
     return { gap, size, color: `rgba(255,255,255,${opacity})` };
@@ -327,14 +325,95 @@ export function Board({
     [setEdges, deleteEdgeByRfId],
   );
 
+  const onNodeDrag: OnNodeDrag<FlowNode> = useCallback(
+    (_event, node) => {
+      const { nodes, setHelperLines } = useBoardStore.getState();
+
+      const absoluteDraggedPosition = getAbsolutePosition(node, nodes);
+      const draggedNodeWithAbs = {
+        ...node,
+        position: absoluteDraggedPosition,
+      };
+
+      const { snapPosition, vertical, horizontal } = getDragHelperLines(
+        draggedNodeWithAbs,
+        nodes,
+        12 // snap distance threshold during active drag
+      );
+
+      const color = getNodeColor(node as FlowNode);
+      setHelperLines({ horizontal, vertical, color });
+
+      // Convert snapPosition (absolute) back to relative if node has parentId
+      let finalPosition = { ...snapPosition };
+      if (node.parentId) {
+        const parent = nodes.find((n) => n.id === node.parentId);
+        if (parent) {
+          finalPosition.x -= parent.position.x;
+          finalPosition.y -= parent.position.y;
+        }
+      }
+
+      setNodes(
+        nodes.map((n) => {
+          if (n.id === node.id) {
+            return {
+              ...n,
+              position: finalPosition,
+            };
+          }
+          return n;
+        })
+      );
+    },
+    [setNodes]
+  );
+
   const onNodeDragStop: OnNodeDrag<FlowNode> = useCallback(
     (_event, node) => {
-      if (!node || !node.position) return;
+      useBoardStore.getState().setHelperLines({});
+      if (!node) return;
       const { nodes, reparentNode, persistNodePosition } = useBoardStore.getState();
 
+      const absoluteDraggedPosition = getAbsolutePosition(node, nodes);
+      const draggedNodeWithAbs = {
+        ...node,
+        position: absoluteDraggedPosition,
+      };
+
+      // Recalculate snap on drag stop with a larger threshold (16px) for maximum stickiness
+      const { snapPosition } = getDragHelperLines(
+        draggedNodeWithAbs,
+        nodes,
+        16 // snap threshold on release
+      );
+
+      // Convert snapPosition (absolute) back to relative if node has parentId
+      let finalPosition = { ...snapPosition };
+      if (node.parentId) {
+        const parent = nodes.find((n) => n.id === node.parentId);
+        if (parent) {
+          finalPosition.x -= parent.position.x;
+          finalPosition.y -= parent.position.y;
+        }
+      }
+
+      // Sync ReactFlow's local nodes state immediately so the node snaps visually
+      setNodes(
+        nodes.map((n) => {
+          if (n.id === node.id) {
+            return {
+              ...n,
+              position: finalPosition,
+            };
+          }
+          return n;
+        })
+      );
+
       // Calculate absolute position of the dragged node
-      let absX = node.position.x;
-      let absY = node.position.y;
+      let absX = finalPosition.x;
+      let absY = finalPosition.y;
       if (node.parentId) {
         const parent = nodes.find((n) => n.id === node.parentId);
         if (parent) {
@@ -414,7 +493,7 @@ export function Board({
               void reparentNode(node.id, undefined, absX, absY);
             } else {
               // Center is still inside -> keep grouped and persist relative position
-              void persistNodePosition(node.id, node.position);
+              void persistNodePosition(node.id, finalPosition);
             }
           } else {
             // Parent not found -> fallback to ungroup
@@ -422,11 +501,11 @@ export function Board({
           }
         } else {
           // Regular absolute drag on root canvas
-          void persistNodePosition(node.id, node.position);
+          void persistNodePosition(node.id, finalPosition);
         }
       }
     },
-    [],
+    [setNodes],
   );
 
 
@@ -718,6 +797,7 @@ export function Board({
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}
         onConnect={onConnect}
         onConnectStart={onConnectStart}
@@ -748,7 +828,17 @@ export function Board({
         minZoom={0.05}
         maxZoom={2}
       >
-        <Background variant={BackgroundVariant.Dots} gap={gridParams.gap} size={gridParams.size} color={gridParams.color} style={{ transition: "all 0.15s ease-out" }} />
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={gridParams.gap}
+          size={gridParams.size}
+          color={gridParams.color}
+          style={{
+            transition: "all 0.15s ease-out",
+            maskImage: "radial-gradient(circle, rgba(0, 0, 0, 1) 20%, rgba(0, 0, 0, 0) 90%)",
+            WebkitMaskImage: "radial-gradient(circle, rgba(0, 0, 0, 1) 20%, rgba(0, 0, 0, 0) 90%)",
+          }}
+        />
         {showMiniMap ? <MiniMap pannable zoomable /> : null}
         {showControls ? <Controls /> : null}
         {contextMenu && (
@@ -768,6 +858,38 @@ export function Board({
           />
         )}
       </ReactFlow>
+
+      {/* Alignment guidelines */}
+      {helperLines.vertical !== undefined && (
+        <div
+          style={{
+            position: "absolute",
+            left: helperLines.vertical * zoom + viewportX,
+            top: 0,
+            bottom: 0,
+            width: 1,
+            borderLeft: `1.5px solid ${helperLines.color || "#7c5cff"}`,
+            opacity: 0.45,
+            zIndex: 99999,
+            pointerEvents: "none",
+          }}
+        />
+      )}
+      {helperLines.horizontal !== undefined && (
+        <div
+          style={{
+            position: "absolute",
+            top: helperLines.horizontal * zoom + viewportY,
+            left: 0,
+            right: 0,
+            height: 1,
+            borderTop: `1.5px solid ${helperLines.color || "#7c5cff"}`,
+            opacity: 0.45,
+            zIndex: 99999,
+            pointerEvents: "none",
+          }}
+        />
+      )}
     </div>
   );
 }

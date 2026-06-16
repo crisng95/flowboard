@@ -26,7 +26,7 @@ import { PickerDropdown } from "./shared/PickerDropdown";
    LAYOUT CONSTANTS
    ═══════════════════════════════════════════════════════════════════════════ */
 const MIN_WIDTH = 100;
-const MAX_WIDTH = 600;
+const MAX_WIDTH = 1000;
 const DEFAULT_WIDTH = 300;
 
 const MIN_HEIGHT = 100;
