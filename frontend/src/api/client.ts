@@ -1049,7 +1049,6 @@ export interface AuthScanResult {
   // network error, etc.) or if tier was already cached.
   tier_fetched: boolean;
 }
-
 export function scanExtension() {
   return api<AuthScanResult>("/api/auth/scan", { method: "POST" });
 }
@@ -1059,10 +1058,16 @@ export function createRequest(body: {
   node_id?: number;
   params: Record<string, unknown>;
 }) {
-  return api<RequestDTO>("/api/requests", {
+  const promise = api<RequestDTO>("/api/requests", {
     method: "POST",
     body: JSON.stringify(body),
   });
+
+  if (typeof window !== "undefined") {
+    window.postMessage({ type: "FLOWBOARD_CLAIM_NOW" }, "*");
+  }
+
+  return promise;
 }
 
 export function getRequest(id: number) {

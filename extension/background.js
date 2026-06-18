@@ -2305,6 +2305,9 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
   }
 
   if (msg.type === 'STATUS') {
+    if (cloudConfig?.mode === 'cloud-worker' && !manualDisconnect) {
+      nudgeCloudWorker('popup-status-ping');
+    }
     reply({
       connected:       cloudConfig?.mode === 'cloud-worker' ? !manualDisconnect : ws?.readyState === WebSocket.OPEN,
       mode:            cloudConfig?.mode || 'local-bridge',
