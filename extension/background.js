@@ -503,6 +503,20 @@ async function resolveAttachmentsBase64(attachments) {
       resolved.push(att);
       continue;
     }
+    // Check if there is a pre-signed URL provided
+    if (typeof att.url === 'string' && att.url) {
+      try {
+        console.log('[Flowboard] Downloading assistant attachment from pre-signed URL:', att.url);
+        const asset = await FlowboardAssetUtils.fetchAnyImageBytes(att.url);
+        resolved.push({
+          mimeType: asset.mimeType || att.mimeType || 'image/png',
+          data: FlowboardAssetUtils.bytesToBase64(asset.bytes),
+        });
+        continue;
+      } catch (err) {
+        console.warn('[Flowboard] Failed to download/encode assistant attachment from url:', att.url, err.message || err);
+      }
+    }
     const mediaId = att.mediaId || att.media_id;
     if (!mediaId) {
       resolved.push(att);

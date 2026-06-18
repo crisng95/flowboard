@@ -1069,6 +1069,18 @@ export function getRequest(id: number) {
   return api<RequestDTO>(`/api/requests/${id}`);
 }
 
+interface SignReadResponse {
+  url: string;
+  expires_in: number;
+}
+
+export function signReadAsset(assetId: string): Promise<SignReadResponse> {
+  return api<SignReadResponse>("/api/assets/sign-read", {
+    method: "POST",
+    body: JSON.stringify({ asset_id: assetId }),
+  });
+}
+
 // ── Plans + Pipeline runs ────────────────────────────────────────────────────
 
 export interface PipelineRunDTO {

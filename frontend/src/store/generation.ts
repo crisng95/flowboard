@@ -11,6 +11,7 @@ import {
   patchNode,
   cancelActivity,
   type RequestDTO,
+  signReadAsset,
 } from "../api/client";
 import { useBoardStore, type FlowNode } from "./board";
 import { supabase } from "../cloud/supabase";
@@ -606,6 +607,7 @@ type AssistantAttachmentInput = {
   mimeType: string;
   mediaId?: string;
   data?: string;
+  url?: string;
 };
 
 type AssistantAttachmentSummary = {
@@ -631,24 +633,25 @@ function normalizeAttachmentCandidate(value: unknown): string | null {
   return text ? mediaUrl(text) : null;
 }
 
-function collectAssistantAttachmentCandidates(node: FlowNode): Array<{ url: string; kind: "image" | "video"; title: string }> {
+function collectAssistantAttachmentCandidates(node: FlowNode): Array<{ url: string; kind: "image" | "video"; title: string; assetId?: string }> {
   const nodeType = primaryNodeType(node);
   if (nodeType === "list") {
     return collectSelectedListMediaItems(node as { id: string; data: Record<string, unknown> })
       .map((item, index) => {
         const url = normalizeAttachmentCandidate(item.mediaUrl ?? item.imageUrl ?? item.mediaId ?? item.flowMediaId);
         if (!url) return null;
-        const kind = item.kind === "video" ? "video" : "image";
+        const kind: "image" | "video" = item.kind === "video" ? "video" : "image";
         return {
           url,
           kind,
           title: cleanText(item.title) ?? `${kind === "video" ? "Video" : "Image"} ${index + 1}`,
+          assetId: typeof item.assetId === "string" ? item.assetId : undefined,
         };
       })
-      .filter((value): value is { url: string; kind: "image" | "video"; title: string } => value !== null);
+      .filter((value): value is NonNullable<typeof value> => value !== null);
   }
 
-  const kind = nodeType === "video" ? "video" : "image";
+  const kind: "image" | "video" = nodeType === "video" ? "video" : "image";
   const candidates = Array.isArray(node.data.mediaIds)
     ? node.data.mediaIds
     : [node.data.mediaId];
@@ -658,14 +661,29 @@ function collectAssistantAttachmentCandidates(node: FlowNode): Array<{ url: stri
   if (normalized.length === 0) {
     const fallback = normalizeAttachmentCandidate(node.data.flowMediaId ?? node.data.mediaId);
     return fallback
-      ? [{ url: fallback, kind, title: cleanText(node.data.title) ?? (kind === "video" ? "Video" : "Image") }]
+      ? [{
+          url: fallback,
+          kind,
+          title: cleanText(node.data.title) ?? (kind === "video" ? "Video" : "Image"),
+          assetId: typeof node.data.assetId === "string" ? node.data.assetId : undefined,
+        }]
       : [];
   }
-  return normalized.map((url, index) => ({
-    url,
-    kind,
-    title: cleanText(node.data.title) ?? `${kind === "video" ? "Video" : "Image"} ${index + 1}`,
-  }));
+  return normalized.map((url, index) => {
+    let assetId: string | undefined = undefined;
+    if (Array.isArray(node.data.assetIds)) {
+      const aid = node.data.assetIds[index];
+      if (typeof aid === "string") assetId = aid;
+    } else if (typeof node.data.assetId === "string") {
+      assetId = node.data.assetId;
+    }
+    return {
+      url,
+      kind,
+      title: cleanText(node.data.title) ?? `${kind === "video" ? "Video" : "Image"} ${index + 1}`,
+      assetId,
+    };
+  });
 }
 
 async function buildAssistantAttachments(targetRfId: string): Promise<{
@@ -677,6 +695,8 @@ async function buildAssistantAttachments(targetRfId: string): Promise<{
   const attachmentEdges = edges.filter((edge) => edge.targetHandle === "target-image" || edge.targetHandle === "target-video");
   const attachments: AssistantAttachmentInput[] = [];
   const summary: AssistantAttachmentSummary[] = [];
+
+  const isLoggedIn = !!supabase && !!(await supabase.auth.getSession()).data.session;
 
   for (const edge of attachmentEdges) {
     const sourceNode = board.nodes.find((node) => node.id === edge.source);
@@ -690,9 +710,26 @@ async function buildAssistantAttachments(targetRfId: string): Promise<{
       const mediaId = urlParts[urlParts.length - 1];
       if (!mediaId) continue;
       const mimeType = inferAttachmentMime(candidate.kind, candidate.url);
+
+      let signedUrl: string | undefined = undefined;
+      if (isLoggedIn) {
+        if (candidate.assetId) {
+          try {
+            const resp = await signReadAsset(candidate.assetId);
+            signedUrl = resp.url;
+          } catch (err) {
+            console.warn("Failed to sign asset read for assistant:", candidate.assetId, err);
+          }
+        }
+        if (!signedUrl && /^https?:\/\//i.test(candidate.url)) {
+          signedUrl = candidate.url;
+        }
+      }
+
       attachments.push({
         mimeType,
         mediaId,
+        url: signedUrl,
       });
       summary.push({
         id: `${sourceNode.id}-${candidate.kind}-${index}`,
