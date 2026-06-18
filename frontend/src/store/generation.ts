@@ -1671,19 +1671,23 @@ async function runNodeDirect(
 
     const isBatchMode = listLikePrompts.length > 1;
 
+    const LIST_FORMAT_SYSTEM_INSTRUCTION =
+      "Return the final answer as a clean list of standalone text items. No intro, no closing note. One item per line or bullet.";
+    const isListMode = resolveAssistantExportMode(node, board) === "list";
+    const baseSystemPrompt = ((node.data.systemPrompt as string | undefined) ?? "").trim();
+    const effectiveSystemPrompt = isListMode
+      ? [baseSystemPrompt, LIST_FORMAT_SYSTEM_INSTRUCTION].filter(Boolean).join("\n\n")
+      : baseSystemPrompt;
+
     if (isBatchMode) {
       const batchPrompts = listLikePrompts.map((p) => {
         const prompt = ((node.data.assistantPrompt as string | undefined) ?? "").trim();
-        let finalPrompt = [prompt, ...plainTextPrompts, p].filter(Boolean).join("\n\n");
-        if (resolveAssistantExportMode(node, board) === "list") {
-          finalPrompt += "\n\nReturn the final answer as a clean list of standalone text items. No intro or closing note. Keep one item per paragraph or bullet.";
-        }
-        return finalPrompt;
+        return [prompt, ...plainTextPrompts, p].filter(Boolean).join("\n\n");
       });
 
       await get().dispatchAssistantBatch(rfId, {
         prompts: batchPrompts,
-        systemPrompt: ((node.data.systemPrompt as string | undefined) ?? "").trim(),
+        systemPrompt: effectiveSystemPrompt,
         attachments,
         attachmentSummary: summary,
         model: ((node.data.assistantModel as "flow_gemini" | undefined) ?? "flow_gemini"),
@@ -1691,16 +1695,13 @@ async function runNodeDirect(
     } else {
       const upstreamPrompts = [...plainTextPrompts, ...listLikePrompts];
       const prompt = ((node.data.assistantPrompt as string | undefined) ?? "").trim();
-      let finalPrompt = [prompt, ...upstreamPrompts].filter(Boolean).join("\n\n");
-      if (resolveAssistantExportMode(node, board) === "list") {
-        finalPrompt += "\n\nReturn the final answer as a clean list of standalone text items. No intro or closing note. Keep one item per paragraph or bullet.";
-      }
+      const finalPrompt = [prompt, ...upstreamPrompts].filter(Boolean).join("\n\n");
       if (!finalPrompt && attachments.length === 0) {
         throw new Error("assistant_node_missing_prompt_or_inputs");
       }
       await get().dispatchAssistant(rfId, {
         prompt: finalPrompt,
-        systemPrompt: ((node.data.systemPrompt as string | undefined) ?? "").trim(),
+        systemPrompt: effectiveSystemPrompt,
         attachments,
         attachmentSummary: summary,
         model: ((node.data.assistantModel as "flow_gemini" | undefined) ?? "flow_gemini"),
