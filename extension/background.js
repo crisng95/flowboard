@@ -494,6 +494,37 @@ function buildTextGenContents(inputData) {
 // Expose the pure helper for tests (service-worker global scope).
 globalThis.buildTextGenContents = buildTextGenContents;
 
+async function resolveAttachmentsBase64(attachments) {
+  if (!Array.isArray(attachments)) return [];
+  const resolved = [];
+  for (const att of attachments) {
+    if (!att) continue;
+    if (typeof att.data === 'string' && att.data) {
+      resolved.push(att);
+      continue;
+    }
+    const mediaId = att.mediaId || att.media_id;
+    if (!mediaId) {
+      resolved.push(att);
+      continue;
+    }
+    try {
+      const apiBase = cloudConfig?.controlPlaneBaseUrl || 'http://127.0.0.1:8101';
+      const cleanBase = apiBase.replace(/\/+$/, '');
+      const downloadUrl = `${cleanBase}/media/${encodeURIComponent(mediaId)}`;
+      console.log('[Flowboard] Downloading assistant attachment from:', downloadUrl);
+      const asset = await FlowboardAssetUtils.fetchAnyImageBytes(downloadUrl);
+      resolved.push({
+        mimeType: asset.mimeType || att.mimeType || 'image/png',
+        data: FlowboardAssetUtils.bytesToBase64(asset.bytes),
+      });
+    } catch (err) {
+      console.warn('[Flowboard] Failed to download/encode assistant attachment:', mediaId, err.message || err);
+    }
+  }
+  return resolved;
+}
+
 async function handleApiRequest(msg) {
   const { id, params } = msg;
   const { url, method, headers, body, captchaAction } = params || {};
@@ -1545,7 +1576,8 @@ async function runCloudFlowJob(cloud, job) {
     if (taskType === 'text_gen') {
       const sysText = typeof inputData.system_prompt === 'string' && inputData.system_prompt
         ? inputData.system_prompt : null;
-      const contents = buildTextGenContents(inputData);
+      const resolvedAttachments = await resolveAttachmentsBase64(inputData.attachments);
+      const contents = buildTextGenContents({ ...inputData, attachments: resolvedAttachments });
       const options = {
         model: inputData.model || cloudConfig?.textModel || undefined,
         captchaAction: inputData.captcha_action || undefined,
@@ -2300,7 +2332,8 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
         if (!String(inputData.prompt || '').trim() && (!inputData.attachments || inputData.attachments.length === 0)) {
           throw new Error('assistant_node_missing_prompt_or_inputs');
         }
-        const contents = buildTextGenContents(inputData);
+        const resolvedAttachments = await resolveAttachmentsBase64(inputData.attachments);
+        const contents = buildTextGenContents({ ...inputData, attachments: resolvedAttachments });
         const options = {
           model: typeof payload.model === 'string' && payload.model ? payload.model : 'gemini-3-flash-preview',
           captchaAction: typeof payload.captchaAction === 'string' && payload.captchaAction ? payload.captchaAction : undefined,
