@@ -91,7 +91,7 @@ export function ExtensionGateModal({ isOpen, onClose }: ExtensionGateModalProps)
 
       const result = (await res.json()) as { client_id: string };
       const newPairing: PairingPayload = {
-        controlPlaneBaseUrl: cloudApiBaseUrl,
+        controlPlaneBaseUrl: cloudApiBaseUrl || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? "http://127.0.0.1:8101" : "https://api.flowboard.bond"),
         clientId: result.client_id,
         pairingSecret: secret,
         mode: "cloud-worker",
