@@ -649,12 +649,12 @@ providers — pick one in `Settings → AI Providers`.
 ## Community & Support
 
 <p align="center">
-  <a href="https://www.facebook.com/groups/flowkit.flowboard.community">
-    <img src="https://img.shields.io/badge/Join%20the%20Community-FlowKit%20%26%20Flowboard%20on%20Facebook-1877F2?style=for-the-badge&logo=facebook&logoColor=white" alt="Join the FlowKit & Flowboard Facebook Group" />
+  <a href="https://www.facebook.com/groups/vibecodeera">
+    <img src="https://img.shields.io/badge/Join%20the%20Community-Vibe%20Code%20Era%20on%20Facebook-1877F2?style=for-the-badge&logo=facebook&logoColor=white" alt="Join the Vibe Code Era Facebook Group" />
   </a>
 </p>
 
-The shared community for both **FlowKit** and **Flowboard**. Drop in to:
+**Share anything crazy and useful created with Vibe Code.** Drop in to:
 
 - Post the shots and clips you've generated
 - Share node-graph patterns, vibe presets, and prompt recipes that work for you
@@ -662,4 +662,4 @@ The shared community for both **FlowKit** and **Flowboard**. Drop in to:
 - Request features and report bugs you've hit in the wild
 - Trade tips on Google Flow plan limits, Veo i2v behaviour, and LLM CLI setup (Claude / Gemini / Codex)
 
-→ **[facebook.com/groups/flowkit.flowboard.community](https://www.facebook.com/groups/flowkit.flowboard.community)**
+→ **[facebook.com/groups/vibecodeera](https://www.facebook.com/groups/vibecodeera)**
