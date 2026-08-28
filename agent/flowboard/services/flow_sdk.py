@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 FLOW_API_BASE = "https://aisandbox-pa.googleapis.com"
 TRPC_CREATE_PROJECT = "https://labs.google/fx/api/trpc/project.createProject"
 TRPC_SEARCH_PROJECTS = "https://labs.google/fx/api/trpc/project.searchUserProjects"
+# Resolves a finished media to its signed CDN url. Cookie-authenticated (extension
+# only) and answers with a 30x to flow-content.google — see resolve_media_url.
+TRPC_MEDIA_URL_REDIRECT = "https://labs.google/fx/api/trpc/media.getMediaUrlRedirect"
 VIDEO_I2V_URL = f"{FLOW_API_BASE}/v1/video:batchAsyncGenerateVideoStartImage"
 # Omni Flash uses a separate endpoint that takes referenceImages[] (multi-
 # ref, asset-typed) instead of a single startImage. Different request shape
@@ -33,6 +36,10 @@ VIDEO_I2V_URL = f"{FLOW_API_BASE}/v1/video:batchAsyncGenerateVideoStartImage"
 VIDEO_OMNI_URL = f"{FLOW_API_BASE}/v1/video:batchAsyncGenerateVideoReferenceImages"
 VIDEO_POLL_URL = f"{FLOW_API_BASE}/v1/video:batchCheckAsyncVideoGenerationStatus"
 UPLOAD_IMAGE_URL = f"{FLOW_API_BASE}/v1/flow/uploadImage"
+# Flow's signed media CDN. `resolve_media_url` refuses to hand back anything that
+# is not under this prefix, and media.py's ingest allowlist is keyed off the same
+# constant — the two must never drift, or a resolved url would fail to ingest.
+FLOW_CDN_PREFIX = "https://flow-content.google/"
 
 
 # Omni Flash — variable-duration r2v video model. Each duration maps to a
@@ -65,12 +72,6 @@ def resolve_omni_flash_model(duration_s: int) -> str:
         )
     return key
 
-
-def _media_get_url(media_id: str) -> str:
-    """Endpoint that returns inline encoded video bytes for a workflow's
-    primary media. Used to poll Low Priority (workflow-schema) submissions —
-    they have no operation name and don't appear in ``batchCheckAsync``."""
-    return f"{FLOW_API_BASE}/v1/media/{media_id}?clientContext.tool=PINHOLE"
 
 # Image model keys, indexed by the user-facing nickname used in
 # flowkit's models.json. Pro is Flow's premium / higher-quality image
@@ -677,122 +678,185 @@ class FlowSDK:
             raw_out["workflow_polls"] = raw_workflows
         return {"raw": raw_out or raw_old, "operations": ops_summary}
 
+    # Flow's own generation states, as returned by batchCheckAsync. Normalised
+    # to lowercase and carried all the way to the worker's poll loop — "queued",
+    # "rendering", "failed" and "we have no idea" must never again collapse into
+    # one silent `done=False`.
+    _GEN_STATUS = {
+        "MEDIA_GENERATION_STATUS_SCHEDULED": "scheduled",
+        "MEDIA_GENERATION_STATUS_ACTIVE": "active",
+        "MEDIA_GENERATION_STATUS_SUCCESSFUL": "successful",
+        "MEDIA_GENERATION_STATUS_FAILED": "failed",
+    }
+
+    async def resolve_media_url(self, media_id: str) -> Optional[str]:
+        """Signed CDN url for a finished media, via the labs.google TRPC route.
+
+        ``media.getMediaUrlRedirect`` authenticates by SESSION COOKIE, not the
+        Bearer token — only the extension can call it (it fetches with
+        ``credentials: 'include'``). It answers with a 30x to
+        ``flow-content.google/video/<id>?Expires=…&Signature=…``; the extension
+        follows that and hands back the resolved url rather than trying to
+        JSON-parse an MP4. Returns None when the url could not be resolved
+        (caller keeps polling)."""
+        resp = await self._client.trpc_request(
+            url=f"{TRPC_MEDIA_URL_REDIRECT}?name={media_id}",
+            method="GET",
+        )
+        if not isinstance(resp, dict):
+            return None
+        data = resp.get("data")
+        if isinstance(data, dict):
+            url = data.get("resolvedUrl")
+            if isinstance(url, str) and url.startswith(FLOW_CDN_PREFIX):
+                return url
+        logger.warning("media url unresolved for %s: %s", media_id[:8], str(resp)[:200])
+        return None
+
     async def _poll_workflows(
         self, workflows: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Single poll pass for workflow-mode (Low Priority) submissions.
+        """Single poll pass for workflow-mode (Low Priority / ``_relaxed``) submissions.
 
-        For each ``{name, primary_media_id}`` pair, GET ``/v1/media/<id>``
-        and inspect ``video.encodedVideo``. Flow returns base64-encoded MP4
-        once rendering completes; before that the payload is metadata-only
-        (small bytes, no ``ftyp`` magic) — we treat that as "still pending".
+        WHY THIS WAS REWRITTEN. The previous version polled
+        ``GET /v1/media/<primary_media_id>`` and read ``video.encodedVideo``. Flow
+        retired that endpoint — it now answers **400 INVALID_ARGUMENT**, and a media
+        queried without its owning ``projectId`` answers **404** ("Requested entity was
+        not found"), which the old code read as "still rendering". So a low-priority
+        video either polled to the caller's deadline or failed outright, no matter that
+        Flow had finished it. Measured when this was found (13/08/2026): 41 items
+        "timed out" while their clips sat complete on Google's side, and a fresh gen
+        went dispatch → bytes in 70 seconds.
 
-        Returns ``(ops_summary, raw_polls)`` mirroring the OLD-schema
-        ``check_async`` contract: one entry per workflow with
-        ``{name, done, media_entries, status, error}``. The poll loop in
-        the worker calls this repeatedly via ``check_async`` until ``done``.
+        The working contract:
+
+          1. ``POST batchCheckAsync`` with ``{"media":[{"name","projectId"}, …]}`` —
+             ONE call for every pending workflow — returns each media's real
+             ``mediaGenerationStatus``.
+          2. On SUCCESSFUL, ``media.getMediaUrlRedirect`` (extension, cookie auth)
+             resolves a signed CDN url.
+          3. The caller downloads that url (``media_service.ingest_urls`` in the
+             worker) — there are no inline bytes any more.
+
+        Returns ``(ops_summary, raw_polls)`` keyed by WORKFLOW name — one entry per
+        input workflow, in the same ``{name, done, media_entries, status, error}``
+        shape the OLD-schema path produces, so ``check_async`` stays schema-agnostic.
         """
-        import base64 as _b64
-
         ops_summary: list[dict[str, Any]] = []
         raw_polls: list[dict[str, Any]] = []
+
+        # workflow name -> its primary media id (the ONLY pollable handle) and project.
+        wanted: list[tuple[str, str, Optional[str]]] = []
         for wf in workflows:
             if not isinstance(wf, dict):
                 continue
             name = wf.get("name")
             mid = wf.get("primary_media_id")
-            if not isinstance(name, str) or not isinstance(mid, str) or not mid:
-                continue
+            if isinstance(name, str) and isinstance(mid, str) and mid:
+                wanted.append((name, mid, wf.get("project_id")))
+        if not wanted:
+            return ops_summary, raw_polls
+
+        def _entry(name: str, *, done: bool, status: str,
+                   media_entries: Optional[list[dict[str, Any]]] = None,
+                   error: Optional[str] = None) -> dict[str, Any]:
+            return {
+                "name": name,
+                "done": done,
+                "media_entries": media_entries or [],
+                "status": status,
+                "error": error,
+            }
+
+        # Flow scopes media to a project, so group by it; in practice every workflow in
+        # one dispatch shares one project and this is a single call.
+        by_project: dict[Optional[str], list[tuple[str, str]]] = {}
+        for name, mid, pid in wanted:
+            by_project.setdefault(pid, []).append((name, mid))
+
+        for pid, pairs in by_project.items():
+            body = {
+                "media": [
+                    {"name": mid, **({"projectId": pid} if pid else {})}
+                    for _name, mid in pairs
+                ]
+            }
             try:
                 resp = await self._client.api_request(
-                    url=_media_get_url(mid),
-                    method="GET",
-                    headers=dict(_API_HEADERS),
-                    body=None,
+                    url=VIDEO_POLL_URL, method="POST",
+                    headers=dict(_API_HEADERS), body=body,
                 )
             except Exception as exc:  # noqa: BLE001
-                logger.warning("workflow poll error for %s: %s", mid[:8], exc)
-                ops_summary.append(
-                    {
-                        "name": name,
-                        "done": False,
-                        "media_entries": [],
-                        "status": None,
-                        "error": None,
-                    }
-                )
+                logger.warning("workflow status poll failed (%s media): %s", len(pairs), exc)
+                for name, _mid in pairs:
+                    ops_summary.append(_entry(name, done=False, status="poll_error"))
                 continue
-            raw_polls.append({"name": name, "media_id": mid, "resp": resp})
+            raw_polls.append({"project_id": pid, "resp": resp})
 
-            # Transport / API failure — keep polling. Treat 404 as "not ready"
-            # too; Flow sometimes 404s the media endpoint mid-render.
-            if not isinstance(resp, dict):
-                ops_summary.append(
-                    {"name": name, "done": False, "media_entries": [], "status": None, "error": None}
-                )
-                continue
-            status_code = resp.get("status")
-            if isinstance(status_code, int) and status_code >= 400 and status_code != 404:
-                # Surface the inner Flow error (e.g. content filter).
-                inner = _extract_inner_api_error(resp)
-                ops_summary.append(
-                    {
-                        "name": name,
-                        "done": True,
-                        "media_entries": [],
-                        "status": None,
-                        "error": inner or f"API_{status_code}",
-                    }
-                )
+            status_code = resp.get("status") if isinstance(resp, dict) else None
+            data = resp.get("data") if isinstance(resp, dict) else None
+            if not isinstance(data, dict) or (isinstance(status_code, int) and status_code >= 400):
+                # An API error is an API ERROR. The bug this replaces was born from
+                # translating one into "still rendering".
+                logger.warning("workflow status poll http=%s body=%s", status_code, str(data)[:200])
+                for name, _mid in pairs:
+                    ops_summary.append(_entry(name, done=False, status="poll_error"))
                 continue
 
-            # `data` is the body; for /v1/media it's the media object directly.
-            data = resp.get("data") if isinstance(resp.get("data"), dict) else {}
-            video_block = data.get("video") if isinstance(data.get("video"), dict) else {}
-            encoded = (
-                video_block.get("encodedVideo")
-                if isinstance(video_block, dict)
-                else None
-            )
-            if not isinstance(encoded, str) or not encoded:
+            by_media = {
+                m.get("name"): m
+                for m in (data.get("media") or [])
+                if isinstance(m, dict) and isinstance(m.get("name"), str)
+            }
+            for name, mid in pairs:
+                rec = by_media.get(mid)
+                if rec is None:
+                    # Flow did not mention this media at all. Previously
+                    # indistinguishable from "pending" — now it says so, and the
+                    # caller decides (the worker retires it after 3 straight cycles).
+                    ops_summary.append(_entry(name, done=False, status="missing"))
+                    continue
+                meta = rec.get("mediaMetadata") or {}
+                raw_status = (meta.get("mediaStatus") or {}).get("mediaGenerationStatus")
+                gen = self._GEN_STATUS.get(raw_status, "unknown")
+
+                if gen == "failed":
+                    # Flow puts the reason INSIDE mediaStatus, not on the media record:
+                    # {"mediaStatus":{"mediaGenerationStatus":"…FAILED",
+                    #                 "error":{"message":"Media not found."},
+                    #                 "failureReasons":["Media not found."]}}
+                    # Surface it verbatim — "Media not found." (a handle Flow never knew)
+                    # and a content filter are both FAILED but mean opposite things to a
+                    # human reading the run log.
+                    mstat = meta.get("mediaStatus") or {}
+                    inner = mstat.get("error") if isinstance(mstat.get("error"), dict) else None
+                    reasons = mstat.get("failureReasons")
+                    msg = (
+                        (inner or {}).get("message")
+                        or (reasons[0] if isinstance(reasons, list) and reasons else None)
+                        or raw_status
+                        or "MEDIA_GENERATION_STATUS_FAILED"
+                    )
+                    ops_summary.append(_entry(name, done=True, status="failed", error=str(msg)))
+                    continue
+                if gen != "successful":
+                    # scheduled / active / unknown — all still in flight, but the caller
+                    # now learns WHICH.
+                    ops_summary.append(_entry(name, done=False, status=gen))
+                    continue
+
+                url = await self.resolve_media_url(mid)
+                if not url:
+                    # Finished but the url did not resolve this cycle (session blip).
+                    # Transient: the next cycle retries; the caller's deadline bounds it.
+                    ops_summary.append(_entry(name, done=False, status="url_error"))
+                    continue
                 ops_summary.append(
-                    {"name": name, "done": False, "media_entries": [], "status": None, "error": None}
+                    _entry(
+                        name, done=True, status="successful",
+                        media_entries=[{"media_id": mid, "url": url, "mediaType": "video"}],
+                    )
                 )
-                continue
-            try:
-                binary = _b64.b64decode(encoded, validate=False)
-            except Exception:  # noqa: BLE001
-                ops_summary.append(
-                    {"name": name, "done": False, "media_entries": [], "status": None, "error": None}
-                )
-                continue
-            # MP4 box layout: bytes 4..8 == "ftyp" on a complete file.
-            # Until that lands, Flow returns a small metadata payload — skip.
-            is_mp4 = len(binary) >= 12 and binary[4:8] == b"ftyp"
-            if not is_mp4:
-                ops_summary.append(
-                    {"name": name, "done": False, "media_entries": [], "status": None, "error": None}
-                )
-                continue
-            fife = (
-                video_block.get("fifeUrl") if isinstance(video_block, dict) else None
-            ) or data.get("fifeUrl")
-            ops_summary.append(
-                {
-                    "name": name,
-                    "done": True,
-                    "media_entries": [
-                        {
-                            "media_id": mid,
-                            "url": fife if isinstance(fife, str) else None,
-                            "mediaType": "video",
-                            "encoded_video": encoded,
-                        }
-                    ],
-                    "status": "MEDIA_GENERATION_STATUS_SUCCESSFUL",
-                    "error": None,
-                }
-            )
         return ops_summary, raw_polls
 
     # ── image generation (api_request + captcha) ───────────────────────────
@@ -1072,12 +1136,17 @@ def extract_operation_names(resp: Any) -> list[str]:
 def extract_video_workflows(resp: Any) -> list[dict[str, Any]]:
     """Pull workflow entries out of a NEW-schema video submit response.
 
-    Returns ``[{"name": <workflow_name>, "primary_media_id": <uuid>}, ...]``.
+    Returns ``[{"name": ..., "primary_media_id": ...[, "project_id": ...]}, ...]``.
     Empty list when the response is OLD-schema (operations-based) or has no
-    workflows. Callers use this to drive media-endpoint polling — workflow
-    submits don't yield operations, so ``batchCheckAsync`` can't see them;
-    we poll ``/v1/media/<primaryMediaId>`` directly and read the inline MP4
-    bytes off ``video.encodedVideo`` once it lands.
+    workflows.
+
+    The ``primary_media_id`` is the ONLY pollable handle for these: a workflow
+    name is not a valid ``batchCheckAsync`` operation handle, so passing it as
+    one gets a 400. Poll via ``_poll_workflows``, which asks ``batchCheckAsync``
+    with ``{"media": [{"name": <primary>, "projectId": ...}]}`` and resolves the
+    signed URL through the extension once status is SUCCESSFUL. The media is
+    scoped to the workflow's OWN project, hence ``project_id`` rides along.
+    (``GET /v1/media/<id>`` also 400s now — do not go back to it.)
     """
     if not isinstance(resp, dict):
         return []
@@ -1094,8 +1163,12 @@ def extract_video_workflows(resp: Any) -> list[dict[str, Any]]:
         name = wf.get("name")
         meta = wf.get("metadata") if isinstance(wf.get("metadata"), dict) else {}
         primary = meta.get("primaryMediaId") if isinstance(meta, dict) else None
+        pid = wf.get("projectId")
         if isinstance(name, str) and name and isinstance(primary, str) and primary:
-            out.append({"name": name, "primary_media_id": primary})
+            entry: dict[str, Any] = {"name": name, "primary_media_id": primary}
+            if isinstance(pid, str) and pid:
+                entry["project_id"] = pid
+            out.append(entry)
     return out
 
 

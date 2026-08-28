@@ -610,6 +610,17 @@ async function handleTrpcRequest(msg) {
       body:    body ? JSON.stringify(body) : undefined,
       credentials: 'include',
     });
+    // media.getMediaUrlRedirect answers with a 30x to a signed
+    // flow-content.google URL, so `resp` here is the FOLLOWED response — the
+    // video itself, not JSON. Return the resolved URL instead of choking on
+    // `.json()`; the agent already knows how to download a signed CDN url
+    // (media.ingest_urls). Every other TRPC route still returns its JSON
+    // exactly as before.
+    const ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('json')) {
+      sendToAgent({ id, status: resp.status, data: { resolvedUrl: resp.url, contentType: ct } });
+      return;
+    }
     const data = await resp.json();
     sendToAgent({ id, status: resp.status, data });
   } catch (e) {

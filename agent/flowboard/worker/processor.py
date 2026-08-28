@@ -232,6 +232,9 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
     done_by_name: dict[str, bool] = {name: False for name in op_names}
     entry_by_name: dict[str, dict] = {}
     op_errors: dict[str, str] = {}
+    # Consecutive cycles Flow's status poll did not mention a workflow's media
+    # handle. One dropped call is not proof the handle is dead; three is.
+    missing_streak: dict[str, int] = {}
     rid = params.get("__request_id")
 
     # Per-op resolution: each operation in the batch resolves
@@ -280,6 +283,16 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
                 done_by_name[name] = True
                 op_errors[name] = err
                 continue
+            # Workflow-mode only: `missing` means the status poll answered
+            # without this media at all. Left as plain "pending" it would burn
+            # the whole deadline on a handle Flow has never heard of.
+            if op.get("status") == "missing":
+                missing_streak[name] = missing_streak.get(name, 0) + 1
+                if missing_streak[name] >= 3:
+                    done_by_name[name] = True
+                    op_errors[name] = "media_handle_missing"
+                continue
+            missing_streak.pop(name, None)
             if op.get("done"):
                 done_by_name[name] = True
                 # Each op is expected to yield exactly one media entry
@@ -335,7 +348,9 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
             first_err,
         )
 
-    # ≥1 op succeeded — ingest only the bytes we actually have.
+    # ≥1 op succeeded — ingest only the bytes we actually have. Workflow-mode
+    # (Low Priority) entries come through here too: their poll resolves a signed
+    # flow-content.google url rather than handing back inline bytes.
     entries_with_urls = [
         e for e in succeeded_entries if isinstance(e, dict) and e.get("url")
     ]
@@ -344,25 +359,6 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
             media_service.ingest_urls(entries_with_urls)
         except Exception:  # noqa: BLE001
             logger.exception("auto-ingest from gen_video response failed")
-    # Workflow-mode (Low Priority) deliveries arrive inline as base64 MP4
-    # bytes on the `/v1/media/<id>` poll — there is no GCS URL to chase.
-    # Plant the bytes in the local cache directly so the `/media/<id>` route
-    # serves them like any URL-backed asset.
-    for entry in succeeded_entries:
-        if not isinstance(entry, dict):
-            continue
-        encoded = entry.get("encoded_video")
-        mid = entry.get("media_id")
-        if not isinstance(encoded, str) or not isinstance(mid, str):
-            continue
-        try:
-            import base64 as _b64
-            media_service.ingest_inline_bytes(
-                mid, _b64.b64decode(encoded, validate=False),
-                kind="video", mime="video/mp4",
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("inline ingest from workflow-mode poll failed for %s", mid)
 
     partial_error: Optional[str] = None
     if op_errors:
@@ -536,6 +532,9 @@ async def _handle_gen_video_omni(params: dict) -> tuple[dict, Optional[str]]:
     done_by_name: dict[str, bool] = {name: False for name in op_names}
     entry_by_name: dict[str, dict] = {}
     op_errors: dict[str, str] = {}
+    # Consecutive cycles Flow's status poll did not mention a workflow's media
+    # handle. One dropped call is not proof the handle is dead; three is.
+    missing_streak: dict[str, int] = {}
     rid = params.get("__request_id")
 
     while (
@@ -569,6 +568,16 @@ async def _handle_gen_video_omni(params: dict) -> tuple[dict, Optional[str]]:
                 done_by_name[name] = True
                 op_errors[name] = err
                 continue
+            # Workflow-mode only: `missing` means the status poll answered
+            # without this media at all. Left as plain "pending" it would burn
+            # the whole deadline on a handle Flow has never heard of.
+            if op.get("status") == "missing":
+                missing_streak[name] = missing_streak.get(name, 0) + 1
+                if missing_streak[name] >= 3:
+                    done_by_name[name] = True
+                    op_errors[name] = "media_handle_missing"
+                continue
+            missing_streak.pop(name, None)
             if op.get("done"):
                 done_by_name[name] = True
                 for e in op.get("media_entries") or []:
@@ -614,24 +623,6 @@ async def _handle_gen_video_omni(params: dict) -> tuple[dict, Optional[str]]:
             media_service.ingest_urls(entries_with_urls)
         except Exception:  # noqa: BLE001
             logger.exception("auto-ingest from gen_video_omni response failed")
-    # Omni Flash uses workflow-mode polling: Flow delivers the rendered MP4
-    # inline as base64 on `/v1/media/<id>` with no signed GCS URL. Plant the
-    # bytes in the local cache so `/media/<id>` can serve them.
-    for entry in succeeded_entries:
-        if not isinstance(entry, dict):
-            continue
-        encoded = entry.get("encoded_video")
-        mid = entry.get("media_id")
-        if not isinstance(encoded, str) or not isinstance(mid, str):
-            continue
-        try:
-            import base64 as _b64
-            media_service.ingest_inline_bytes(
-                mid, _b64.b64decode(encoded, validate=False),
-                kind="video", mime="video/mp4",
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("inline ingest from omni workflow poll failed for %s", mid)
 
     return (
         {

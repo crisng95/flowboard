@@ -700,18 +700,40 @@ def test_extract_inner_api_error_handles_status_only():
     assert err == "API_503"
 
 
-# ── workflow-mode (Low Priority) video schema ─────────────────────────────
+# ── workflow-mode (Low Priority) video schema ────────────────────────
 # Some Veo checkpoints (e.g. ``veo_3_1_i2v_lite_low_priority``,
-# ``veo_3_1_i2v_s_fast_ultra_relaxed``) return ``data.workflows[]`` instead
-# of ``data.operations[]``, and the final MP4 is fetched inline as base64
-# from ``/v1/media/<id>`` rather than streamed off ``fifeUrl``. The SDK
-# auto-detects the schema and routes the poll accordingly.
+# ``veo_3_1_i2v_s_fast_ultra_relaxed``) return ``data.workflows[]`` instead of
+# ``data.operations[]``. A workflow name is not a valid operation handle, so
+# those are polled by MEDIA handle through the same ``batchCheckAsync``
+# endpoint — ``{"media": [{"name", "projectId"}]}`` — and the finished file is
+# fetched from a signed CDN url the extension resolves.
+#
+# What must NOT come back: ``GET /v1/media/<id>`` + inline ``video.encodedVideo``.
+# Flow retired that path (400 INVALID_ARGUMENT; 404 when the owning projectId is
+# missing) and the old code read both as "still rendering", so finished clips
+# polled to the deadline and were thrown away.
+
+SIGNED_URL = "https://flow-content.google/video/primary-vid-1?Expires=1&Signature=x"
 
 
-def _mp4_bytes(size: int = 64) -> bytes:
-    """Synthetic but valid-looking MP4: ``ftyp`` box at offset 4 (12+ bytes)."""
-    header = b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00"
-    return header + b"\x00" * (size - len(header))
+def _media_status(media_id: str, status: str, **extra: Any) -> dict[str, Any]:
+    """One ``data.media[]`` record in the shape batchCheckAsync returns."""
+    return {
+        "name": media_id,
+        "mediaMetadata": {"mediaStatus": {"mediaGenerationStatus": status, **extra}},
+    }
+
+
+class WorkflowPollClient(RecordingClient):
+    """Answers the status poll with ``records`` and the TRPC redirect with ``url``."""
+
+    def __init__(self, records: list[dict[str, Any]], url: str | None = SIGNED_URL):
+        super().__init__()
+        self.api_response = {"status": 200, "data": {"media": records}}
+        self.trpc_response = {
+            "status": 200,
+            "data": {"resolvedUrl": url} if url else {},
+        }
 
 
 def test_extract_operation_names_handles_workflow_schema():
@@ -731,14 +753,20 @@ def test_extract_video_workflows_returns_pairs():
     resp = {
         "data": {
             "workflows": [
-                {"name": "wf-1", "metadata": {"primaryMediaId": "mid-1"}},
+                {
+                    "name": "wf-1",
+                    "projectId": "proj-a",
+                    "metadata": {"primaryMediaId": "mid-1"},
+                },
                 {"name": "wf-orphan", "metadata": {}},  # no primary → dropped
                 {"name": "wf-2", "metadata": {"primaryMediaId": "mid-2"}},
             ]
         }
     }
+    # The workflow's OWN projectId rides along: its media is scoped to that
+    # project, and a poll that omits it gets "Requested entity was not found".
     assert extract_video_workflows(resp) == [
-        {"name": "wf-1", "primary_media_id": "mid-1"},
+        {"name": "wf-1", "primary_media_id": "mid-1", "project_id": "proj-a"},
         {"name": "wf-2", "primary_media_id": "mid-2"},
     ]
 
@@ -773,83 +801,198 @@ async def test_gen_video_surfaces_workflows_on_low_priority_response():
 
 
 @pytest.mark.asyncio
-async def test_check_async_workflow_mode_polls_media_endpoint():
-    """Workflow polling fetches ``/v1/media/<id>`` and reads base64 MP4 off
-    ``video.encodedVideo``. A response with valid ``ftyp`` magic → done."""
-    import base64 as _b64
-
-    class WorkflowClient(RecordingClient):
-        async def api_request(self, **kwargs):
-            self.api_calls.append(kwargs)
-            return {
-                "status": 200,
-                "data": {
-                    "video": {
-                        "encodedVideo": _b64.b64encode(_mp4_bytes()).decode(),
-                        "fifeUrl": "https://flow-content.google/video/primary-vid-1?sig=x",
-                    }
-                },
-            }
-
-    c = WorkflowClient()
+async def test_check_async_workflow_mode_polls_by_media_handle():
+    """SUCCESSFUL → one batchCheckAsync by media handle, then a signed CDN url
+    resolved through the extension's cookie-authenticated TRPC call."""
+    c = WorkflowPollClient(
+        [_media_status("primary-vid-1", "MEDIA_GENERATION_STATUS_SUCCESSFUL")]
+    )
     sdk = FlowSDK(client=c)  # type: ignore[arg-type]
     out = await sdk.check_async(
         ["wf-uuid"],
-        workflows=[{"name": "wf-uuid", "primary_media_id": "primary-vid-1"}],
+        workflows=[
+            {
+                "name": "wf-uuid",
+                "primary_media_id": "primary-vid-1",
+                "project_id": "proj-a",
+            }
+        ],
     )
     ops = out["operations"]
     assert len(ops) == 1
     assert ops[0]["name"] == "wf-uuid"
     assert ops[0]["done"] is True
-    assert ops[0]["media_entries"][0]["media_id"] == "primary-vid-1"
-    assert ops[0]["media_entries"][0]["mediaType"] == "video"
-    # The encoded video bytes ride along so the processor can plant them
-    # in the local cache (no GCS URL to fall back to).
-    assert "encoded_video" in ops[0]["media_entries"][0]
-    # GET against /v1/media/<id> — never POST batchCheckAsync for a workflow.
-    assert c.api_calls[0]["method"] == "GET"
-    assert "/v1/media/primary-vid-1" in c.api_calls[0]["url"]
+    assert ops[0]["status"] == "successful"
+    # A signed url the worker can ingest — no inline bytes any more.
+    assert ops[0]["media_entries"] == [
+        {"media_id": "primary-vid-1", "url": SIGNED_URL, "mediaType": "video"}
+    ]
+    call = c.api_calls[0]
+    assert call["method"] == "POST"
+    assert call["body"] == {"media": [{"name": "primary-vid-1", "projectId": "proj-a"}]}
+    # The retired endpoint must never be touched again.
+    assert not any("/v1/media/" in k.get("url", "") for k in c.api_calls)
+    assert "media.getMediaUrlRedirect" in c.trpc_calls[0]["url"]
+    assert "name=primary-vid-1" in c.trpc_calls[0]["url"]
 
 
 @pytest.mark.asyncio
-async def test_check_async_workflow_mode_partial_bytes_means_pending():
-    """During render Flow returns a small metadata payload (no ``ftyp``
-    magic). That must register as ``done=False`` so the worker keeps
-    polling — not a spurious success on a 0-byte file."""
-    import base64 as _b64
-
-    class WorkflowClient(RecordingClient):
-        async def api_request(self, **kwargs):
-            self.api_calls.append(kwargs)
-            return {
-                "status": 200,
-                "data": {
-                    "video": {"encodedVideo": _b64.b64encode(b"\x00" * 200).decode()}
-                },
-            }
-
-    c = WorkflowClient()
+@pytest.mark.parametrize(
+    "raw_status,normalised",
+    [
+        ("MEDIA_GENERATION_STATUS_SCHEDULED", "scheduled"),
+        ("MEDIA_GENERATION_STATUS_ACTIVE", "active"),
+        ("MEDIA_GENERATION_STATUS_SOMETHING_NEW", "unknown"),
+    ],
+)
+async def test_check_async_workflow_mode_in_flight_states_keep_polling(
+    raw_status, normalised
+):
+    """Queued, rendering and unrecognised are all ``done=False`` — but the
+    caller now learns WHICH, instead of one silent pending."""
+    c = WorkflowPollClient([_media_status("primary-vid-1", raw_status)])
     sdk = FlowSDK(client=c)  # type: ignore[arg-type]
     out = await sdk.check_async(
         ["wf-uuid"],
         workflows=[{"name": "wf-uuid", "primary_media_id": "primary-vid-1"}],
     )
-    assert out["operations"][0]["done"] is False
-    assert out["operations"][0]["media_entries"] == []
+    op = out["operations"][0]
+    assert op["done"] is False
+    assert op["status"] == normalised
+    assert op["media_entries"] == []
+    # No point resolving a url before Flow says the render finished.
+    assert c.trpc_calls == []
+
+
+@pytest.mark.asyncio
+async def test_check_async_workflow_mode_failed_carries_flows_own_reason():
+    """FAILED is terminal and keeps Flow's wording. "Media not found." (a handle
+    Flow never knew) and a content filter are both FAILED but mean opposite
+    things to whoever reads the run log."""
+    c = WorkflowPollClient(
+        [
+            _media_status(
+                "primary-vid-1",
+                "MEDIA_GENERATION_STATUS_FAILED",
+                error={"message": "Media not found."},
+                failureReasons=["Media not found."],
+            )
+        ]
+    )
+    sdk = FlowSDK(client=c)  # type: ignore[arg-type]
+    out = await sdk.check_async(
+        ["wf-uuid"],
+        workflows=[{"name": "wf-uuid", "primary_media_id": "primary-vid-1"}],
+    )
+    op = out["operations"][0]
+    assert op["done"] is True
+    assert op["status"] == "failed"
+    assert op["error"] == "Media not found."
+
+
+@pytest.mark.asyncio
+async def test_check_async_workflow_mode_unmentioned_media_is_missing():
+    """Flow answered without our media at all. That is not "pending" — say so,
+    and let the worker retire the handle after a few straight cycles."""
+    c = WorkflowPollClient([])
+    sdk = FlowSDK(client=c)  # type: ignore[arg-type]
+    out = await sdk.check_async(
+        ["wf-uuid"],
+        workflows=[{"name": "wf-uuid", "primary_media_id": "primary-vid-1"}],
+    )
+    op = out["operations"][0]
+    assert op["done"] is False
+    assert op["status"] == "missing"
+
+
+@pytest.mark.asyncio
+async def test_check_async_workflow_mode_unresolved_url_is_transient():
+    """Finished, but the redirect did not resolve this cycle (session blip).
+    Keep polling — a rendered clip must not be reported as failed."""
+    c = WorkflowPollClient(
+        [_media_status("primary-vid-1", "MEDIA_GENERATION_STATUS_SUCCESSFUL")],
+        url=None,
+    )
+    sdk = FlowSDK(client=c)  # type: ignore[arg-type]
+    out = await sdk.check_async(
+        ["wf-uuid"],
+        workflows=[{"name": "wf-uuid", "primary_media_id": "primary-vid-1"}],
+    )
+    op = out["operations"][0]
+    assert op["done"] is False
+    assert op["status"] == "url_error"
+    assert op["media_entries"] == []
+
+
+@pytest.mark.asyncio
+async def test_check_async_workflow_mode_api_error_reports_poll_error():
+    """An API error is an API ERROR. The bug this replaces was born from
+    translating exactly this 400 into "still rendering"."""
+
+    class ErrorClient(RecordingClient):
+        async def api_request(self, **kwargs):
+            self.api_calls.append(kwargs)
+            return {
+                "status": 400,
+                "data": {"error": {"status": "INVALID_ARGUMENT", "message": "bad"}},
+            }
+
+    c = ErrorClient()
+    sdk = FlowSDK(client=c)  # type: ignore[arg-type]
+    out = await sdk.check_async(
+        ["wf-uuid"],
+        workflows=[{"name": "wf-uuid", "primary_media_id": "primary-vid-1"}],
+    )
+    op = out["operations"][0]
+    assert op["done"] is False
+    assert op["status"] == "poll_error"
+    assert op["media_entries"] == []
+
+
+@pytest.mark.asyncio
+async def test_check_async_workflow_mode_batches_one_call_per_project():
+    """Every pending workflow in a project resolves in ONE status call."""
+    c = WorkflowPollClient(
+        [
+            _media_status("mid-1", "MEDIA_GENERATION_STATUS_ACTIVE"),
+            _media_status("mid-2", "MEDIA_GENERATION_STATUS_ACTIVE"),
+        ]
+    )
+    sdk = FlowSDK(client=c)  # type: ignore[arg-type]
+    await sdk.check_async(
+        ["wf-1", "wf-2"],
+        workflows=[
+            {"name": "wf-1", "primary_media_id": "mid-1", "project_id": "proj-a"},
+            {"name": "wf-2", "primary_media_id": "mid-2", "project_id": "proj-a"},
+        ],
+    )
+    assert len(c.api_calls) == 1
+    assert c.api_calls[0]["body"] == {
+        "media": [
+            {"name": "mid-1", "projectId": "proj-a"},
+            {"name": "mid-2", "projectId": "proj-a"},
+        ]
+    }
 
 
 @pytest.mark.asyncio
 async def test_check_async_mixed_schemas_routes_correctly():
     """A single batch can mix OLD operations and NEW workflows (e.g. when a
-    retry of a workflow op is re-dispatched as workflow). Operation names
-    must NOT be sent into the workflow poll and vice-versa."""
-    import base64 as _b64
+    retry of a workflow op is re-dispatched as workflow). Both now POST to the
+    same endpoint, so the two are told apart by BODY shape: operation handles
+    must never land in the ``media`` list and vice-versa."""
 
     class MixedClient(RecordingClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.trpc_response = {
+                "status": 200,
+                "data": {"resolvedUrl": "https://flow-content.google/video/wf-mid?sig"},
+            }
+
         async def api_request(self, **kwargs):
             self.api_calls.append(kwargs)
-            url = kwargs.get("url", "")
-            if "batchCheckAsync" in url:
+            if "operations" in (kwargs.get("body") or {}):
                 return {
                     "status": 200,
                     "data": {
@@ -864,14 +1007,12 @@ async def test_check_async_mixed_schemas_routes_correctly():
                         ]
                     },
                 }
-            # /v1/media/<id> path
             return {
                 "status": 200,
                 "data": {
-                    "video": {
-                        "encodedVideo": _b64.b64encode(_mp4_bytes()).decode(),
-                        "fifeUrl": "https://flow-content.google/video/wf-mid?sig",
-                    }
+                    "media": [
+                        _media_status("wf-mid", "MEDIA_GENERATION_STATUS_SUCCESSFUL")
+                    ]
                 },
             }
 
@@ -886,10 +1027,12 @@ async def test_check_async_mixed_schemas_routes_correctly():
     assert [o["name"] for o in ops] == ["op-old", "wf-uuid"]
     assert ops[0]["done"] is True
     assert ops[1]["done"] is True
-    # OLD poll body must only include op-old (workflow uuid → would 400 on Flow).
-    old_call = next(c for c in c.api_calls if "batchCheckAsync" in c.get("url", ""))
-    bodies = old_call["body"]["operations"]
-    assert [b["operation"]["name"] for b in bodies] == ["op-old"]
+    # OLD poll body must only include op-old (a workflow uuid there → 400).
+    old_call = next(k for k in c.api_calls if "operations" in (k.get("body") or {}))
+    assert [b["operation"]["name"] for b in old_call["body"]["operations"]] == ["op-old"]
+    # … and the workflow poll must only carry the media handle.
+    wf_call = next(k for k in c.api_calls if "media" in (k.get("body") or {}))
+    assert wf_call["body"] == {"media": [{"name": "wf-mid"}]}
 
 
 @pytest.mark.asyncio

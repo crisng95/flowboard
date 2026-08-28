@@ -20,6 +20,7 @@ from sqlmodel import select
 from flowboard.config import STORAGE_DIR
 from flowboard.db import get_session
 from flowboard.db.models import Asset
+from flowboard.services.flow_sdk import FLOW_CDN_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +34,9 @@ _MEDIA_ID_RE = re.compile(r"^[0-9a-fA-F-]{1,64}$")
 # `flow-content.google` CDN (signed with short-TTL query params). The response
 # from `batchGenerateImages` includes the signed URL at
 # `data.media[].image.generatedImage.fifeUrl`.
-_ALLOWED_URL_PREFIXES: tuple[str, ...] = (
-    "https://flow-content.google/",
-)
+# Shared with flow_sdk.resolve_media_url, which refuses to hand back a url from
+# anywhere else — a resolved video url must be ingestable by definition.
+_ALLOWED_URL_PREFIXES: tuple[str, ...] = (FLOW_CDN_PREFIX,)
 
 
 def _url_allowed(url: str) -> bool:
