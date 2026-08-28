@@ -360,6 +360,20 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
         except Exception:  # noqa: BLE001
             logger.exception("auto-ingest from gen_video response failed")
 
+        # Pull the bytes down NOW. A workflow poll hands back a url signed with a
+        # short-lived `Expires=`, and the lazy `/media/<id>` fetch may not run
+        # until long after it has lapsed — the inline-bytes path this replaced
+        # always left a local copy behind, and so must this one. Best-effort: the
+        # Asset row keeps its url either way, so the lazy path stays as fallback.
+        for entry in entries_with_urls:
+            mid = entry.get("media_id")
+            if not isinstance(mid, str):
+                continue
+            try:
+                await media_service.fetch_and_cache(mid)
+            except Exception:  # noqa: BLE001
+                logger.exception("eager cache of video %s failed", mid)
+
     partial_error: Optional[str] = None
     if op_errors:
         # De-dup distinct error codes for a compact one-line summary
@@ -623,6 +637,20 @@ async def _handle_gen_video_omni(params: dict) -> tuple[dict, Optional[str]]:
             media_service.ingest_urls(entries_with_urls)
         except Exception:  # noqa: BLE001
             logger.exception("auto-ingest from gen_video_omni response failed")
+
+        # Pull the bytes down NOW. A workflow poll hands back a url signed with a
+        # short-lived `Expires=`, and the lazy `/media/<id>` fetch may not run
+        # until long after it has lapsed — the inline-bytes path this replaced
+        # always left a local copy behind, and so must this one. Best-effort: the
+        # Asset row keeps its url either way, so the lazy path stays as fallback.
+        for entry in entries_with_urls:
+            mid = entry.get("media_id")
+            if not isinstance(mid, str):
+                continue
+            try:
+                await media_service.fetch_and_cache(mid)
+            except Exception:  # noqa: BLE001
+                logger.exception("eager cache of video %s failed", mid)
 
     return (
         {
