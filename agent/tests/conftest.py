@@ -29,16 +29,20 @@ def _fresh_db():
 
 @pytest.fixture(autouse=True)
 def _seed_default_paygate_tier():
-    """Most tests exercise downstream behaviour (variant_count, ref_media_ids,
-    SDK payload shape, etc.) and don't care about the upstream tier-resolution
-    chain. Pre-Phase-1, the worker silently defaulted to PAYGATE_TIER_ONE when
-    no signal was present, so tests didn't have to think about tier at all.
-    Phase 1 made that fail loud — every gen now requires a tier signal — so
-    we keep the test-time ergonomics by simulating the "extension already
-    sniffed Pro" state by default. Tests that specifically want to exercise
-    the no-tier path (e.g. test_processor_tier_fallback.py) reset the cache
-    in their own module-local autouse fixture, which runs after this one and
-    wins.
+    """Pin the tier so tests assert one checkpoint, not the configured default.
+
+    Most tests exercise downstream behaviour (variant_count, ref_media_ids,
+    envelope shape) and don't care where the tier came from. They do care that
+    it is stable: since the Flow migration the resolution chain ends in
+    FLOWBOARD_PAYGATE_TIER, whose default is PAYGATE_TIER_TWO, so without this
+    fixture a test asserting a Pro checkpoint would pass or fail depending on
+    the developer's environment.
+
+    Simulating "the extension pushed Pro" keeps that deterministic and keeps
+    the fixture honest about which link of the chain it is standing in for.
+    Tests exercising the chain itself (test_processor_tier_fallback.py) clear
+    this in their own module-local autouse fixture, which runs after this one
+    and wins.
     """
     from flowboard.services.flow_client import flow_client
     flow_client._paygate_tier = "PAYGATE_TIER_ONE"
@@ -46,6 +50,24 @@ def _seed_default_paygate_tier():
     flow_client._paygate_tier = None
 
 
+@pytest.fixture(autouse=True)
+def _no_image_submit_cadence(monkeypatch):
+    """Drop the image-wave submit cadence to zero for tests.
+
+    Production staggers variant submits by up to 2.5s to match Flow's own UI
+    (see flow_sdk.IMAGE_UI_SUBMIT_OFFSETS_S). No test wants to sit through
+    that, and none asserts on timing — except
+    test_image_submit_cadence_is_staggered, which reads the constant directly
+    and so is unaffected by this patch.
+    """
+    from flowboard.services import flow_sdk
+    monkeypatch.setattr(
+        flow_sdk, "IMAGE_UI_SUBMIT_OFFSETS_S", (0.0, 0.0, 0.0, 0.0)
+    )
+    yield
+
+
 @pytest.fixture
 def client():
     return TestClient(app)
+

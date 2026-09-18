@@ -18,7 +18,7 @@ from flowboard.db import get_session
 from flowboard.db.models import Request
 from flowboard.services import media as media_service
 from flowboard.services.flow_client import flow_client
-from flowboard.services.flow_sdk import get_flow_sdk
+from flowboard.services.flow_sdk import get_flow_sdk, resolve_paygate_tier
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,13 @@ logger = logging.getLogger(__name__)
 Handler = Callable[[dict], Awaitable[tuple[dict, Optional[str]]]]
 
 
+# The `proxy` request type is a manual escape hatch, not part of any
+# generation path. Its host is the PRE-MIGRATION one: aisandbox-pa needed the
+# `Bearer ya29.…` that flow.google.com no longer mints, so a proxy call now
+# comes back `NO_FLOW_KEY` from the extension. Kept because it is a documented
+# request type with its own tests, and because it is the one place an operator
+# can still poke the old host by hand if Google ever turns it back on.
+# Everything that generates goes through flow_client.batch_rpc instead.
 _ALLOWED_URL_PREFIXES: tuple[str, ...] = (
     "https://aisandbox-pa.googleapis.com/",
 )
@@ -82,16 +89,28 @@ async def _handle_gen_image(params: dict) -> tuple[dict, Optional[str]]:
         return {}, "invalid_project_id"
     aspect = params.get("aspect_ratio") or "IMAGE_ASPECT_RATIO_LANDSCAPE"
     # Tier resolution: caller-stamped value first (set at dispatch time),
-    # then the live value from `flow_client` (resolved authoritatively
-    # via /v1/credits on token capture). NO silent default — if both
-    # are absent we fail loud with `paygate_tier_unknown`. The old
-    # behaviour (default `PAYGATE_TIER_ONE`) silently downgraded Ultra
-    # users to Pro and stamped the wrong tier into request.params, which
-    # then fed back through `_last_observed_paygate_tier_from_db()` and
-    # corrupted /api/auth/me responses for the rest of the session.
-    tier = params.get("paygate_tier") or flow_client.paygate_tier
-    if tier is None:
-        return {}, "paygate_tier_unknown"
+    # then whatever `flow_client` managed to resolve, then the configured
+    # default. That last link is new, and it is not a silent default — it is
+    # the only remaining source. The live value came from /v1/credits, fetched
+    # with the Bearer token the extension sniffed, and flow.google.com mints no
+    # Bearer, so `flow_client.paygate_tier` is now permanently None. Keeping
+    # the old "fail loud when absent" rule would have meant failing every
+    # single dispatch.
+    #
+    # The concern behind that rule still stands: the tier picks the video
+    # checkpoint, and the pre-v1.1.5 hardcoded `PAYGATE_TIER_ONE` silently
+    # downgraded Ultra users to Pro and stamped the wrong tier into
+    # request.params, which fed back through
+    # `_last_observed_paygate_tier_from_db()` and corrupted /api/auth/me for
+    # the rest of the session. So the plan is declared once in config
+    # (FLOWBOARD_PAYGATE_TIER) and an unrecognised value still fails loud —
+    # see flow_sdk.resolve_paygate_tier.
+    try:
+        tier = resolve_paygate_tier(
+            params.get("paygate_tier") or flow_client.paygate_tier
+        )
+    except ValueError as exc:
+        return {}, str(exc)[:200]
     # `ref_media_ids` is the broader name (any upstream image / character /
     # visual_asset feeds in as IMAGE_INPUT_TYPE_REFERENCE). Older callers used
     # `character_media_ids` — accept both.
@@ -194,12 +213,16 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
     ):
         return {}, "missing_start_media_id"
     aspect = params.get("aspect_ratio") or "VIDEO_ASPECT_RATIO_LANDSCAPE"
-    # Tier resolution — see the matching block in _handle_gen_image for
-    # the rationale. No silent default; missing tier is a hard error so
-    # we never dispatch an Ultra user's video at the Pro checkpoint.
-    tier = params.get("paygate_tier") or flow_client.paygate_tier
-    if tier is None:
-        return {}, "paygate_tier_unknown"
+    # Tier resolution — see the matching block in _handle_gen_image. This is
+    # the handler the tier actually still matters for: it reaches
+    # `resolve_video_model`, which is what separates an Ultra checkpoint from
+    # a lite one.
+    try:
+        tier = resolve_paygate_tier(
+            params.get("paygate_tier") or flow_client.paygate_tier
+        )
+    except ValueError as exc:
+        return {}, str(exc)[:200]
     video_quality = params.get("video_quality")
     if not isinstance(video_quality, str) or not video_quality.strip():
         video_quality = None
@@ -406,9 +429,12 @@ async def _handle_edit_image(params: dict) -> tuple[dict, Optional[str]]:
     aspect = params.get("aspect_ratio") or "IMAGE_ASPECT_RATIO_LANDSCAPE"
     # Tier resolution — see _handle_gen_image for rationale. Fail loud,
     # no silent fallback to Pro.
-    tier = params.get("paygate_tier") or flow_client.paygate_tier
-    if tier is None:
-        return {}, "paygate_tier_unknown"
+    try:
+        tier = resolve_paygate_tier(
+            params.get("paygate_tier") or flow_client.paygate_tier
+        )
+    except ValueError as exc:
+        return {}, str(exc)[:200]
     raw_refs = params.get("ref_media_ids")
     ref_ids: Optional[list[str]] = None
     if isinstance(raw_refs, list):
@@ -482,9 +508,12 @@ async def _handle_gen_video_omni(params: dict) -> tuple[dict, Optional[str]]:
     if not isinstance(duration_s, int) or duration_s not in (4, 6, 8, 10):
         return {}, "invalid_duration_s"
     aspect = params.get("aspect_ratio") or "VIDEO_ASPECT_RATIO_PORTRAIT"
-    tier = params.get("paygate_tier") or flow_client.paygate_tier
-    if tier is None:
-        return {}, "paygate_tier_unknown"
+    try:
+        tier = resolve_paygate_tier(
+            params.get("paygate_tier") or flow_client.paygate_tier
+        )
+    except ValueError as exc:
+        return {}, str(exc)[:200]
 
     # ── Cross-project ref sync ────────────────────────────────────────
     # Flow scopes mediaIds to the project they were uploaded in. When
