@@ -5,6 +5,8 @@ import {
   getFlowSyncStatus,
   syncBoardsUpToFlow,
   type BoardFlowStatus,
+  type FlowListingStatus,
+  type SyncStatusResponse,
 } from "../api/client";
 
 /**
@@ -33,21 +35,27 @@ export function ProjectSidebar() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
-  // Flow project sync — one-way (local → Flow). The map tracks which
-  // local boards still have a live Flow project; the sync button
-  // auto-creates Flow projects for any board that's missing one.
+  // Flow project sync — one-way (local → Flow). The map tracks which local
+  // boards still have a live Flow project; the sync button used to create a
+  // Flow project for any board that was missing one.
+  //
+  // Since the September 2026 Flow migration neither half is possible: Flow
+  // exposes no RPC to list a user's projects or to create one. `flowListing`
+  // carries the agent's verdict so the button can explain that instead of
+  // firing a request that answers 501.
   const [flowStatus, setFlowStatus] = useState<Map<number, BoardFlowStatus>>(
     () => new Map(),
   );
+  const [flowListing, setFlowListing] = useState<FlowListingStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncSummary, setSyncSummary] = useState<string | null>(null);
 
-  async function refreshStatus(): Promise<Map<number, BoardFlowStatus>> {
+  async function refreshStatus(): Promise<SyncStatusResponse> {
     const res = await getFlowSyncStatus();
-    const m = new Map(res.board_status.map((b) => [b.board_id, b]));
-    setFlowStatus(m);
-    return m;
+    setFlowStatus(new Map(res.board_status.map((b) => [b.board_id, b])));
+    setFlowListing(res.flow_listing ?? null);
+    return res;
   }
 
   async function handleSyncClick() {
@@ -57,9 +65,22 @@ export function ProjectSidebar() {
     setSyncSummary(null);
     try {
       // Refresh status, then push any orphans up to Flow in one shot.
-      const status = await refreshStatus();
-      const orphans = Array.from(status.values()).filter(
-        (b) => !b.exists_on_flow,
+      const res = await refreshStatus();
+      if (res.flow_listing && !res.flow_listing.available) {
+        // Nothing to push: Flow cannot create a project to push into. Say so
+        // rather than calling sync-up, which answers 501 and would surface as
+        // a red error for something that is expected.
+        setSyncSummary(
+          res.flow_listing.pinned_project_id
+            ? "Flow no longer creates projects — all boards use the pinned one"
+            : "Flow no longer creates projects — pin FLOWBOARD_FLOW_PROJECT_ID",
+        );
+        return;
+      }
+      // `exists_on_flow` is null when the check could not run; only a hard
+      // false means the board's project is genuinely gone.
+      const orphans = res.board_status.filter(
+        (b) => b.exists_on_flow === false,
       ).length;
       if (orphans === 0) {
         setSyncSummary("All boards already on Flow ✓");
@@ -227,7 +248,11 @@ export function ProjectSidebar() {
               className="project-sidebar__sync"
               onClick={handleSyncClick}
               disabled={syncing}
-              title="Push every local board up to Google Flow — creates a Flow project for any board that's missing one"
+              title={
+                flowListing && !flowListing.available
+                  ? "Flow no longer exposes project creation — boards share the pinned Flow project"
+                  : "Push every local board up to Google Flow — creates a Flow project for any board that's missing one"
+              }
               aria-label="Sync local boards up to Google Flow"
             >
               {syncing ? "…" : "🔄"}

@@ -17,13 +17,44 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 // the raw message.
 function humanizeBackendError(token: string): string | null {
   const t = token.toLowerCase();
-  if (t === "paygate_tier_unknown") {
+  if (t.startsWith("paygate_tier_invalid")) {
     return (
-      "Flowboard doesn't know your Google Flow plan tier yet — the "
-      + "extension hasn't seen a Flow request that exposes it. Open "
-      + "https://labs.google/fx/tools/flow in a tab and reload it once, "
-      + "then retry. Flowboard refuses to dispatch in this state to "
-      + "avoid silently serving Ultra users at the Pro checkpoint."
+      "Flowboard doesn't recognise the configured Google Flow plan. Set "
+      + "FLOWBOARD_PAYGATE_TIER to PAYGATE_TIER_TWO (Ultra) or "
+      + "PAYGATE_TIER_ONE (Pro) and restart the agent. It refuses to "
+      + "dispatch in this state rather than guessing, because the plan "
+      + "picks which video checkpoint renders."
+    );
+  }
+  if (t.includes("no_flow_project")) {
+    return (
+      "Flow no longer lets Flowboard create projects — that endpoint went "
+      + "with Google's September 2026 migration. Create one project in the "
+      + "Flow UI, copy its uuid from the address bar, and set "
+      + "FLOWBOARD_FLOW_PROJECT_ID to it before restarting the agent."
+    );
+  }
+  if (t.includes("unsupported_on_batch_api")) {
+    // Not transient and not the user's fault: Flow's current API has no
+    // equivalent for this. Retrying will never help, so say so.
+    return (
+      token
+      + " — this capability has no equivalent on Flow's current API, so "
+      + "retrying will not help."
+    );
+  }
+  if (t.includes("no_at_token")) {
+    return (
+      "The Flow tab is open but hasn't finished loading, so it can't sign "
+      + "the request yet. Reload https://flow.google.com/ , wait for the "
+      + "app to appear, then retry."
+    );
+  }
+  if (t.includes("no_flow_tab") || t.includes("flow_tab_discarded")) {
+    return (
+      "Flowboard needs one signed-in https://flow.google.com/ tab left "
+      + "open — only the page itself can sign a Flow request, so nothing "
+      + "works headless. Open it and retry."
     );
   }
   if (t === "no_media_id_in_upload_response") {
@@ -351,17 +382,26 @@ export function getBoardProject(boardId: number) {
 // ── Auth / profile ───────────────────────────────────────────────────────
 
 export interface AuthMe {
-  // Each field is null until the extension resolves the Bearer token
-  // against Google's userinfo endpoint and pushes the profile to agent.
+  // Identity rode on the Bearer token the extension sniffed off
+  // aisandbox-pa. Since Flow moved to flow.google.com no Bearer is minted,
+  // so these stay null and `identity_available` is false — genuinely
+  // unavailable, not pending. Don't poll waiting for them.
   email: string | null;
   name: string | null;
   picture: string | null;
   verified_email: boolean | null;
-  // Paygate tier — primary source is the agent's own /v1/credits fetch
-  // triggered when the extension pushes a Bearer token. Falls back to
-  // the legacy passive sniff (extension reading userPaygateTier out of
-  // outgoing Flow request bodies) if the agent fetch fails.
+  identity_available: boolean;
+  // The tier generation will actually use. Same story as identity — it came
+  // from /v1/credits with that token — so it is declared in the agent's
+  // config now rather than discovered.
   paygate_tier: "PAYGATE_TIER_ONE" | "PAYGATE_TIER_TWO" | null;
+  // "extension" when a live signal was available (an older extension that
+  // still captures a token), "configured" otherwise — the normal case.
+  paygate_tier_source: "extension" | "configured";
+  // Set when the configured tier is not a value Flow recognises. Generation
+  // will refuse until it is fixed, so surface it rather than waiting for a
+  // dispatch to fail.
+  paygate_tier_error: string | null;
   // Subscription SKU from /v1/credits — e.g. "WS_ULTRA" / "WS_PRO".
   // Available alongside paygate_tier; null until the credits fetch lands.
   sku: string | null;
@@ -883,11 +923,22 @@ export interface BoardFlowStatus {
   board_id: number;
   board_name: string;
   flow_project_id: string | null;
-  exists_on_flow: boolean;
+  // null = could not be checked. Flow exposes no project-listing RPC since
+  // the migration, so this is null in practice; treating null as `false`
+  // would flag every board as missing from Flow.
+  exists_on_flow: boolean | null;
+}
+
+export interface FlowListingStatus {
+  available: boolean;
+  reason: string | null;
+  // The single Flow project every board generates into, when one is pinned.
+  pinned_project_id: string | null;
 }
 
 export interface SyncStatusResponse {
   board_status: BoardFlowStatus[];
+  flow_listing: FlowListingStatus;
 }
 
 export interface SyncUpAction {
