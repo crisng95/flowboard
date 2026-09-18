@@ -14,11 +14,25 @@
   <img src="https://img.shields.io/badge/Veo%203.1-i2v-FF6F00?logo=google&logoColor=white" alt="Veo 3.1"/>
   <img src="https://img.shields.io/badge/Flow-Pro%20%2F%20Ultra%20only-EA4335?logo=google&logoColor=white" alt="Flow Pro / Ultra only"/>
   <img src="https://img.shields.io/badge/LLM-Claude%20%C2%B7%20Gemini%20%C2%B7%20Codex-D97757" alt="Claude / Gemini / OpenAI Codex"/>
-  <img src="https://img.shields.io/badge/Tests-333%20passing-success?logo=pytest&logoColor=white" alt="333 passing"/>
+  <img src="https://img.shields.io/badge/Tests-406%20passing-success?logo=pytest&logoColor=white" alt="406 passing"/>
   <img src="https://img.shields.io/badge/Status-personal%20local--only-orange" alt="Status"/>
 </p>
 
 ---
+
+> ### ✅ Fixed for the new Google Flow API
+>
+> Google moved Flow to **`flow.google.com`** in September 2026 and rewrote the
+> frontend. The REST API Flowboard called (`aisandbox-pa.googleapis.com` with a
+> sniffed `Bearer ya29.…`) no longer has a caller, and that token is not
+> expired — it stopped being minted. Everything now goes through Flow's
+> `batchexecute` endpoint, signed inside the page by the extension.
+>
+> **Already running an older Flowboard?** → [**Upgrading from a
+> pre-migration install**](#upgrading-from-a-pre-migration-install) — three
+> steps, about two minutes.
+> **New here?** → [Quickstart](#quickstart). **What changed?** →
+> [Changelog](#changelog) · [migration notes](docs/migrations/flow-batchexecute.md).
 
 ### ☕ Sponsor this project
 
@@ -63,13 +77,14 @@
 > 1. **Google Flow plan: `Pro` or `Ultra` only.** Veo 3.1 i2v + GEM_PIX_2
 >    are gated to paid tiers. The free tier and trial accounts cannot
 >    drive video generation, so Flowboard cannot work on them. Confirm
->    your plan at [labs.google/fx](https://labs.google/fx/tools/flow)
->    before installing.
-> 2. **Chrome extension is mandatory.** All generation requests are
->    proxied through `extension/` (Chrome MV3) so the agent can ride
->    your authenticated Flow session + reCAPTCHA token. Without the
->    extension loaded and connected to `labs.google/fx/tools/flow`, the
->    `▶ Generate` button does nothing.
+>    your plan at [flow.google.com](https://flow.google.com/) before
+>    installing.
+> 2. **Chrome extension is mandatory, and so is an open Flow tab.** Flow
+>    signs every call inside the page — session cookie, per-page token,
+>    single-use reCAPTCHA — so the agent has no path to it at all. The
+>    extension runs each request in a signed-in `flow.google.com` tab on
+>    the agent's behalf. Without it loaded and one such tab open, the
+>    `▶ Generate` button does nothing. Nothing here runs headless.
 > 3. **One LLM CLI on `PATH` for auto-prompt / vision / planner.**
 >    Flowboard ships a swappable provider layer — pick one in
 >    `Settings → AI Providers`:
@@ -352,10 +367,12 @@ matching vocab from the system prompt.
   through the extension, and shells out to the configured LLM CLI
   (Claude / Gemini / Codex — see *AI Providers* below) for vision +
   auto-prompt + planner synthesis.
-- **Extension** — Chrome MV3. Lives on `labs.google/fx/tools/flow`,
-  intercepts Flow's API calls (multimodal-fetch in MAIN world for the
-  reCAPTCHA token), proxies them over a localhost WebSocket so the
-  agent never has to touch the browser cookie jar directly.
+- **Extension** — Chrome MV3. Lives on `flow.google.com`. Runs Flow's
+  `batchexecute` RPCs inside the page's MAIN world, where the per-page
+  `at` token lives, and mints a fresh reCAPTCHA for each generate. The
+  agent builds the request envelope and receives the raw body over a
+  localhost WebSocket, so it never touches the browser cookie jar — and
+  could not use it if it did, since only the page can sign the call.
 - **Storage** — local-only. SQLite for graph + history, a
   `storage/media/` folder for cached image / video bytes (lazy-fetched
   from Flow's signed CDN URLs and re-served from the agent so they
@@ -373,14 +390,15 @@ matching vocab from the system prompt.
 | **Node 20+** | Frontend dev server (Vite) |
 | **Chrome / Chromium** | **Mandatory** — hosts the MV3 extension that proxies every Google Flow API call. The agent has zero direct path to Flow without it. |
 | **One LLM CLI** on `PATH` | Vision describe + auto-prompt + planner. Pick one — defaults to **Claude Code** ([`@anthropic-ai/claude-code`](https://docs.claude.com/claude-code/install)); also supports **Gemini CLI** ([`@google/gemini-cli`](https://github.com/google-gemini/gemini-cli)) and **OpenAI Codex** ([`@openai/codex`](https://github.com/openai/codex), provider implemented but not yet smoke-tested). All use OAuth against your existing AI subscription — no API key needed. |
-| **Google Flow `Pro` or `Ultra` plan** at [`labs.google/fx/tools/flow`](https://labs.google/fx/tools/flow) | **Free tier and trial accounts will not work.** Veo 3.1 i2v + GEM_PIX_2 image gen are gated to paid plans. |
+| **Google Flow `Pro` or `Ultra` plan** at [`flow.google.com`](https://flow.google.com/) | **Free tier and trial accounts will not work.** Veo 3.1 i2v + GEM_PIX_2 image gen are gated to paid plans. |
+| **One signed-in Flow tab, left open** | Mandatory since the September 2026 migration: Flow signs every call in the page with a session cookie, a per-page token and a single-use reCAPTCHA. None of it can be replayed from outside the browser. |
 
 > **Windows:** Use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install). All commands assume a Unix shell.
 
 ### One-line setup (optional)
 
 If you have `make` installed, the repo ships shortcut targets that wrap
-Steps 2 + 3:
+Steps 3 + 4:
 
 ```bash
 make install        # agent venv + frontend deps (uses uv if available, else pip)
@@ -404,11 +422,52 @@ cd flowboard
 
 1. Open `chrome://extensions/` → enable **Developer mode** (top-right).
 2. Click **Load unpacked** → pick the `extension/` folder in this repo.
-3. Open a tab to <https://labs.google/fx/tools/flow> and sign in.
-4. The extension's icon should turn coloured once it captures a fresh
-   Flow auth token (~5 s).
+3. Open a tab to <https://flow.google.com/> and sign in, and leave it open.
+4. The extension's badge turns green (`●`) once it connects to the agent.
 
-### Step 2 — start the agent
+   It no longer waits for an auth token: `flow.google.com` mints no
+   `Bearer`, so `flowKeyPresent` stays false and that is correct. What
+   matters is the WebSocket being up and a signed-in Flow tab existing.
+
+### Step 2 — configure Flow access
+
+Two settings used to be discovered at runtime and now have to be declared,
+because the bearer token they were read from is no longer minted:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` at the repo root:
+
+```ini
+FLOWBOARD_FLOW_PROJECT_ID=8b62385c-4916-4abd-b01f-b28173d8eb04
+FLOWBOARD_PAYGATE_TIER=PAYGATE_TIER_TWO
+```
+
+**`FLOWBOARD_FLOW_PROJECT_ID`** — the Flow project every board generates
+into. Flow no longer lets Flowboard create one, so make a single project in
+the Flow UI and copy its uuid out of the address bar:
+
+```
+https://flow.google.com/…/8b62385c-4916-4abd-b01f-b28173d8eb04
+                          └─────────── this ───────────┘
+```
+
+Boards share that project. Leave it empty and every generation answers
+`NO_FLOW_PROJECT` — the request never leaves the agent.
+
+**`FLOWBOARD_PAYGATE_TIER`** — `PAYGATE_TIER_TWO` for Ultra,
+`PAYGATE_TIER_ONE` for Pro. This came from Flow's `/v1/credits` with the same
+dead token. It is not cosmetic: it picks the video checkpoint, so Flowboard
+refuses to dispatch on an unrecognised value rather than quietly serving an
+Ultra account from the low-priority queue.
+
+> Anything already in your shell environment beats `.env`, so
+> `FLOWBOARD_PAYGATE_TIER=PAYGATE_TIER_ONE make agent` overrides it for one
+> run. `.env` is gitignored; `.env.example` documents every key.
+
+### Step 3 — start the agent
 
 ```bash
 cd agent
@@ -425,10 +484,12 @@ Smoke-test:
 
 ```bash
 curl http://127.0.0.1:8101/api/health
-# {"ok":true,"extension_connected":true,"ws_stats":{"connected":true,"flow_key_present":true,...}}
+# {"ok":true,"extension_connected":true,"ws_stats":{"connected":true,"flow_key_present":false,...}}
+#                                                                      ^^^^^
+#                       Expected. There is no bearer token on this transport.
 ```
 
-### Step 3 — start the frontend
+### Step 4 — start the frontend
 
 ```bash
 cd frontend
@@ -442,12 +503,80 @@ empty. Add a Character node, generate it, drop a Visual asset, drop an
 Image, wire them up, click **▶ Generate** — the full demo above is
 about 15 minutes of clicking.
 
+### Upgrading from a pre-migration install
+
+If Flowboard worked for you before September 2026 and now fails with
+`CAPTCHA_FAILED: NO_FLOW_TAB` or `paygate_tier_unknown`, this is why: Flow
+moved hosts and stopped minting the auth token the old build depended on.
+Refreshing the Flow tab cannot fix it — if `token_age_s` only ever climbs
+across reloads, the token is not stale, it is gone.
+
+Three steps:
+
+**1. Reload the extension.** `chrome://extensions/` → ⟳ on **Flowboard
+Bridge**. Confirm it reads **v0.1.0** or later. The old build matches only
+`labs.google/fx/tools/flow`, so it cannot see a `flow.google.com` tab even
+when one is open in front of it.
+
+**2. Open <https://flow.google.com/>, sign in, and leave the tab open.**
+Flow signs every call inside the page — session cookie, a per-page token, and
+a single-use reCAPTCHA per generate — so the agent has no path to it on its
+own. This is a hard requirement, not a warm-up: **nothing here runs
+headless.**
+
+**3. Set the two new values** — see [Step 2](#step-2--configure-flow-access):
+
+```bash
+cp .env.example .env    # then fill in FLOWBOARD_FLOW_PROJECT_ID
+```
+
+Restart the agent, then check:
+
+```bash
+curl -s http://127.0.0.1:8101/api/health
+# {"ok":true,"extension_connected":true,"ws_stats":{"connected":true,"flow_key_present":false,...}}
+
+curl -s http://127.0.0.1:8101/api/auth/me
+# {"paygate_tier":"PAYGATE_TIER_TWO","paygate_tier_source":"configured","identity_available":false,...}
+```
+
+#### Things that look broken and are not
+
+| You see | Why it is fine |
+|---|---|
+| `flow_key_present: false` | Correct. Nothing on this transport captures a bearer token. |
+| `identity_available: false`, no email or avatar | Your Google profile rode on that token. Genuinely unavailable — not pending, so the panel no longer polls for it. |
+| `sku` and `credits` are `null` | Same token, same reason. Flow exposes no credits RPC here. |
+| `paygate_tier_source: "configured"` | Expected. It means the value came from your `.env`, which is now the only source. |
+| A poll saying **`Media not found.`** | Not a failure. Jobs report it and still deliver a finished clip; Flowboard treats it as a diagnostic and keeps waiting. |
+
+#### Things that genuinely stopped working
+
+No payload for these was ever captured off the new Flow UI, so they report
+that plainly instead of failing obscurely:
+
+- **Creating a Flow project.** Boards bind to your pinned project and the
+  response says `reused: true`. They share one Flow workspace rather than
+  owning one each — so deleting that project in the Flow UI affects every
+  board.
+- **Listing your Flow projects.** The 🔄 sync button explains itself instead
+  of firing; `exists_on_flow` is `null` (unknown) rather than `false`, because
+  claiming a project is missing when we cannot look is worse than admitting we
+  cannot look.
+- **Reading your identity, plan or credit balance.** Declared in `.env`
+  instead.
+
+Everything that generates — images, image edits, Veo i2v, Omni Flash
+reference-to-video, uploads, polling — works. Details, the RPC map and the
+ten traps worth not re-discovering:
+[`docs/migrations/flow-batchexecute.md`](docs/migrations/flow-batchexecute.md).
+
 ### Run tests
 
 ```bash
 # Agent
 cd agent && .venv/bin/python -m pytest -q
-# 333 passed
+# 406 passed
 
 # Frontend
 cd frontend && npx tsc -p . --noEmit && npx vite build
@@ -572,13 +701,19 @@ agent/                  FastAPI service (Python 3.11)
                         upload, vision, prompt, plans, llm, activity, …)
     services/           Flow SDK, prompt synth, vision describe,
                         pipeline executor, activity logger
+      flow_batch.py     Flow's batchexecute envelope codec — builds f.req
+                        and reads responses; never touches the network
+      flow_sdk.py       Flow semantics on top of it (models, aspects,
+                        polling); the only file that knows Flow's schema
+      flow_client.py    WebSocket bridge to the Chrome extension
       llm/              Multi-LLM provider layer (registry, secrets,
                         Claude / Gemini / OpenAI Codex / Grok)
       claude_cli.py     Subprocess detail behind ClaudeProvider
     worker/             In-process queue (gen_image, gen_video,
                         edit_image, upload_image)
     db/                 SQLModel definitions
-  tests/                333+ pytest tests
+  tests/                406 pytest tests (batch_harness.py decodes the
+                        f.req envelope so tests assert on the wire)
 
 frontend/               Vite + React + ReactFlow
   src/
@@ -590,8 +725,11 @@ frontend/               Vite + React + ReactFlow
     store/              Zustand: board, generation, pipeline, settings
     api/                client.ts, autoBrief.ts
 
-extension/              Chrome MV3 (content script + injected MAIN)
-docs/                   Static assets (this README, screenshots, demo media)
+extension/              Chrome MV3 (batchexecute runner + reCAPTCHA mint)
+docs/
+  assets/               Screenshots + demo media for this README
+  migrations/           flow-batchexecute.md — the RPC map and the traps
+.env.example            Every setting, documented (copy to .env)
 storage/                Local cache + SQLite (gitignored)
 ```
 
@@ -599,12 +737,17 @@ storage/                Local cache + SQLite (gitignored)
 
 ## Status
 
-Personal local-only tool. **333 / 333 tests passing** (agent), tsc
+Personal local-only tool. **406 / 406 tests passing** (agent), tsc
 clean (frontend). Caveats:
 
 - ⚠ **Google Flow plan must be `Pro` or `Ultra`.** Free tier and trial
   accounts have no access to Veo 3.1 i2v / GEM_PIX_2 — every generation
   call will fail.
+- ⚠ **Three capabilities have no equivalent on Flow's current API** and
+  say so rather than failing obscurely: creating a Flow project, listing
+  your Flow projects, and reading your identity / credit balance. Pin
+  `FLOWBOARD_FLOW_PROJECT_ID` and `FLOWBOARD_PAYGATE_TIER` instead — see
+  [`docs/migrations/flow-batchexecute.md`](docs/migrations/flow-batchexecute.md).
 - ⚠ **Chrome extension must be loaded and connected.** The agent does
   not talk to Flow directly — all i2v / image / edit requests are
   proxied through `extension/` over a localhost WebSocket. No
@@ -628,6 +771,106 @@ clean (frontend). Caveats:
   Chrome-extension-bridge approach to Google Flow, but for **YouTube
   story videos** (multi-scene, narration, thumbnails). Flowboard
   borrows the bridge architecture.
+
+## Changelog
+
+Dates are release dates. Entries lead with what changed for you; refactors,
+CI and test-only work are left out unless they change how the thing behaves.
+
+### Unreleased — the Flow migration
+
+Google moved Flow to `flow.google.com` and rewrote the frontend, which took
+the API Flowboard spoke with it. This is the port.
+
+**Breaking — you must do three things:** reload the extension (v0.1.0+), keep
+one signed-in `flow.google.com` tab open, and set `FLOWBOARD_FLOW_PROJECT_ID`
++ `FLOWBOARD_PAYGATE_TIER`. See [Upgrading from a pre-migration
+install](#upgrading-from-a-pre-migration-install).
+
+**Fixed**
+- Every generation path now works against Flow's `batchexecute` transport:
+  images, image edits (BASE_IMAGE), Veo i2v including batch-from-variants,
+  Omni Flash reference-to-video, uploads, and operation polling. The old REST
+  host and both `labs.google` tRPC endpoints are gone from the agent.
+- The extension recognises a `flow.google.com` tab and runs each RPC inside
+  it, where Flow's per-page signing token lives. The previous build matched
+  only the old URL, which is why it reported `NO_FLOW_TAB` with a Flow tab
+  open in front of it.
+- reCAPTCHA mints are serialised. A 4-variant image dispatch fires four RPCs
+  at once and each needs its own single-use token; overlapping mints produced
+  crossed tokens that Flow rejected as unusual activity.
+- A poll reporting `Media not found.` no longer ends the job. Operations
+  report it and still deliver a finished clip.
+- A video is only reported complete once a video URL exists. The media record
+  serves the poster still first, so finishing on the media id alone saved a
+  picture instead of the clip.
+- A partly-failed image wave keeps the variants that rendered instead of
+  discarding all four because one was rejected. Same for batch i2v.
+- The account panel no longer polls `/api/auth/me` every five seconds
+  forever. Its exit condition waited on a profile that this transport cannot
+  produce.
+
+**Added**
+- `.env` support, `.env.example`, and `docs/migrations/flow-batchexecute.md`
+  — the RPC map, the configuration, and the ten traps worth not
+  re-discovering.
+- Error messages for the states that are new: no pinned project, an
+  unrecognised plan, an unsigned Flow tab, and capabilities that Flow's
+  current API has no equivalent for.
+
+**Removed / degraded** — no payload for these was ever captured off the new
+Flow UI, so they say so rather than failing obscurely:
+- Creating a Flow project. Boards bind to the pinned project and report
+  `reused: true`; they share one Flow workspace.
+- Listing your Flow projects. `POST /api/flow/projects/sync-up` answers `501`
+  instead of binding every board to the same project, and `exists_on_flow` is
+  `null` (unknown) rather than `false`.
+- Identity, plan and credit balance. `flow_key_present: false` and
+  `identity_available: false` are now the normal, healthy state.
+
+### v1.2.14 – v1.2.20 — 2026-05-21 → 05-23
+
+- **Storyboard nodes** — an image-template node with 2x2 / 2x3 / 2x4 grid
+  options and aspect-aware layout, numbered panels and captions. Video motion
+  prompts lock when the upstream node is a storyboard.
+- **Omni Flash reference-to-video** — variable duration (4/6/8/10s) driven by
+  reference images rather than a single start frame.
+- **Cancel a running request** from the activity bell, with canceled and
+  timeout badges.
+- **Per-dispatch video model dropdown** in the generation dialog.
+- Board ↔ Flow project sync status in the sidebar.
+
+### v1.2.12 — 2026-05-19
+
+- **Cross-board reference library** — a right-hand panel with ★ save, plus
+  drag or click to spawn a saved reference onto any board.
+
+### v1.2.1 – v1.2.11 — 2026-05-02 → 05-12
+
+- Ultra-only **relaxed (0-credit) Veo models** for the low-priority queue,
+  and a fix to the Lite model key.
+- Partial-batch i2v, prompt-first synthesis, per-edge variant pinning.
+- Upstream `Prompt` nodes surface in the dialog's source references.
+
+### v1.2.0 — 2026-04-30
+
+- **AI Providers** — pick and test the LLM backend in-app (Claude Code,
+  Gemini CLI, OpenAI Codex). Vision, auto-prompt and planner all route
+  through it, with per-call-site timeouts.
+- **Activity feed** — bell, dropdown and a detail modal for every request.
+- Nodes block their own actions while an LLM call is in flight on them.
+
+### v1.1.0 — 2026-04-29
+
+- Real error messages instead of `[object Object]`.
+
+### v1.0.0 — 2026-04-27
+
+- First release: node canvas, reference/character nodes, composition by
+  wiring nodes together, image generation and Veo 3.1 image-to-video through
+  the Chrome extension bridge.
+
+---
 
 ## License
 
