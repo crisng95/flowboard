@@ -14,9 +14,21 @@ list into Flowboard's UI. The flow:
                                      already exist on Flow are left
                                      untouched.
 
-The Flow project list is fetched internally (via the existing TRPC
-search endpoint) just to diff against local binds; the list itself is
-not exposed in the response.
+The Flow project list used to be fetched internally (via the labs.google
+TRPC search endpoint) just to diff against local binds.
+
+SINCE THE SEPTEMBER 2026 MIGRATION BOTH HALVES OF THAT ARE GONE. Flow has no
+batchexecute RPC for listing a user's projects, and none for creating one, so:
+
+  * ``GET`` still reports every board's binding, but ``exists_on_flow`` is
+    ``null`` (unknown) rather than ``false`` — claiming a project is missing
+    when we simply cannot look is worse than admitting we cannot look.
+  * ``POST /sync-up`` refuses with 501. It could technically "succeed" by
+    binding every board to the one pinned Flow project, but that would record
+    a shared workspace as if each board owned it.
+
+Generation does not depend on any of this: a board with no binding falls back
+to FLOWBOARD_FLOW_PROJECT_ID. See flow_sdk.search_user_projects.
 """
 from __future__ import annotations
 
@@ -27,6 +39,7 @@ from fastapi import APIRouter, HTTPException
 
 from flowboard.db import get_session
 from flowboard.db.models import Board, BoardFlowProject
+from flowboard.config import FLOW_PROJECT_ID
 from flowboard.services.flow_sdk import get_flow_sdk, is_valid_project_id
 
 logger = logging.getLogger(__name__)
@@ -34,17 +47,23 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/flow/projects", tags=["flow-projects"])
 
 
-async def _resolve_remote_ids(tool: str) -> set[str]:
-    """Pull the user's Flow project list and return just the id set.
-    Raises HTTPException(502) on extension/TRPC failure."""
+async def _remote_project_ids(tool: str) -> tuple[set[str], Optional[str]]:
+    """Try to pull the user's Flow project id set.
+
+    Returns ``(ids, unavailable_reason)``. On the current transport the reason
+    is always set, because Flow exposes no project-listing RPC — but this is
+    written as a probe rather than a hardcoded refusal so that capturing one
+    later is a change in ``flow_sdk``, not here.
+    """
     result = await get_flow_sdk().list_user_projects_all(tool=tool)
     if result.get("error"):
-        raise HTTPException(
-            status_code=502,
-            detail={"message": result["error"]},
-        )
+        return set(), str(result["error"])
     projects = result.get("projects") or []
-    return {p["project_id"] for p in projects if isinstance(p, dict) and p.get("project_id")}
+    ids = {
+        p["project_id"] for p in projects
+        if isinstance(p, dict) and p.get("project_id")
+    }
+    return ids, None
 
 
 @router.get("")
@@ -58,10 +77,16 @@ async def get_sync_status(tool: str = "PINHOLE"):
           "board_status": [
             {board_id, board_name, flow_project_id, exists_on_flow},
             ...
-          ]
+          ],
+          "flow_listing": {"available": bool, "reason": str|null,
+                           "pinned_project_id": str|null}
         }
+
+    ``exists_on_flow`` is ``null`` when Flow's project list could not be read
+    — which is every time on the current transport. The bindings themselves
+    are still real and worth showing, so this degrades rather than 502s.
     """
-    remote_ids = await _resolve_remote_ids(tool)
+    remote_ids, unavailable = await _remote_project_ids(tool)
     with get_session() as s:
         boards = s.query(Board).order_by(Board.created_at.desc()).all()
         binds = {
@@ -71,13 +96,26 @@ async def get_sync_status(tool: str = "PINHOLE"):
         board_status = []
         for b in boards:
             pid: Optional[str] = binds.get(b.id)
+            if unavailable:
+                exists = None
+            elif pid:
+                exists = pid in remote_ids
+            else:
+                exists = False
             board_status.append({
                 "board_id": b.id,
                 "board_name": b.name,
                 "flow_project_id": pid,
-                "exists_on_flow": (pid in remote_ids) if pid else False,
+                "exists_on_flow": exists,
             })
-    return {"board_status": board_status}
+    return {
+        "board_status": board_status,
+        "flow_listing": {
+            "available": unavailable is None,
+            "reason": unavailable,
+            "pinned_project_id": FLOW_PROJECT_ID or None,
+        },
+    }
 
 
 @router.post("/sync-up")
@@ -89,8 +127,31 @@ async def sync_up(tool: str = "PINHOLE"):
 
     Idempotent: boards already in sync are skipped. Returns a per-board
     action log so the UI can summarise ("synced N boards").
+
+    Answers 501 while Flow exposes no way to create a project. It is important
+    that this refuses instead of degrading: ``create_project`` now hands back
+    the single pinned project, so "succeeding" here would write that same uuid
+    into every board's binding and record a shared Flow workspace as if each
+    board owned one.
     """
-    remote_ids = await _resolve_remote_ids(tool)
+    remote_ids, unavailable = await _remote_project_ids(tool)
+    if unavailable:
+        raise HTTPException(
+            status_code=501,
+            detail={
+                "message": (
+                    "Flow no longer exposes project creation or listing, so "
+                    "boards cannot be pushed up individually."
+                ),
+                "reason": unavailable,
+                "fix": (
+                    "Create one project in the Flow UI and pin its uuid as "
+                    "FLOWBOARD_FLOW_PROJECT_ID. Boards with no binding use it "
+                    "automatically, so generation keeps working."
+                ),
+                "pinned_project_id": FLOW_PROJECT_ID or None,
+            },
+        )
 
     # Snapshot the boards that need work. Read-only pass to avoid
     # holding the session during the TRPC round-trips below.

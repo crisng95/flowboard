@@ -78,8 +78,10 @@ def delete_board(board_id: int):
       Edge → ChatMessage → BoardFlowProject → Board.
 
     Note: this only removes the *local* mapping to a Google Flow project.
-    The project on labs.google itself is NOT deleted (Flow doesn't expose a
-    delete-project API through the flow_client we use).
+    The Flow project itself is NOT deleted — Flow exposes no delete-project
+    RPC on the transport we use. Since the September 2026 migration it also
+    exposes no create-project RPC, so boards share one pinned Flow project
+    and deleting it by hand in the Flow UI would affect every board.
     """
     with get_session() as s:
         board = s.get(Board, board_id)
