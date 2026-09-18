@@ -8,9 +8,19 @@ from pathlib import Path
 
 import pytest
 
+from flowboard.services import flow_batch as fb
 from flowboard.services import media as media_service
 from flowboard.services import flow_sdk as flow_sdk_module
 from flowboard.worker.processor import _handle_gen_image
+from tests.batch_harness import (
+    INPUT_TYPE as _INPUT_TYPE,
+    IMG_ASPECT as _ASPECT,
+    IMG_INPUTS as _IMAGE_INPUTS,
+    IMG_SEED as _SEED,
+    PRODUCTION_IMAGE_OFFSETS,
+    decode_freq,
+    image_recorder as _image_recorder,
+)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────
@@ -387,53 +397,79 @@ async def test_handle_gen_image_defaults_variant_count_to_1(monkeypatch):
     assert captured["variant_count"] == 1
 
 
-def test_gen_image_variant_count_replicates_request_items():
-    """Unit test against the SDK's request body — verify N items go out."""
+@pytest.mark.asyncio
+async def test_gen_image_variant_count_replicates_request_items():
+    """Unit test against the SDK's request envelope — verify N RPCs go out."""
     from flowboard.services.flow_sdk import FlowSDK
 
-    captured_body: dict = {}
+    rec = _image_recorder(3)
+    sdk = FlowSDK(client=rec)  # type: ignore[arg-type]
 
-    class _FakeClient:
-        async def api_request(self, **kwargs):
-            captured_body["body"] = kwargs["body"]
-            return {"data": {"media": []}}
-
-    sdk = FlowSDK(client=_FakeClient())  # type: ignore[arg-type]
-
-    import asyncio
-
-    asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
-        sdk.gen_image(
-            prompt="p", project_id="abcd1234", variant_count=3,
-            paygate_tier="PAYGATE_TIER_ONE",
-        )
+    await sdk.gen_image(
+        prompt="p", project_id="abcd1234", variant_count=3,
+        paygate_tier="PAYGATE_TIER_ONE",
     )
-    items = captured_body["body"]["requests"]
-    assert len(items) == 3
-    seeds = [it["seed"] for it in items]
-    assert len(set(seeds)) == 3, "seeds must be distinct per variant"
+
+    # One RPC per variant: the batch image request has no "how many" field,
+    # so variants come from repeating the call, not from a count slot.
+    calls = rec.rpcs(fb.RPC_GEN_IMAGE)
+    assert len(calls) == 3
+    seeds = [decode_freq(c["freq"])[1][0][_SEED] for c in calls]
+    assert len(set(seeds)) == 3, f"seeds must be distinct per variant, got {seeds}"
 
 
-def test_gen_image_variant_count_clamps_to_4():
+@pytest.mark.asyncio
+async def test_gen_image_variant_count_clamps_to_4():
     from flowboard.services.flow_sdk import FlowSDK
 
-    captured_body: dict = {}
+    rec = _image_recorder(4)
+    sdk = FlowSDK(client=rec)  # type: ignore[arg-type]
 
-    class _FakeClient:
-        async def api_request(self, **kwargs):
-            captured_body["body"] = kwargs["body"]
-            return {"data": {"media": []}}
-
-    sdk = FlowSDK(client=_FakeClient())  # type: ignore[arg-type]
-    import asyncio
-
-    asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
-        sdk.gen_image(
-            prompt="p", project_id="abcd1234", variant_count=99,
-            paygate_tier="PAYGATE_TIER_ONE",
-        )
+    await sdk.gen_image(
+        prompt="p", project_id="abcd1234", variant_count=99,
+        paygate_tier="PAYGATE_TIER_ONE",
     )
-    assert len(captured_body["body"]["requests"]) == 4
+    assert len(rec.rpcs(fb.RPC_GEN_IMAGE)) == 4
+
+
+@pytest.mark.asyncio
+async def test_gen_image_aspect_lands_in_the_aspect_slot_not_the_count_slot():
+    """Guards the single most expensive trap of the migration.
+
+    Slot 4 of an image request item is the aspect ratio, and 1 there means
+    square — so a request that meant "one variant" and put a 1 in that slot
+    looked like it was working. Assert the encoding explicitly: landscape
+    16:9 is 3, and it is NOT where the seed or the variant count lives.
+    """
+    from flowboard.services.flow_sdk import FlowSDK
+
+    rec = _image_recorder(1)
+    sdk = FlowSDK(client=rec)  # type: ignore[arg-type]
+
+    await sdk.gen_image(
+        prompt="p", project_id="abcd1234",
+        aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE",
+        paygate_tier="PAYGATE_TIER_ONE",
+    )
+    item = rec.payload(fb.RPC_GEN_IMAGE)[1][0]
+    assert item[_ASPECT] == fb.ASPECT_LANDSCAPE == 3
+    assert item[_ASPECT] != 1, "1 in this slot is SQUARE, not a variant count"
+
+
+def test_image_submit_cadence_is_staggered():
+    """The production cadence must not collapse to a burst.
+
+    Asserts against the value captured at import time: the suite patches the
+    module attribute to zeros (see the _no_image_submit_cadence fixture), so
+    reading it live here would assert nothing at all.
+    """
+    from flowboard.services import flow_sdk
+
+    offsets = PRODUCTION_IMAGE_OFFSETS
+    assert len(offsets) >= flow_sdk.MAX_VARIANT_COUNT
+    assert offsets[0] == 0.0, "the first variant should not be delayed"
+    assert list(offsets) == sorted(offsets), "offsets must be non-decreasing"
+    assert offsets[-1] > 0.0, "later variants must actually be staggered"
 
 
 # ── edit_image (refine) ───────────────────────────────────────────────────
@@ -479,30 +515,49 @@ async def test_handle_edit_image_rejects_missing_source(monkeypatch):
     assert err == "missing_source_media_id"
 
 
-def test_edit_image_uses_base_image_input_type():
+@pytest.mark.asyncio
+async def test_edit_image_uses_base_image_input_type():
+    """The source must ride as BASE_IMAGE, not as another reference.
+
+    A reference conditions a fresh generation on the image; BASE_IMAGE is what
+    makes it an edit of that image. On the wire the difference is one integer
+    four slots along — type 2 against a reference's 1 — and Flow accepts the
+    wrong one without complaining and then ignores it.
+    """
     from flowboard.services.flow_sdk import FlowSDK
 
-    captured: dict = {}
+    rec = _image_recorder(1)
+    sdk = FlowSDK(client=rec)  # type: ignore[arg-type]
 
-    class _FakeClient:
-        async def api_request(self, **kwargs):
-            captured["body"] = kwargs["body"]
-            return {"data": {"media": []}}
-
-    sdk = FlowSDK(client=_FakeClient())  # type: ignore[arg-type]
-    import asyncio
-    asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
-        sdk.edit_image(
-            prompt="p",
-            project_id="abcd1234",
-            source_media_id="base-1",
-            ref_media_ids=["ref-1"],
-            paygate_tier="PAYGATE_TIER_ONE",
-        )
+    await sdk.edit_image(
+        prompt="p",
+        project_id="abcd1234",
+        source_media_id="base-1",
+        ref_media_ids=["ref-1"],
+        paygate_tier="PAYGATE_TIER_ONE",
     )
-    inputs = captured["body"]["requests"][0]["imageInputs"]
-    assert inputs[0] == {"name": "base-1", "imageInputType": "IMAGE_INPUT_TYPE_BASE_IMAGE"}
-    assert inputs[1] == {"name": "ref-1", "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"}
+
+    inputs = rec.payload(fb.RPC_GEN_IMAGE)[1][0][_IMAGE_INPUTS]
+    assert inputs[0][0] == "base-1"
+    assert inputs[0][_INPUT_TYPE] == fb.BASE_TYPE_IMAGE == 2
+    assert inputs[1][0] == "ref-1"
+    assert inputs[1][_INPUT_TYPE] == fb.REF_TYPE_IMAGE == 1
+
+
+@pytest.mark.asyncio
+async def test_edit_image_never_duplicates_the_source_into_the_references():
+    from flowboard.services.flow_sdk import FlowSDK
+
+    rec = _image_recorder(1)
+    sdk = FlowSDK(client=rec)  # type: ignore[arg-type]
+
+    await sdk.edit_image(
+        prompt="p", project_id="abcd1234", source_media_id="base-1",
+        ref_media_ids=["base-1", "ref-1"],
+        paygate_tier="PAYGATE_TIER_ONE",
+    )
+    inputs = rec.payload(fb.RPC_GEN_IMAGE)[1][0][_IMAGE_INPUTS]
+    assert [i[0] for i in inputs] == ["base-1", "ref-1"]
 
 
 # ── visual_asset node type ────────────────────────────────────────────────

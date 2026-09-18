@@ -1,15 +1,21 @@
-"""User identity surfaced from the extension.
+"""User identity and plan, surfaced from the extension.
 
-The Chrome extension proactively fetches Google's
-``/oauth2/v2/userinfo`` once it captures a Bearer token, then pushes
-the resolved profile to the agent over WebSocket. This route just
-exposes the cached object for the frontend's AccountPanel.
+The extension used to fetch Google's ``/oauth2/v2/userinfo`` as soon as it
+captured a Bearer token and push the profile here over WebSocket.
+
+Since Flow moved to flow.google.com there is no Bearer to capture, so that
+never fires: **identity is not obtainable on the current transport**. The
+paygate tier isn't either — it came from ``/v1/credits``, same token — so it
+is now declared in config instead. This route reports the effective tier and
+says which of the two it came from, rather than reporting ``null`` and letting
+the AccountPanel imply the user should go open a Flow tab to fix it.
 """
 from __future__ import annotations
 
 from fastapi import APIRouter
 
 from flowboard.services.flow_client import flow_client
+from flowboard.services.flow_sdk import resolve_paygate_tier
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -38,22 +44,40 @@ def get_me() -> dict:
     forever — even for Ultra users — until a fresh known-good gen
     happened to overwrite the fallback row.
 
-    Now: the worker fails loud when tier is unknown (see
-    `worker/processor.py:_handle_gen_image` etc), so no bogus tier
-    gets into the DB. /api/auth/me returns `paygate_tier: null` until
-    the extension pushes a real signal, and the AccountPanel renders a
-    "Tier unknown — open Flow tab" banner instead of lying.
+    Now: no bogus tier can get into the DB, because the tier is resolved from
+    config rather than guessed per request (see
+    `flow_sdk.resolve_paygate_tier`), and an unrecognised value fails loud at
+    dispatch.
+
+    `paygate_tier` is the tier generation will actually use, so the panel shows
+    the real checkpoint. `paygate_tier_source` says where it came from:
+    `"extension"` if a live signal was somehow available, `"configured"`
+    otherwise — which is the normal case now.
+
+    `identity_available` is False when the transport cannot yield a profile at
+    all. Without it the AccountPanel would poll /me every five seconds forever
+    waiting for an email that is never coming.
     """
     info = flow_client.user_info or {}
+    live_tier = flow_client.paygate_tier
+    try:
+        effective_tier = resolve_paygate_tier(live_tier)
+        tier_error = None
+    except ValueError as exc:
+        # A misconfigured FLOWBOARD_PAYGATE_TIER. Report it here rather than
+        # only at dispatch, so the panel can say why generation will refuse.
+        effective_tier, tier_error = None, str(exc)
     return {
         "email": info.get("email"),
         "name": info.get("name"),
         "picture": info.get("picture"),
         "verified_email": info.get("verified_email"),
-        "paygate_tier": flow_client.paygate_tier,
-        # Resolved by `flow_client.fetch_paygate_tier()` against
-        # /v1/credits — same fetch that gives us the authoritative
-        # tier. Both null until the token-captured trigger fires.
+        "paygate_tier": effective_tier,
+        "paygate_tier_source": "extension" if live_tier else "configured",
+        "paygate_tier_error": tier_error,
+        # Identity and credits both rode on the Bearer token that
+        # flow.google.com no longer mints. Genuinely unknown, not pending.
+        "identity_available": flow_client.user_info is not None,
         "sku": flow_client.sku,
         "credits": flow_client.credits,
     }

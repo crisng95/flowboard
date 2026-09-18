@@ -41,10 +41,16 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
   // re-running immediately instead of waiting for the next 5s tick.
   const [pollNonce, setPollNonce] = useState(0);
 
-  // Poll /api/auth/me until BOTH email and paygate_tier are populated.
-  // Email comes from Google's userinfo (fetched once per token rotation
-  // by the extension); tier is resolved by the agent against /v1/credits
-  // on token capture, which can take a beat longer than userinfo to land.
+  // Poll /api/auth/me until there is nothing left to wait for.
+  //
+  // This used to wait for BOTH email and paygate_tier: email from Google's
+  // userinfo, tier from the agent's /v1/credits fetch, both keyed off the
+  // Bearer token the extension sniffed. Since Flow moved to flow.google.com
+  // no Bearer is minted, so neither ever arrives that way and the old exit
+  // condition was unreachable — a /me request every five seconds, forever.
+  //
+  // The agent now says which of them are actually obtainable, so stop as soon
+  // as the remaining gap is not something more polling can close.
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -59,14 +65,20 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
       if (me?.paygate_tier) {
         setStorePaygateTier({ paygateTier: me.paygate_tier });
         setPollsWithoutTier(0);
-      } else if (me?.email) {
-        // Email present but tier missing — extension connected but
-        // hasn't sniffed a Flow request body yet. Count up so the UI
-        // knows when to surface the warning banner.
+      } else if (me) {
+        // No usable tier. On the current transport that means the agent's
+        // FLOWBOARD_PAYGATE_TIER is set to something Flow doesn't recognise
+        // (paygate_tier_error says so) — generation will refuse until it is
+        // fixed, so clear the store and let the banner surface.
         setStorePaygateTier({ paygateTier: null });
         setPollsWithoutTier((n) => n + 1);
       }
-      if (me?.email && me?.paygate_tier) return;
+      // Nothing more to learn: either we have the profile, or the agent has
+      // told us this transport cannot produce one.
+      const identitySettled = !!me?.email || me?.identity_available === false;
+      // A misconfigured tier is a config edit away, so keep polling for it.
+      const tierSettled = !!me?.paygate_tier;
+      if (me && identitySettled && tierSettled) return;
       timer = setTimeout(poll, 5000);
     };
     poll();
@@ -89,7 +101,10 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
         name: null,
         picture: null,
         verified_email: null,
+        identity_available: false,
         paygate_tier: null,
+        paygate_tier_source: "configured",
+        paygate_tier_error: null,
         sku: null,
         credits: null,
       });
@@ -309,26 +324,28 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
           )}
         </div>
       )}
-      {!collapsed && profile?.email && !profile.paygate_tier && pollsWithoutTier >= 2 && (
-        // Extension connected (we got the Google profile) but hasn't
-        // sniffed a Flow request body yet — tier is unknown. Without
-        // this banner, the user would either see an empty tier slot
-        // (silently, before v1.1.5) or get a "paygate_tier_unknown"
-        // dispatch error with no recovery hint. Surface the gap and
-        // give a 1-click path to fix it.
+      {!collapsed && !profile?.paygate_tier && pollsWithoutTier >= 2 && (
+        // No usable tier. This used to mean "the extension has not sniffed a
+        // Flow request body yet", and the fix was to open Flow once. Since
+        // the migration nothing sniffs anything: the tier is declared in the
+        // agent's config, so the only way to land here is a
+        // FLOWBOARD_PAYGATE_TIER that Flow does not recognise. Generation
+        // will refuse until it is corrected, so say which value is wrong
+        // rather than sending the user to open a tab that cannot help.
         <div className="account-panel__tier-warning" role="alert">
           <span className="account-panel__tier-warning-icon" aria-hidden="true">⚠</span>
           <div className="account-panel__tier-warning-body">
             <span className="account-panel__tier-warning-title">
-              Tier unknown
+              Plan not configured
             </span>
             <span className="account-panel__tier-warning-text">
-              Open Flow once so the extension can detect your plan.
+              {profile?.paygate_tier_error
+                ?? "Set FLOWBOARD_PAYGATE_TIER to PAYGATE_TIER_ONE (Pro) or PAYGATE_TIER_TWO (Ultra)."}
             </span>
           </div>
           <a
             className="account-panel__tier-warning-cta"
-            href="https://labs.google/fx/tools/flow"
+            href="https://flow.google.com/"
             target="_blank"
             rel="noopener noreferrer"
           >

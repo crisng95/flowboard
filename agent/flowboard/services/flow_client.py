@@ -5,15 +5,22 @@ Ported + trimmed from flowkit (https://github.com/crisng95/flowkit).
 Control flow:
 1. Extension opens WS to :9223.
 2. Agent sends ``{type:"callback_secret", secret}`` immediately.
-3. When the agent wants to make an authenticated call against Google Flow /
-   aisandbox-pa, it calls ``flow_client.api_request(url, method, headers, body)``
-   which sends ``{id, method:"api_request", params}`` over WS and awaits a future.
-4. The extension performs ``fetch(url, Authorization: Bearer <token>)`` inside
-   the user's browser session and POSTs the response to
-   ``/api/ext/callback`` with ``X-Callback-Secret``.
+3. When the agent wants to run a Flow RPC it calls
+   ``flow_client.batch_rpc(rpcid, freq, ...)``, which sends
+   ``{id, method:"batch_rpc", params}`` over WS and awaits a future.
+4. The extension runs that envelope inside a signed-in ``flow.google.com`` tab
+   — the page holds the cookie, the per-page ``at`` token and the reCAPTCHA
+   mint, none of which can be replayed from outside it — then POSTs the
+   response to ``/api/ext/callback`` with ``X-Callback-Secret``.
 5. That HTTP handler resolves the pending future by id.
 6. WS-side inbound messages from the extension (``token_captured``,
    ``extension_ready``, ``pong``, ``status``) update our stats.
+
+Since Flow moved to ``flow.google.com`` (September 2026) there is no
+``Authorization: Bearer ya29.…`` on any request, so ``flow_key_present: false``
+is the normal, healthy state and ``token_captured`` no longer arrives. The
+Bearer-dependent helpers below are kept for an older extension that still
+emits one, and because ``/api/requests`` still accepts a raw ``proxy`` type.
 """
 from __future__ import annotations
 
@@ -123,9 +130,15 @@ class FlowClient:
         return self._credits
 
     async def fetch_paygate_tier(self) -> bool:
-        """Authoritative paygate tier resolution via the official Flow
-        /v1/credits endpoint. Replaces the passive request-body sniffer
-        as the primary path.
+        """Paygate tier resolution via the Flow /v1/credits endpoint.
+
+        DEAD ON THE CURRENT TRANSPORT. This needs the Bearer token the old
+        aisandbox-pa host required, and flow.google.com does not mint one, so
+        ``self._flow_key`` stays empty and this returns False on the first
+        line. The tier now comes from ``config.DEFAULT_PAYGATE_TIER``; see
+        ``flow_sdk.resolve_paygate_tier``. Kept so an older extension that
+        still captures a token keeps populating the AccountPanel, and so the
+        day Flow exposes credits again there is one place to re-point.
 
         Triggered automatically when `handle_message` receives a
         `token_captured` message (extension just captured a fresh
@@ -322,6 +335,41 @@ class FlowClient:
             self._failed_count += 1
             self._last_error = str(exc)
             return {"error": str(exc)}
+
+    # ── batchexecute transport (the live path) ─────────────────────────────
+    #
+    # Flow's rewritten frontend signs every call with the session cookie plus a
+    # per-page `at` token, and a generate also carries a single-use reCAPTCHA
+    # token. None of that can be replayed from here, so the agent only builds
+    # the envelope and the extension issues it inside a signed-in Flow tab.
+    #
+    # `api_request` / `trpc_request` below are the pre-migration REST and tRPC
+    # proxies. They are kept because `/api/requests` still accepts a raw
+    # `proxy` type and an extension may be newer than its agent, but nothing
+    # in the generation path reaches for them any more.
+
+    async def batch_rpc(
+        self,
+        rpcid: str,
+        freq: str,
+        captcha_action: Optional[str] = None,
+        match: Optional[str] = None,
+        timeout: Optional[float] = 300.0,
+    ) -> dict:
+        """Run one batchexecute RPC inside the Flow page. Returns the raw body.
+
+        ``match`` asks the extension to cut the response down to an 800-byte
+        window around that string before handing it back. The project listing
+        is past 17 MB for the single entry we want out of it, and the cheapest
+        place to throw the rest away is inside the tab — shipping it whole gets
+        it truncated and loses roughly half of all lookups.
+        """
+        params: dict[str, Any] = {"rpcid": rpcid, "freq": freq}
+        if captcha_action:
+            params["captchaAction"] = captcha_action
+        if match:
+            params["match"] = match
+        return await self._send("batch_rpc", params, timeout=timeout)
 
     async def api_request(
         self,

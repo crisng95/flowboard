@@ -6,6 +6,7 @@ import pytest
 
 from flowboard.routes.auth import _reset_db_tier_cache_for_tests
 from flowboard.services.flow_client import flow_client
+from flowboard.services.flow_sdk import DEFAULT_PAYGATE_TIER
 
 
 @pytest.fixture(autouse=True)
@@ -22,19 +23,58 @@ def _reset_state():
     _reset_db_tier_cache_for_tests()
 
 
-def test_me_returns_null_fields_when_no_data_yet(client):
+def test_me_returns_null_identity_but_the_configured_tier(client):
+    """Identity is unobtainable now; the tier is declared rather than sniffed.
+
+    Both used to ride on the Bearer token the extension sniffed off
+    aisandbox-pa. flow.google.com mints none, so email/sku/credits are
+    genuinely null — and the tier comes from config, reported as such so the
+    panel shows the checkpoint generation will really use instead of claiming
+    it is still waiting for a signal.
+    """
+    flow_client._paygate_tier = None
     r = client.get("/api/auth/me")
     assert r.status_code == 200
-    body = r.json()
-    assert body == {
+    assert r.json() == {
         "email": None,
         "name": None,
         "picture": None,
         "verified_email": None,
-        "paygate_tier": None,
+        "paygate_tier": DEFAULT_PAYGATE_TIER,
+        "paygate_tier_source": "configured",
+        "paygate_tier_error": None,
+        "identity_available": False,
         "sku": None,
         "credits": None,
     }
+
+
+def test_me_reports_a_live_tier_as_coming_from_the_extension(client):
+    """An older extension that still captures a Bearer keeps priority."""
+    flow_client._paygate_tier = "PAYGATE_TIER_ONE"
+    body = client.get("/api/auth/me").json()
+    assert body["paygate_tier"] == "PAYGATE_TIER_ONE"
+    assert body["paygate_tier_source"] == "extension"
+
+
+def test_me_surfaces_a_misconfigured_tier_instead_of_guessing(monkeypatch):
+    """A bad FLOWBOARD_PAYGATE_TIER must be visible before a dispatch fails.
+
+    resolve_paygate_tier raises on an unrecognised value rather than picking
+    one, so the route reports the error and leaves the tier null — the panel
+    can then say why generation will refuse.
+    """
+    from fastapi.testclient import TestClient
+
+    from flowboard.main import app
+    from flowboard.services import flow_sdk
+
+    flow_client._paygate_tier = None
+    monkeypatch.setattr(flow_sdk, "DEFAULT_PAYGATE_TIER", "PAYGATE_TIER_GOLD")
+    body = TestClient(app).get("/api/auth/me").json()
+    assert body["paygate_tier"] is None
+    assert "paygate_tier_invalid" in body["paygate_tier_error"]
+    assert "PAYGATE_TIER_GOLD" in body["paygate_tier_error"]
 
 
 def test_me_returns_cached_profile_after_user_info_message(client):
@@ -269,7 +309,10 @@ def test_logout_clears_cached_identity_and_tier(client):
 
     me = client.get("/api/auth/me").json()
     assert me["email"] is None
-    assert me["paygate_tier"] is None
+    assert me["identity_available"] is False
+    # The cached live tier is gone; what remains is the configured fallback,
+    # which is the point — logout must not leave an Ultra signal behind.
+    assert me["paygate_tier_source"] == "configured"
 
 
 def test_logout_notifies_extension_when_ws_connected(client):
@@ -362,9 +405,10 @@ def test_me_returns_null_tier_when_extension_has_not_pushed(client):
     Pro into the DB, and subsequent /me calls would report Pro forever
     even for Ultra users.
 
-    Now the route returns `paygate_tier: null` in this state. The
-    AccountPanel surfaces a "Tier unknown — open Flow tab" banner so
-    the user sees the gap explicitly instead of being silently lied to.
+    The route now answers with the CONFIGURED tier in this state, and says
+    `paygate_tier_source: "configured"` so the panel can be explicit about it.
+    What must never happen — and is what this test still guards — is the tier
+    coming back out of the database.
     """
     flow_client._paygate_tier = None
 
@@ -385,4 +429,8 @@ def test_me_returns_null_tier_when_extension_has_not_pushed(client):
 
     r = client.get("/api/auth/me")
     assert r.status_code == 200
-    assert r.json()["paygate_tier"] is None
+    body = r.json()
+    # The polluted row says PAYGATE_TIER_ONE. The answer must come from config
+    # instead, which the default makes distinguishable.
+    assert body["paygate_tier"] == DEFAULT_PAYGATE_TIER == "PAYGATE_TIER_TWO"
+    assert body["paygate_tier_source"] == "configured"

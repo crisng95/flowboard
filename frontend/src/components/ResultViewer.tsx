@@ -320,7 +320,7 @@ export function ResultViewer() {
   if (status === null) {
     hintText = "Loading…";
   } else if (!status.has_url) {
-    hintText = "Open your project on labs.google/flow so Flowboard can capture the image URL.";
+    hintText = "Open your project on flow.google.com so Flowboard can capture the image URL.";
   } else {
     hintText = "Fetching bytes from Google…";
   }
@@ -706,7 +706,7 @@ export function ResultViewer() {
             {projectId ? (
               <a
                 className="result-viewer__btn result-viewer__btn--link"
-                href={`https://labs.google/fx/tools/flow/project/${projectId}`}
+                href="https://flow.google.com/"
                 target="_blank"
                 rel="noopener noreferrer"
               >
