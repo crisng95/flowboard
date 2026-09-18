@@ -777,7 +777,7 @@ clean (frontend). Caveats:
 Dates are release dates. Entries lead with what changed for you; refactors,
 CI and test-only work are left out unless they change how the thing behaves.
 
-### Unreleased — the Flow migration
+### v1.3.0 — 2026-09-18 — the Flow migration
 
 Google moved Flow to `flow.google.com` and rewrote the frontend, which took
 the API Flowboard spoke with it. This is the port.
