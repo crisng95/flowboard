@@ -938,6 +938,61 @@ def test_board_requests_active_filter(client):
     }
 
 
+def test_board_requests_active_excludes_non_worker_types(client):
+    """`vision`, `auto_prompt` and `auto_prompt_batch` open a `running`
+    Request row against a node too (services/activity.py), but they run
+    synchronously inside their own HTTP handler and are never queued to
+    the worker — so a reloading page has nothing to wait on.
+
+    Handing them out was not merely useless: their result carries no
+    `media_ids`, the poll loop reads that absence as an empty media list
+    and spreads it over `Node.data`, and the image the user is looking at
+    disappears off the canvas until the next reload.
+
+    Filtering by what the worker DOES dispatch rather than by the known
+    offenders is the point: `auto_prompt_batch` is a fourth node-attached
+    activity type, and the next one lands excluded without a code change.
+    """
+    from flowboard.db import get_session
+    from flowboard.db.models import Request
+
+    b = _board(client)
+    n = _node(client, b["id"])
+
+    def _mk(type_, status):
+        with get_session() as s:
+            row = Request(node_id=n["id"], type=type_, status=status, params={})
+            s.add(row)
+            s.commit()
+            s.refresh(row)
+            return row.id
+
+    vision_id = _mk("vision", "running")
+    auto_prompt_id = _mk("auto_prompt", "running")
+    batch_id = _mk("auto_prompt_batch", "running")
+    running_gen_id = _mk("gen_image", "running")
+    queued_gen_id = _mk("gen_video", "queued")
+
+    items = client.get(f"/api/boards/{b['id']}/requests?active=true").json()["items"]
+    assert {it["id"] for it in items} == {running_gen_id, queued_gen_id}
+
+    # ...and the full listing stays honest: it is a debugging view of what
+    # the board actually holds, not a resume feed.
+    every = client.get(f"/api/boards/{b['id']}/requests").json()["items"]
+    assert {it["id"] for it in every} == {
+        vision_id, auto_prompt_id, batch_id, running_gen_id, queued_gen_id
+    }
+
+
+def test_resumable_types_are_all_worker_dispatched(client):
+    """The resume filter is only safe while every type in it is one the
+    worker actually drains — a type the worker never picks up would sit
+    `queued` forever with a browser polling it."""
+    from flowboard.routes.boards import RESUMABLE_REQUEST_TYPES
+
+    assert set(RESUMABLE_REQUEST_TYPES) <= set(proc._DEFAULT_HANDLERS)
+
+
 def test_board_requests_item_shape(client):
     """`params` rides along because the resuming page rebuilds the poll's
     options from it — the dispatch call that held them died with the old

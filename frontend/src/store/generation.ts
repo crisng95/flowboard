@@ -118,6 +118,17 @@ function collectUpstreamRefMediaIds(targetRfId: string): string[] {
   return ids;
 }
 
+// Request types that render media. Mirrors `MEDIA_PRODUCING_TYPES` in
+// agent/flowboard/request_types.py — the backend already refuses to hand
+// any other type to a resume, this copy exists so the poll loop is safe
+// on its own terms whatever reaches it.
+const MEDIA_PRODUCING_TYPES = new Set([
+  "gen_image",
+  "gen_video",
+  "gen_video_omni",
+  "edit_image",
+]);
+
 // ── Poll loop ────────────────────────────────────────────────────────────
 // Lifted out of `dispatchGeneration` so the reload-resume path can re-attach
 // the same machinery to a request it never dispatched. All three callers —
@@ -191,6 +202,19 @@ function attachPoll(rfId: string, requestId: number, opts: PollOpts) {
           const mediaId = mediaIds.find(
             (m): m is string => typeof m === "string" && m.length > 0,
           );
+          // A type that renders nothing must never write the media keys.
+          // The LLM activity types (`vision`, `auto_prompt`, ...) settle
+          // with a result that has no `media_ids` at all, and the read
+          // above turns that absence into
+          // `[]` + `undefined` — which `updateNodeData` (a plain spread)
+          // then lays straight over whatever the node was showing, so the
+          // user watches their generated image vanish off the canvas.
+          // The resume endpoint no longer hands those types to a poll
+          // (agent/flowboard/routes/boards.py::RESUMABLE_REQUEST_TYPES),
+          // but this branch is reachable by direct dispatch too, and the
+          // rule is the same either way: an absent `media_ids` is "this
+          // request was never about media", not "nothing rendered".
+          const producesMedia = MEDIA_PRODUCING_TYPES.has(req.type);
           // Surface the partial-error summary onto data.error while
           // keeping status="done" — the node still has renderable
           // variants, but the UI can flag that some slots got blocked.
@@ -230,9 +254,9 @@ function attachPoll(rfId: string, requestId: number, opts: PollOpts) {
           }
           useBoardStore.getState().updateNodeData(rfId, {
             status: "done",
-            mediaId,
-            mediaIds,
-            slotErrors: slotErrors ?? undefined,
+            ...(producesMedia
+              ? { mediaId, mediaIds, slotErrors: slotErrors ?? undefined }
+              : {}),
             aiBrief: undefined,
             // Same guard as `prompt` in the patch below, for the same
             // reason: a resumed poll rebuilds `opts` from the request's
@@ -255,7 +279,7 @@ function attachPoll(rfId: string, requestId: number, opts: PollOpts) {
           // a bigger refactor than this fix needs, and because it keeps
           // the round-trip honest if the two ever disagree.
           const dbId = parseInt(rfId, 10);
-          if (!isNaN(dbId) && mediaId) {
+          if (!isNaN(dbId) && producesMedia && mediaId) {
             const n = useBoardStore.getState().nodes.find((x) => x.id === rfId);
             const d = n?.data;
             // Backend merges `data`, so only deltas need to ship.
