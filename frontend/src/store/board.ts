@@ -594,6 +594,10 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     try {
       const { useGenerationStore } = await import("./generation");
       useGenerationStore.getState().cancelGeneration(rfId);
+      // Sidecar polls (vision / auto-prompt) live in a separate map,
+      // so they need their own cancel or they keep polling a node
+      // that no longer exists.
+      useGenerationStore.getState().cancelSidecarPoll(rfId);
     } catch {
       // If the module isn't loaded yet (tree-shaken test path), ignore.
     }

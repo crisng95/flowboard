@@ -85,6 +85,7 @@ interface GenerationState {
   resumeActiveRequests(boardId: number): Promise<void>;
 
   cancelGeneration(rfId: string): void;
+  cancelSidecarPoll(rfId: string): void;
   clearError(): void;
 }
 
@@ -842,6 +843,15 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         continue;
       }
 
+      // Deny by default. The sidecar branch above is an allowlist, so
+      // without this an unrecognised type falls through to the generation
+      // poll — which is exactly what wiped node images in #7. Adding a
+      // type to the backend's sidecar set and forgetting `SIDECAR_TYPES`
+      // is the realistic way that happens again. `producesMedia` in the
+      // done-branch would still block the DB write, but the card would
+      // get a spurious `running` stamp and lose its brief in memory.
+      if (!MEDIA_PRODUCING_TYPES.has(item.type)) continue;
+
       // A poll we started in this session already owns this node — don't
       // stack a second one on it.
       if (get().active[rfId] !== undefined) continue;
@@ -935,6 +945,23 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       const next = { ...s.active };
       delete next[rfId];
       return { active: next };
+    });
+  },
+
+  // Sidecar polls live in their own map, so `cancelGeneration` never
+  // touched them — deleting a node mid-vision left its chain polling
+  // `/api/requests/{id}` every 1.5s for up to ~120s against a node that
+  // no longer exists. Harmless but wasteful, and it kept a dead node's
+  // rfId alive in the map.
+  cancelSidecarPoll(rfId) {
+    const entry = get().sidecar[rfId];
+    if (entry && entry.timerId !== null) {
+      clearTimeout(entry.timerId);
+    }
+    set((s) => {
+      const next = { ...s.sidecar };
+      delete next[rfId];
+      return { sidecar: next };
     });
   },
 
