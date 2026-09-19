@@ -22,6 +22,8 @@ import logging
 
 from typing import Optional
 
+from flowboard.db import get_session
+from flowboard.db.models import Node
 from flowboard.node_mirror import apply_node_patch
 from flowboard.services import media as media_service
 from flowboard.services.activity import record_activity
@@ -78,6 +80,18 @@ async def describe_media(media_id: str, *, node_id: Optional[int] = None) -> str
     media_id = media_service.normalize_media_id(media_id)
     if not media_service.is_valid_media_id(media_id):
         raise VisionError("invalid media_id")
+
+    # Reject an unknown node before `record_activity` opens its row.
+    # `Request.node_id` is a real FK and `PRAGMA foreign_keys=ON` is set,
+    # so the insert would otherwise raise IntegrityError out of a route
+    # that only catches VisionError — a 500 for what is a caller mistake.
+    # Reachable in normal use: a stale tab fires auto-brief for a node
+    # that has since been deleted. Mirrors `prompt_synth`, whose sibling
+    # endpoints already answer "node <id> not found" for the same input.
+    if node_id is not None:
+        with get_session() as s:
+            if s.get(Node, node_id) is None:
+                raise VisionError(f"node {node_id} not found")
 
     async with record_activity(
         "vision", params={"media_id": media_id}, node_id=node_id

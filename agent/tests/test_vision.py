@@ -316,3 +316,37 @@ async def test_a_failing_node_write_changes_neither_the_result_nor_the_row(
     assert [r.status for r in rows] == ["done"]
     assert rows[0].result["description"] == "a brief that survives"
     assert "aiBrief" not in _read_node_data(node_id)
+
+
+@pytest.mark.asyncio
+async def test_describe_media_rejects_an_unknown_node_id():
+    """An unknown `node_id` is a caller mistake, not a server fault.
+
+    `Request.node_id` is a real FK and `PRAGMA foreign_keys=ON` is set, so
+    letting it reach `record_activity`'s insert raises `IntegrityError` out
+    of a route that only catches `VisionError` — the endpoint answered 500.
+    Reachable without doing anything strange: a stale tab fires auto-brief
+    for a node the user has since deleted.
+
+    `prompt_synth` already answers "node <id> not found" for the same
+    input on its sibling endpoints; this keeps the two consistent.
+    """
+    with pytest.raises(vision_service.VisionError) as exc:
+        await vision_service.describe_media(
+            "66666666-2222-3333-4444-555555555555", node_id=424242
+        )
+    assert "424242" in str(exc.value)
+
+
+def test_describe_route_502s_on_an_unknown_node_id(client):
+    """The route surfaces it as 502, not 500 — no stub, so this exercises
+    the real service path including the guard."""
+    r = client.post(
+        "/api/vision/describe",
+        json={
+            "media_id": "66666666-2222-3333-4444-555555555555",
+            "node_id": 424242,
+        },
+    )
+    assert r.status_code == 502
+    assert "424242" in r.json()["detail"]
