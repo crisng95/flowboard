@@ -561,8 +561,8 @@ async def test_node_mirror_failure_does_not_strand_the_request(client, monkeypat
     fails to update is a stale card. The first must never be caused by
     the second.
 
-    Narrow by construction: swapping `proc.Node` for an unmapped class
-    makes `Session.get()` raise `NoInspectionAvailable` *before* it
+    Narrow by construction: swapping `node_mirror.Node` for an unmapped
+    class makes `Session.get()` raise `NoInspectionAvailable` *before* it
     touches the database, so this only covers a node lookup that blows up
     on the Python side. The flush and commit failures — the ones that can
     actually cost a paid result — are covered by
@@ -577,10 +577,14 @@ async def test_node_mirror_failure_does_not_strand_the_request(client, monkeypat
 
     # Not a mapped class — Session.get() blows up on it, which is as close
     # as we can get to "the node write went wrong" without faking the ORM.
+    # Patched on `node_mirror`, which is where the merge lives now that the
+    # sidecar activities share it (flowboard/node_mirror.py).
     class _NotAModel:
         pass
 
-    monkeypatch.setattr(proc, "Node", _NotAModel)
+    from flowboard import node_mirror
+
+    monkeypatch.setattr(node_mirror, "Node", _NotAModel)
 
     async def stub(_params):
         return {"media_ids": ["m-1"]}, None
@@ -765,7 +769,7 @@ async def test_a_node_deleted_between_the_lookup_and_the_commit(client):
     """The other reachable `StaleDataError`, and the one the
     delete-inside-the-handler test cannot reach.
 
-    `_mirror_node` loads the Node and dirties it; the UPDATE goes out at
+    `stage_node_patch` loads the Node and dirties it; the UPDATE goes out at
     `commit()`. A delete landing in that window makes the flush match zero
     rows, which SQLAlchemy raises on. The request must still settle with
     its real outcome.
@@ -809,7 +813,7 @@ def test_mirror_node_does_not_flush_the_pending_request(client):
     """`session.get()` autoflushes by default.
 
     That is how a node lookup used to drag the caller's pending Request
-    stamp into a flush that `_mirror_node`'s own `except` then swallowed —
+    stamp into a flush that `stage_node_patch`'s own `except` then swallowed —
     leaving the Session rollback-pending, so the caller's `commit()` died
     with `PendingRollbackError` far away from anything that knew what the
     request's real outcome was.
@@ -833,7 +837,7 @@ def test_mirror_node_does_not_flush_the_pending_request(client):
         s.add(req)
 
         event.listen(s, "after_flush", lambda *_a: flushes.append(1))
-        proc._mirror_node(s, n["id"], status="done", data_patch={"mediaId": "m-1"})
+        proc.stage_node_patch(s, n["id"], status="done", data_patch={"mediaId": "m-1"})
         assert flushes == [], "node lookup flushed the pending Request stamp"
 
         s.commit()
@@ -982,6 +986,103 @@ def test_board_requests_active_excludes_non_worker_types(client):
     assert {it["id"] for it in every} == {
         vision_id, auto_prompt_id, batch_id, running_gen_id, queued_gen_id
     }
+
+
+def test_board_requests_active_includes_sidecar_only_when_asked(client):
+    """The sidecar types ARE resumable — just not by the generation poll.
+
+    `vision` / `auto_prompt` / `auto_prompt_batch` run for 5-120s inside
+    their own HTTP handler, which is long enough for a reload to land in
+    the middle of one, and the node they are attached to is left rendering
+    "Analyzing…" with nobody watching. A page that has somewhere to put a
+    TEXT result asks for them by kind; a page that only knows how to
+    handle media ids never sees them.
+    """
+    from flowboard.db import get_session
+    from flowboard.db.models import Request
+
+    b = _board(client)
+    n = _node(client, b["id"])
+
+    def _mk(type_, status="running"):
+        with get_session() as s:
+            row = Request(node_id=n["id"], type=type_, status=status, params={})
+            s.add(row)
+            s.commit()
+            s.refresh(row)
+            return row.id
+
+    vision_id = _mk("vision")
+    auto_prompt_id = _mk("auto_prompt")
+    batch_id = _mk("auto_prompt_batch")
+    gen_id = _mk("gen_image")
+    # Not in either set: settled sidecar rows have nothing left to wait on.
+    _mk("vision", "done")
+
+    base = f"/api/boards/{b['id']}/requests?active=true"
+    sidecar = client.get(f"{base}&kinds=sidecar").json()["items"]
+    assert {it["id"] for it in sidecar} == {vision_id, auto_prompt_id, batch_id}
+
+    both = client.get(f"{base}&kinds=worker,sidecar").json()["items"]
+    assert {it["id"] for it in both} == {
+        vision_id, auto_prompt_id, batch_id, gen_id
+    }
+
+    # The default is unchanged and stays the safe one — see
+    # test_board_requests_active_excludes_non_worker_types for why.
+    assert {it["id"] for it in client.get(base).json()["items"]} == {gen_id}
+    assert {
+        it["id"] for it in client.get(f"{base}&kinds=worker").json()["items"]
+    } == {gen_id}
+
+
+def test_board_requests_rejects_an_unknown_kind(client):
+    """A typo must not read as "no filter". Silently widening the listing
+    is how a generation poll gets handed a `vision` row, which is the bug
+    the kinds split exists to make unreachable."""
+    b = _board(client)
+    r = client.get(f"/api/boards/{b['id']}/requests?active=true&kinds=everything")
+    assert r.status_code == 400
+    assert "everything" in r.json()["detail"]
+
+
+def test_board_requests_empty_kinds_falls_back_to_the_default(client):
+    """`kinds=` is a caller bug (an unset variable interpolated into the
+    query string), not a request for every type."""
+    from flowboard.db import get_session
+    from flowboard.db.models import Request
+
+    b = _board(client)
+    n = _node(client, b["id"])
+    with get_session() as s:
+        for type_ in ("vision", "gen_image"):
+            s.add(Request(node_id=n["id"], type=type_, status="running", params={}))
+        s.commit()
+
+    items = client.get(
+        f"/api/boards/{b['id']}/requests?active=true&kinds="
+    ).json()["items"]
+    assert [it["type"] for it in items] == ["gen_image"]
+
+
+def test_sidecar_types_are_never_worker_dispatched(client):
+    """The mirror of `test_resumable_types_are_all_worker_dispatched`, and
+    the reason the sidecar poll doesn't wait on a worker: nothing drains
+    these. They settle themselves, inside the handler that started them."""
+    from flowboard.routes.boards import SIDECAR_RESUMABLE_TYPES
+
+    assert set(SIDECAR_RESUMABLE_TYPES).isdisjoint(proc._DEFAULT_HANDLERS)
+
+
+def test_request_kinds_do_not_overlap(client):
+    """One type, one kind. An overlap would mean a row handed to both
+    polls at once — two chains writing the same node."""
+    from flowboard.routes.boards import (
+        RESUMABLE_REQUEST_TYPES,
+        SIDECAR_RESUMABLE_TYPES,
+    )
+
+    assert set(RESUMABLE_REQUEST_TYPES).isdisjoint(SIDECAR_RESUMABLE_TYPES)
 
 
 def test_resumable_types_are_all_worker_dispatched(client):

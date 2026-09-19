@@ -15,7 +15,8 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 
 from flowboard.db import get_session
-from flowboard.db.models import Node, Request
+from flowboard.db.models import Request
+from flowboard.node_mirror import stage_node_patch
 from flowboard.request_types import MEDIA_PRODUCING_TYPES
 from flowboard.services import media as media_service
 from flowboard.services.flow_client import flow_client
@@ -833,62 +834,6 @@ def _node_completion_patch(req: Request, result: dict) -> dict:
     return patch
 
 
-def _mirror_node(
-    session,
-    node_id: Optional[int],
-    *,
-    status: Optional[str] = None,
-    data_patch: Optional[dict] = None,
-) -> None:
-    """Stage a request's outcome onto its Node, inside the caller's session.
-
-    Staging only — the caller commits. Running in the same session as the
-    Request update is what lets the two land in one commit, but it is also
-    why this has to be careful: the Request stamp is already pending on
-    this session, and anything that throws here must not take it down.
-
-    Two guards, for two different ways that used to happen:
-
-      * ``no_autoflush``. ``session.get(Node, …)`` normally autoflushes the
-        pending Request first. If that flush raised, the ``except`` below
-        swallowed it and left the Session rollback-pending, so the caller's
-        ``commit()`` — outside every guard — died with
-        ``PendingRollbackError``, which landed in the worker's outer
-        handler and rewrote a *successful, paid* generation as ``failed``.
-        Not flushing here means a Node lookup can never carry the Request
-        with it.
-      * The blanket ``except``, for a Node that refuses to update at all
-        (deleted mid-flight, unexpected column state). A stale node card
-        is cosmetic; an unsettled request is a dead generation.
-
-    The commit itself is guarded by ``_commit_settlement``.
-    """
-    if node_id is None:
-        return
-    try:
-        with session.no_autoflush:
-            node = session.get(Node, node_id)
-            if node is None:
-                # Node deleted while its generation was in flight. The
-                # request row survives (delete_node detaches rather than
-                # deletes) and settles normally; there is just nothing
-                # left to mirror onto.
-                return
-            if status is not None:
-                node.status = status
-            if data_patch:
-                merged = dict(node.data or {})
-                for key, value in data_patch.items():
-                    if value is None:
-                        merged.pop(key, None)
-                    else:
-                        merged[key] = value
-                node.data = merged
-            session.add(node)
-    except Exception:  # noqa: BLE001
-        logger.exception("worker: node mirror failed for node_id=%s", node_id)
-
-
 def _commit_settlement(
     session,
     *,
@@ -943,7 +888,7 @@ def _commit_settlement(
     for key, value in stamp.items():
         setattr(req, key, value)
     session.add(req)
-    _mirror_node(session, node_id, status=node_status, data_patch=node_data_patch)
+    stage_node_patch(session, node_id, status=node_status, data_patch=node_data_patch)
     try:
         session.commit()
         return
@@ -1000,7 +945,7 @@ def _commit_settlement(
         return
     try:
         with get_session() as reconcile:
-            _mirror_node(
+            stage_node_patch(
                 reconcile, node_id, status=node_status, data_patch=node_data_patch
             )
             reconcile.commit()
@@ -1098,7 +1043,7 @@ class WorkerController:
                 s.add(req)
                 # Persist the processing state so a reloaded board renders
                 # the node as busy without needing the browser to remember.
-                _mirror_node(s, req.node_id, status="running")
+                stage_node_patch(s, req.node_id, status="running")
                 # Plain commit, not `_commit_settlement`: this is not a
                 # terminal stamp and there is no result to protect yet.
                 # If it fails, letting the exception reach the handler

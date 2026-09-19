@@ -34,18 +34,28 @@ export async function requestAutoBrief(rfId: string, mediaId: string): Promise<v
 
   useBoardStore.getState().updateNodeData(rfId, { aiBriefStatus: "pending" });
 
+  // Pass the node id so the backend can write the brief itself. That is
+  // what makes this survive a reload: the server does NOT cancel on client
+  // disconnect, so refreshing mid-call used to leave a finished vision
+  // result sitting in a Request row with nobody to apply it, because this
+  // function — the only writer — died with the page.
+  const dbId = parseInt(rfId, 10);
+  const nodeDbId = isNaN(dbId) ? undefined : dbId;
+
   try {
-    const res = await describeMedia(mediaId);
+    const res = await describeMedia(mediaId, nodeDbId);
     useBoardStore.getState().updateNodeData(rfId, {
       aiBrief: res.description,
       aiBriefStatus: "done",
     });
-    // Persist so the brief survives reload — re-running vision per session
-    // would burn CLI invocations for no reason. Backend merges `data` so
-    // only the delta needs to ship.
-    const dbId = parseInt(rfId, 10);
-    if (!isNaN(dbId)) {
-      patchNode(dbId, {
+    // Belt-and-braces, exactly like the generation poll's PATCH (see
+    // store/generation.ts): the backend already merged this same value
+    // onto the node before it settled the request row, and that write is
+    // now the authoritative one. This re-sends the identical value, so
+    // the two cannot disagree — and it only runs when this tab survived
+    // the call, which is the case the backend write also covers.
+    if (nodeDbId !== undefined) {
+      patchNode(nodeDbId, {
         data: { aiBrief: res.description },
       }).catch(() => {
         // local in-memory state is still correct for this session

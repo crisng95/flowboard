@@ -19,9 +19,9 @@ from flowboard.db.models import (
 # knows SQLite hands datetimes back naive, and that a missing `Z` makes
 # every timestamp read 7h early on a UTC+7 client. See its docstring.
 from flowboard.timestamps import utc_iso
-# Same reason: the set of types that render media is shared with the
-# worker rather than restated here. See `list_board_requests`.
-from flowboard.request_types import MEDIA_PRODUCING_TYPES
+# Same reason: how request types are classified is shared with the worker
+# rather than restated here. See `list_board_requests`.
+from flowboard.request_types import MEDIA_PRODUCING_TYPES, SIDECAR_REQUEST_TYPES
 
 router = APIRouter(prefix="/api/boards", tags=["boards"])
 
@@ -33,11 +33,27 @@ ACTIVE_REQUEST_STATUSES = ("queued", "running")
 # also open a `running` Request row (services/activity.py), against a node,
 # and they settle it themselves inside their own HTTP handler. They are
 # never queued to the worker, so there is nothing for a resumed poll to
-# wait on — and polling them is actively destructive, because their result
-# carries no `media_ids` and the frontend reads that absence as "this node
-# rendered nothing". `MEDIA_PRODUCING_TYPES` is exactly the set the worker
-# dispatches AND whose result a generation poll can act on.
+# wait on — and handing one to the GENERATION poll is actively
+# destructive, because their result carries no `media_ids` and that poll
+# reads the absence as "this node rendered nothing".
+#
+# So the listing is keyed by kind, not by a single "resumable" flag: a
+# caller names the kinds it can actually handle, and gets nothing else.
+# `MEDIA_PRODUCING_TYPES` is exactly the set the worker dispatches AND
+# whose result a generation poll can act on; `SIDECAR_REQUEST_TYPES` is
+# the synchronous LLM set, which needs its own much smaller poll.
 RESUMABLE_REQUEST_TYPES = tuple(sorted(MEDIA_PRODUCING_TYPES))
+SIDECAR_RESUMABLE_TYPES = tuple(sorted(SIDECAR_REQUEST_TYPES))
+
+# `worker` stays the default so a caller that says nothing — including
+# every caller written before sidecar resume existed — keeps getting only
+# the rows a generation poll can safely act on. Opting into `sidecar` is
+# a deliberate act by a caller that has somewhere to put text results.
+REQUEST_KINDS: dict[str, tuple[str, ...]] = {
+    "worker": RESUMABLE_REQUEST_TYPES,
+    "sidecar": SIDECAR_RESUMABLE_TYPES,
+}
+DEFAULT_REQUEST_KINDS = "worker"
 
 
 class BoardCreate(BaseModel):
@@ -81,15 +97,25 @@ def list_board_requests(
     active: bool = Query(
         False, description="Only return in-flight (queued / running) rows"
     ),
+    kinds: str = Query(
+        DEFAULT_REQUEST_KINDS,
+        description=(
+            "Comma-separated request kinds to include when active=true: "
+            "`worker` (media-producing generations) and/or `sidecar` "
+            "(synchronous LLM activities). Ignored when active=false."
+        ),
+    ),
     limit: int = Query(100, ge=1, le=500),
 ) -> dict:
     """Requests belonging to this board, newest first.
 
-    Exists so a freshly-loaded board can find the generations that are
-    still in flight and re-attach its poll loop to them. The worker keeps
-    `Node.status` and `Node.data` current on its own, but nothing tells a
+    Exists so a freshly-loaded board can find the work that is still in
+    flight and re-attach a poll to it. The backend keeps `Node.status` and
+    `Node.data` current on its own — the worker for generations, the
+    service itself for the sidecar activities — but nothing tells a
     reloaded page WHICH requests are still moving, and a node parked on
-    `running` with nobody watching it never picks up its result.
+    `running` (or on "Analyzing…") with nobody watching it never picks up
+    its result.
 
     `/api/activity` answers almost the same question and is not reusable
     here: it has no board filter, so a board-scoped resume would re-attach
@@ -103,12 +129,30 @@ def list_board_requests(
     `node_id` — standalone `proxy` / `create_project` calls, and rows
     detached by a node delete — are not board-scoped and never listed here.
 
-    `active=true` narrows by type as well as status (see
-    `RESUMABLE_REQUEST_TYPES`); `active=false` deliberately does not. The
-    full listing is a debugging view and should stay honest about every
-    row the board carries, including the `vision` / `auto_prompt` ones
-    nobody resumes.
+    `active=true` narrows by type as well as status, to the kinds the
+    caller asked for (see `REQUEST_KINDS`); `active=false` deliberately
+    does not narrow at all. The full listing is a debugging view and
+    should stay honest about every row the board carries, including the
+    types no caller resumes (`planner`, and anything added since).
     """
+    selected: list[str] = []
+    for raw in kinds.split(","):
+        kind = raw.strip()
+        if not kind:
+            continue
+        if kind not in REQUEST_KINDS:
+            raise HTTPException(
+                400,
+                f"unknown request kind {kind!r}; expected one of "
+                f"{', '.join(sorted(REQUEST_KINDS))}",
+            )
+        selected.extend(REQUEST_KINDS[kind])
+    if not selected:
+        # `kinds=` / `kinds=,` is a caller bug, not a request for
+        # everything. Falling back to the default keeps the unsafe
+        # reading ("no filter") unreachable.
+        selected = list(REQUEST_KINDS[DEFAULT_REQUEST_KINDS])
+
     with get_session() as s:
         if not s.get(Board, board_id):
             raise HTTPException(404, "board not found")
@@ -122,7 +166,7 @@ def list_board_requests(
         )
         if active:
             stmt = stmt.where(Request.status.in_(ACTIVE_REQUEST_STATUSES))
-            stmt = stmt.where(Request.type.in_(RESUMABLE_REQUEST_TYPES))
+            stmt = stmt.where(Request.type.in_(selected))
         stmt = stmt.order_by(Request.id.desc()).limit(limit)
         rows = s.exec(stmt).all()
 

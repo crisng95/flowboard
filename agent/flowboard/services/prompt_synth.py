@@ -19,6 +19,7 @@ from sqlmodel import select
 
 from flowboard.db import get_session
 from flowboard.db.models import Edge, Node
+from flowboard.node_mirror import apply_node_patch
 from flowboard.services.activity import record_activity
 from flowboard.services.llm import run_llm
 from flowboard.services.llm.base import LLMError
@@ -565,6 +566,11 @@ async def auto_prompt_batch(
             prompts.append(prompts[-1])
         prompts = prompts[:count]
         activity.set_result({"prompts": prompts})
+        # Same writer-of-record move as `auto_prompt` below, with the same
+        # choice of field: the caller dispatches with `prompts[0]` as the
+        # node's displayed prompt (the rest ride in the request's params),
+        # so that is what the node ends up holding either way.
+        apply_node_patch(node_id, data_patch={"prompt": prompts[0]})
         return prompts
 
 
@@ -617,4 +623,20 @@ async def auto_prompt(node_id: int, *, camera: Optional[str] = None) -> str:
         if len(text) > 500:
             text = text[:500].rstrip() + "…"
         activity.set_result({"prompt": text})
+        # Write the composed prompt onto the node before the row settles.
+        #
+        # Nothing used to persist this at all: the dialog dropped the text
+        # into its textarea and it only reached the DB later, as a
+        # side-effect of the generation it was composed for. So a reload
+        # between "Generate" and the dispatch lost a 30-90s LLM call with
+        # nothing to show for it — worse than vision, which at least
+        # cost nothing to re-run.
+        #
+        # `prompt` is the right field and not a new one: it is where the
+        # dispatch would have put this exact text a moment later, it is
+        # what the detail panel renders, and it is what downstream synth
+        # treats as the node's authoritative description. Auto-prompt only
+        # runs when the node's prompt is empty, so there is nothing here
+        # to overwrite.
+        apply_node_patch(node_id, data_patch={"prompt": text})
         return text
