@@ -134,6 +134,12 @@ def list_board_requests(
     does not narrow at all. The full listing is a debugging view and
     should stay honest about every row the board carries, including the
     types no caller resumes (`planner`, and anything added since).
+
+    `kinds` is validated either way, even though `active=false` ignores
+    its value. A misspelled kind is a caller bug, and answering 400 says
+    so; accepting it silently would let `?kinds=sidcar` look like it
+    worked right up until someone set `active=true` and wondered why the
+    rows they expected never arrived.
     """
     selected: list[str] = []
     for raw in kinds.split(","):
