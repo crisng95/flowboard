@@ -4174,148 +4174,143 @@ button:disabled {
   font-size: 11px;
 }
 
-/* New card-based layout — single-provider model. Cards stack
- * horizontally inside a group; selection drives the panel below. */
-.provider-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.provider-group__title {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.provider-group__cards {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-}
-
-.provider-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px 36px 12px 12px; /* extra right padding leaves room for the radio */
-  background: var(--panel-high);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
-}
-.provider-card:hover {
-  background: rgba(124, 92, 255, 0.06);
-  border-color: rgba(124, 92, 255, 0.35);
-}
-.provider-card--selected {
-  border-color: var(--accent);
-  background: rgba(124, 92, 255, 0.12);
-  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.2);
-}
-.provider-card--unconfigured {
-  opacity: 0.85;
-}
-.provider-card__head {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-.provider-card__name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.provider-card__tagline {
-  font-size: 11px;
-  color: var(--muted);
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.provider-card__foot {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.provider-card__status {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  font-weight: 500;
-}
-.provider-card__status-dot {
-  font-size: 8px;
-}
-.provider-card__status--ok { color: #88e0a8; }
-.provider-card__status--warn { color: #ffc266; }
-.provider-card__current-badge {
-  margin-left: auto;
-  padding: 1px 7px;
-  font-size: 9px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-radius: 999px;
-  background: rgba(80, 200, 120, 0.18);
-  color: #88e0a8;
-}
-.provider-card__radio {
-  position: absolute;
-  top: 14px;
-  right: 12px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 2px solid var(--border);
-  background: transparent;
-}
-.provider-card__radio--on {
-  border-color: var(--accent);
-  background: var(--accent);
-  box-shadow: inset 0 0 0 2px var(--panel);
-}
-
-/* Selection panel — appears below the cards once a card is selected.
- * Either inline setup (when the provider isn't ready) or the 3-feature
- * test list + Apply button (when the provider is ready). */
-.selection-panel {
+/* Per-feature config rows — one per feature (Auto-prompt / Vision /
+ * Planner), each pinning provider → model → effort. Replaces the old
+ * single-provider card row: the three features have different cost /
+ * latency needs, so they each get their own line. */
+.feature-config-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+.feature-config-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding: 12px;
   background: var(--panel-high);
   border: 1px solid var(--border);
   border-radius: 8px;
 }
-.selection-panel__heading {
+.feature-config-row__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.feature-config-row__title {
   font-size: 12px;
   font-weight: 600;
   color: var(--text);
 }
-.selection-panel__setup {
+.feature-config-row__blurb {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+/* provider | model | effort | buttons. Effort holds one short word so
+ * it gets a fixed column; the buttons are content-width; provider and
+ * model share what's left, with model wider because model ids are
+ * long. */
+.feature-config-row__controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) 96px auto;
+  gap: 8px;
+  align-items: end;
+}
+.feature-config-row__field {
   display: flex;
   flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.feature-config-row__label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+/* Free-text fallback shown when a provider ships no model catalog.
+ * Matched to .gen-dialog__select so the row keeps its shape whichever
+ * control it lands on. */
+.feature-config-row__model-input {
+  width: 100%;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background-color: var(--panel-high);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  border-left: 2px solid var(--accent);
+}
+.feature-config-row__model-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.feature-config-row__model-input:disabled {
+  opacity: 0.5;
+}
+/* Stands in for the effort select when the provider reports no effort
+ * levels — keeps the four columns aligned across rows. */
+.feature-config-row__na {
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+.feature-config-row__buttons {
+  display: flex;
+  gap: 6px;
+}
+/* Reserve the line even when empty so testing a row doesn't shift the
+ * rows below it. */
+.feature-config-row__status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 15px;
+}
+.feature-config-row__setup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
 }
-.selection-panel__setup-text {
-  font-size: 11px;
-  color: var(--muted);
-  line-height: 1.5;
+
+/* Footer actions — Apply sits outside the rows because it commits all
+ * three features in one PUT. */
+.selection-panel__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
 }
+.selection-panel__apply-btn {
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+  background: rgba(124, 92, 255, 0.22);
+  border: 1px solid var(--accent);
+  color: #d4c4ff;
+}
+.selection-panel__apply-btn:hover:not(:disabled) {
+  background: rgba(124, 92, 255, 0.34);
+}
+.selection-panel__apply-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Setup-help button, shown inside a row whose provider CLI isn't ready. */
 .selection-panel__setup-btn {
-  align-self: flex-start;
-  padding: 5px 12px;
+  padding: 3px 10px;
   background: rgba(124, 92, 255, 0.18);
   border: 1px solid rgba(124, 92, 255, 0.4);
   border-radius: 5px;
@@ -4327,84 +4322,7 @@ button:disabled {
   background: rgba(124, 92, 255, 0.28);
 }
 
-.selection-panel__actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  border-top: 1px solid var(--border);
-  padding-top: 8px;
-}
-.selection-panel__test-all-btn,
-.selection-panel__apply-btn {
-  padding: 6px 16px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
-}
-.selection-panel__test-all-btn {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text);
-}
-.selection-panel__test-all-btn:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-.selection-panel__apply-btn {
-  background: rgba(124, 92, 255, 0.22);
-  border: 1px solid var(--accent);
-  color: #d4c4ff;
-}
-.selection-panel__apply-btn:hover:not(:disabled) {
-  background: rgba(124, 92, 255, 0.34);
-}
-.selection-panel__apply-btn:disabled,
-.selection-panel__test-all-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Feature test row — 3 of these in the test list. */
-.feature-test-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.feature-test-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 8px 10px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-.feature-test-row--ok { border-color: rgba(80, 200, 120, 0.3); }
-.feature-test-row--fail { border-color: rgba(255, 90, 90, 0.4); }
-.feature-test-row__icon {
-  font-size: 14px;
-  width: 18px;
-  text-align: center;
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-.feature-test-row__icon--ok { color: #88e0a8; }
-.feature-test-row__icon--fail { color: #ff8888; }
-.feature-test-row__icon--testing { color: var(--accent); }
-.feature-test-row__icon--untested { color: var(--muted); }
-.feature-test-row__body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.feature-test-row__name {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-}
+/* Test / refresh buttons + result text inside a feature row. */
 .feature-test-row__hint {
   font-size: 10px;
   color: var(--muted);
@@ -4412,12 +4330,10 @@ button:disabled {
 .feature-test-row__latency {
   font-size: 10px;
   color: #88e0a8;
-  margin-top: 2px;
 }
 .feature-test-row__error {
   font-size: 10px;
   color: #ff8888;
-  margin-top: 2px;
   word-break: break-word;
 }
 .feature-test-row__btn {
@@ -4438,8 +4354,9 @@ button:disabled {
   cursor: not-allowed;
 }
 
-/* Mixed-state notice — when the existing config has different
- * providers per feature (legacy / hand-edited). */
+/* Incomplete-setup notice — listed features still have no provider, so
+ * the backend's `configured` flag is false and the forced-setup gate
+ * stays open. */
 .ai-providers-section__mixed-notice {
   padding: 8px 10px;
   background: rgba(124, 92, 255, 0.10);
@@ -4759,70 +4676,6 @@ button:disabled {
   font-size: 12px;
   line-height: 1.5;
   color: #ffd0bf;
-}
-
-/* CLI install reference footer — shown under the test checklist so
- * users can copy the upgrade command + visit official docs without
- * leaving the dialog. */
-.cli-reference {
-  margin-top: 8px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.cli-reference__row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.cli-reference__label {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  flex-shrink: 0;
-}
-.cli-reference__cmd {
-  flex: 1;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 8px;
-  font-family: monospace;
-  font-size: 11px;
-  color: #c5b3ff;
-  overflow-x: auto;
-  white-space: nowrap;
-  user-select: text;
-}
-.cli-reference__copy-btn {
-  flex-shrink: 0;
-  padding: 4px 10px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--muted);
-  font-size: 10px;
-  cursor: pointer;
-  transition: border-color 0.12s, color 0.12s;
-}
-.cli-reference__copy-btn:hover {
-  border-color: var(--accent);
-  color: var(--text);
-}
-.cli-reference__docs-link {
-  font-size: 11px;
-  color: var(--muted);
-  text-decoration: none;
-  align-self: flex-start;
-}
-.cli-reference__docs-link:hover {
-  color: var(--accent);
-  text-decoration: underline;
 }
 
 /* ── Node busy treatment when LLM (auto-prompt / vision) is in flight ─── */

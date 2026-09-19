@@ -5,8 +5,14 @@ import { AiProviderDialog } from "./AiProviderDialog";
 /**
  * App-level gate that force-opens the AI Provider dialog whenever the
  * backend reports `configured=false`. The user can't dismiss this
- * dialog — it stays mounted until /config flips to configured (i.e.
- * they ran Apply with all 3 feature tests green).
+ * dialog — it stays mounted until /config flips to configured.
+ *
+ * `configured` semantics (per-feature model): true once every feature
+ * (auto_prompt / vision / planner) has a provider pinned. Model and
+ * effort are optional — a feature that leaves them null falls back to
+ * the provider's own defaults — and the three features no longer have
+ * to agree on a provider. So the gate closes as soon as the user
+ * Applies three provider picks; it does NOT require passing tests.
  *
  * Why an app-level gate (vs putting this on the badge): the backend's
  * dispatch paths now raise loud when no provider is configured. Without

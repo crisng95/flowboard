@@ -462,6 +462,33 @@ export function getRequest(id: number) {
   return api<RequestDTO>(`/api/requests/${id}`);
 }
 
+/**
+ * One row of `GET /api/boards/{id}/requests`. Deliberately thinner than
+ * `RequestDTO` — no `result` / `error`, because the caller is about to poll
+ * each row anyway and shipping every finished result would make a board
+ * load carry its whole generation history.
+ *
+ * `params` IS included: a page that reloaded mid-generation has to rebuild
+ * the poll's options (prompt, aspect ratio) from it, since the
+ * `dispatchGeneration` call that originally held them died with the old page.
+ */
+export interface BoardRequestItem {
+  id: number;
+  type: string;
+  status: RequestDTO["status"];
+  node_id: number | null;
+  node_short_id: string | null;
+  created_at: string;
+  params: Record<string, unknown>;
+}
+
+/** Requests attached to this board's nodes. `active` narrows to the ones
+ * still in flight (queued / running) — what a reloading board wants. */
+export function listBoardRequests(boardId: number, opts?: { active?: boolean }) {
+  const qs = opts?.active ? "?active=true" : "";
+  return api<{ items: BoardRequestItem[] }>(`/api/boards/${boardId}/requests${qs}`);
+}
+
 // ── Plans + Pipeline runs ────────────────────────────────────────────────────
 
 export interface PipelineRunDTO {
@@ -612,8 +639,11 @@ export async function uploadImageFromUrl(
 
 
 // ── LLM provider Settings ─────────────────────────────────────────────────
-// See .omc/plans/multi-llm-provider-legacy.md → UI Specification → Frontend ↔
-// backend contract for the full shape.
+// Per-feature model: each of the 3 features (auto_prompt / vision /
+// planner) independently pins a provider + model + effort. The old
+// single-provider invariant ("all 3 features must point at the same
+// name") is gone — `configured` now only means every feature has a
+// provider pinned; model/effort stay optional.
 
 export type LLMProviderName = "claude" | "gemini" | "openai";
 export type LLMFeature = "auto_prompt" | "vision" | "planner";
@@ -625,6 +655,13 @@ export type LLMLastError =
   | "unreachable"
   | "unknown";
 
+/** One entry of a provider's model catalog. `id` is what travels back
+ * in the config / test payloads; `label` is display-only. */
+export interface LLMModelInfo {
+  id: string;
+  label: string;
+}
+
 export interface LLMProviderInfo {
   name: LLMProviderName;
   supportsVision: boolean;
@@ -632,21 +669,45 @@ export interface LLMProviderInfo {
   configured: boolean;
   requiresKey: boolean;
   mode: LLMProviderMode;
+  // Effort vocabularies differ per provider (claude: low…max, agy:
+  // low/medium/high, codex: whatever it reports), so the UI must render
+  // the options from `efforts` and never hardcode a list.
+  supportsEffort: boolean;
+  efforts: string[];
+  // Legitimately [] when the catalog couldn't be fetched (offline, CLI
+  // mid-upgrade, auth expired). The UI falls back to a free-text model
+  // field in that case so a stale catalog can't block the user.
+  models: LLMModelInfo[];
+  defaultModel: string | null;
   lastError?: LLMLastError;
   lastTest?: { ok: boolean; latencyMs?: number; error?: string };
 }
 
+/** One feature's pin. Every field is independently nullable:
+ * `provider` null = feature not set up yet; `model` / `effort` null =
+ * "whatever the provider defaults to". */
+export interface LLMFeatureConfig {
+  provider: LLMProviderName | null;
+  model: string | null;
+  effort: string | null;
+}
+
 export interface LLMConfig {
-  // null when the user hasn't picked a provider for this feature yet.
-  // Backend no longer fabricates a default; the forced-setup gate uses
-  // `configured` (below) to keep the dialog open until the user chooses.
-  auto_prompt: LLMProviderName | null;
-  vision: LLMProviderName | null;
-  planner: LLMProviderName | null;
-  // True only when all 3 features are pinned at the same provider —
-  // the single-provider UI invariant. Drives the forced-setup dialog.
+  auto_prompt: LLMFeatureConfig;
+  vision: LLMFeatureConfig;
+  planner: LLMFeatureConfig;
+  // True once every feature has a provider. Drives the forced-setup
+  // gate. A feature with a provider but no model still counts as
+  // configured — the backend falls back to that provider's default.
   configured: boolean;
 }
+
+/** PUT body — feature keys and the fields inside them are all
+ * optional, so a caller can patch one feature without re-sending the
+ * other two. */
+export type LLMConfigUpdate = Partial<
+  Record<LLMFeature, Partial<LLMFeatureConfig>>
+>;
 
 export async function getLlmProviders(): Promise<LLMProviderInfo[]> {
   // Backend returns snake-case keys mapped from Python — but the route
@@ -657,6 +718,27 @@ export async function getLlmProviders(): Promise<LLMProviderInfo[]> {
   return res.json() as Promise<LLMProviderInfo[]>;
 }
 
+export interface LlmModelCatalog {
+  models: LLMModelInfo[];
+  /** True when the backend answered from its catalog cache rather than
+   * re-asking the CLI — surfaced so the refresh button can tell the
+   * user whether anything was actually re-fetched. */
+  cached: boolean;
+}
+
+export async function getLlmProviderModels(
+  name: LLMProviderName,
+  force = false,
+): Promise<LlmModelCatalog> {
+  // `force=true` bypasses the backend's catalog cache. Wired to the
+  // per-row refresh button for the case where the user installs a new
+  // model / upgrades the CLI while the dialog is open.
+  const qs = force ? "?force=true" : "";
+  const res = await fetch(`/api/llm/providers/${name}/models${qs}`);
+  if (!res.ok) throw new Error(`getLlmProviderModels: ${res.status}`);
+  return res.json() as Promise<LlmModelCatalog>;
+}
+
 export async function getLlmConfig(): Promise<LLMConfig> {
   const res = await fetch("/api/llm/config");
   if (!res.ok) throw new Error(`getLlmConfig: ${res.status}`);
@@ -664,7 +746,7 @@ export async function getLlmConfig(): Promise<LLMConfig> {
 }
 
 export async function setLlmConfig(
-  partial: Partial<LLMConfig>,
+  partial: LLMConfigUpdate,
 ): Promise<{ ok: boolean }> {
   const res = await fetch("/api/llm/config", {
     method: "PUT",
@@ -698,11 +780,23 @@ export interface LlmTestResult {
 
 export async function testLlmProvider(
   name: LLMProviderName,
+  opts: { model?: string | null; effort?: string | null } = {},
 ): Promise<LlmTestResult> {
   // Cost-bounded by the backend: 1-token ping, 15s deadline. Returns
   // ok:false (NOT a non-200 HTTP status) on any failure mode so the
   // UI can render the error inline without try/catch boilerplate.
-  const res = await fetch(`/api/llm/providers/${name}/test`, { method: "POST" });
+  //
+  // model/effort are passed through so a per-feature row tests the
+  // exact combination it is about to save — a provider that answers on
+  // its default model can still fail on an exotic one.
+  const body: { model?: string; effort?: string } = {};
+  if (opts.model) body.model = opts.model;
+  if (opts.effort) body.effort = opts.effort;
+  const res = await fetch(`/api/llm/providers/${name}/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) {
     return { ok: false, error: `HTTP ${res.status}` };
   }

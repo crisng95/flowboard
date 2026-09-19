@@ -2,7 +2,9 @@
 
 Covers: file roundtrip, mode 0o600 enforcement, atomic writes, missing-file
 empty-dict fallback, corruption recovery, defaults overlay for active
-providers, key clearing.
+providers, key clearing, and the per-feature ``featureConfig`` block
+(provider + model + effort) with its ``activeProviders`` back-compat
+fallback in both directions.
 """
 from __future__ import annotations
 
@@ -153,13 +155,17 @@ def test_is_active_providers_configured_false_when_partial(tmp_secrets_path: Pat
     assert secrets.is_active_providers_configured() is False
 
 
-def test_is_active_providers_configured_false_when_mixed(tmp_secrets_path: Path):
-    """All 3 set, but to different providers — single-provider invariant
-    fails so the forced-setup gate prompts the user to consolidate."""
+def test_is_active_providers_configured_true_when_mixed(tmp_secrets_path: Path):
+    """All 3 set to *different* providers is now a configured install.
+
+    The old single-provider invariant (all three must match) is gone —
+    per-feature selection is the whole point of the current settings
+    screen, so a mixed config must not keep re-triggering the forced
+    setup dialog."""
     secrets.set_feature_provider("auto_prompt", "claude")
     secrets.set_feature_provider("vision", "gemini")
-    secrets.set_feature_provider("planner", "claude")
-    assert secrets.is_active_providers_configured() is False
+    secrets.set_feature_provider("planner", "openai")
+    assert secrets.is_active_providers_configured() is True
 
 
 def test_is_active_providers_configured_true_when_all_match(tmp_secrets_path: Path):
@@ -188,3 +194,158 @@ def test_write_then_read_preserves_full_document(tmp_secrets_path: Path):
     assert raw["apiKeys"] == {"openai": "sk-1"}
     assert raw["activeProviders"]["auto_prompt"] == "gemini"
     assert raw["activeProviders"]["vision"] == "openai"
+
+
+# ── featureConfig: per-feature provider + model + effort ──────────────
+
+
+def test_set_feature_config_roundtrips_model_and_effort(tmp_secrets_path: Path):
+    """The whole point of featureConfig: a feature remembers WHICH model
+    and WHICH reasoning effort, not just which provider."""
+    secrets.set_feature_config("auto_prompt", "gemini", "gemini-3.8-flash-low", "low")
+    cfg = secrets.read_feature_config()
+    assert cfg["auto_prompt"] == {
+        "provider": "gemini",
+        "model": "gemini-3.8-flash-low",
+        "effort": "low",
+    }
+
+
+def test_set_feature_config_features_are_independent(tmp_secrets_path: Path):
+    """Three features, three different provider/model/effort triples —
+    each round-trips without bleeding into its neighbours."""
+    secrets.set_feature_config("auto_prompt", "gemini", "gemini-3.8-flash-low", "low")
+    secrets.set_feature_config("vision", "gemini", "gemini-3.1-pro-high", "high")
+    secrets.set_feature_config("planner", "claude", "opus", "xhigh")
+    cfg = secrets.read_feature_config()
+    assert cfg["auto_prompt"]["model"] == "gemini-3.8-flash-low"
+    assert cfg["vision"]["effort"] == "high"
+    assert cfg["planner"] == {
+        "provider": "claude", "model": "opus", "effort": "xhigh",
+    }
+
+
+def test_set_feature_config_model_and_effort_default_to_none(tmp_secrets_path: Path):
+    """Provider-only pin leaves model/effort null — which dispatch reads
+    as "don't pass the flag" so the CLI's own default applies."""
+    secrets.set_feature_config("planner", "claude")
+    assert secrets.read_feature_config()["planner"] == {
+        "provider": "claude", "model": None, "effort": None,
+    }
+
+
+def test_set_feature_config_writes_both_blocks(tmp_secrets_path: Path):
+    """Writes update featureConfig AND the legacy activeProviders map, so
+    downgrading to a pre-featureConfig build doesn't brick the install."""
+    secrets.set_feature_config("vision", "gemini", "gemini-3.1-pro-high", "high")
+    raw = json.loads(tmp_secrets_path.read_text())
+    assert raw["featureConfig"]["vision"]["model"] == "gemini-3.1-pro-high"
+    assert raw["activeProviders"]["vision"] == "gemini"
+
+
+def test_set_feature_config_overwrites_previous_entry(tmp_secrets_path: Path):
+    """Re-pinning a feature replaces the whole triple rather than merging
+    — the HTTP layer owns merge semantics, the store is a plain setter."""
+    secrets.set_feature_config("vision", "gemini", "gemini-3.1-pro-high", "high")
+    secrets.set_feature_config("vision", "claude")
+    assert secrets.read_feature_config()["vision"] == {
+        "provider": "claude", "model": None, "effort": None,
+    }
+
+
+def test_read_feature_config_empty_for_fresh_install(tmp_secrets_path: Path):
+    assert secrets.read_feature_config() == {}
+
+
+def test_read_feature_config_falls_back_to_active_providers(tmp_secrets_path: Path):
+    """Back-compat: an install that predates featureConfig has only
+    activeProviders. Routing must survive the upgrade untouched, with
+    model/effort null so every CLI keeps its own default."""
+    secrets.write({
+        "activeProviders": {
+            "auto_prompt": "claude",
+            "vision": "gemini",
+            "planner": "claude",
+        }
+    })
+    cfg = secrets.read_feature_config()
+    assert cfg["auto_prompt"] == {
+        "provider": "claude", "model": None, "effort": None,
+    }
+    assert cfg["vision"]["provider"] == "gemini"
+    # And the upgraded install counts as configured, so the forced-setup
+    # dialog doesn't reappear after an upgrade.
+    assert secrets.is_active_providers_configured() is True
+
+
+def test_feature_config_wins_over_active_providers(tmp_secrets_path: Path):
+    """Both blocks present and disagreeing (e.g. a downgrade wrote the
+    legacy block, then the user upgraded again) — featureConfig is the
+    authority because it's the richer, newer shape."""
+    secrets.write({
+        "featureConfig": {
+            "vision": {"provider": "claude", "model": "sonnet", "effort": "low"},
+        },
+        "activeProviders": {"vision": "gemini"},
+    })
+    cfg = secrets.read_feature_config()
+    assert cfg["vision"]["provider"] == "claude"
+    assert cfg["vision"]["model"] == "sonnet"
+
+
+def test_read_feature_config_merges_both_blocks(tmp_secrets_path: Path):
+    """A partially-migrated file: one feature in the new block, another
+    only in the legacy one. Both must resolve."""
+    secrets.write({
+        "featureConfig": {
+            "vision": {"provider": "gemini", "model": "gemini-3.1-pro-high", "effort": "high"},
+        },
+        "activeProviders": {"vision": "gemini", "planner": "claude"},
+    })
+    cfg = secrets.read_feature_config()
+    assert cfg["vision"]["effort"] == "high"
+    assert cfg["planner"] == {"provider": "claude", "model": None, "effort": None}
+
+
+def test_read_feature_config_ignores_garbage_values(tmp_secrets_path: Path):
+    """Hand-edited file with wrong types in every slot. Bad provider →
+    entry dropped entirely; bad model/effort → coerced to null so the
+    flag is simply not passed."""
+    secrets.write({
+        "featureConfig": {
+            "auto_prompt": {"provider": "gemini", "model": 42, "effort": None},
+            "vision": {"provider": None},      # bad — no provider to route to
+            "planner": "claude",                # bad — not an object
+        }
+    })
+    cfg = secrets.read_feature_config()
+    assert cfg == {
+        "auto_prompt": {"provider": "gemini", "model": None, "effort": None},
+    }
+
+
+def test_read_feature_config_falls_back_per_feature_on_bad_entry(
+    tmp_secrets_path: Path
+):
+    """A featureConfig entry too broken to use falls back to the legacy
+    provider for that feature rather than dropping the feature."""
+    secrets.write({
+        "featureConfig": {"planner": {"model": "opus"}},  # no provider
+        "activeProviders": {"planner": "claude"},
+    })
+    assert secrets.read_feature_config()["planner"] == {
+        "provider": "claude", "model": None, "effort": None,
+    }
+
+
+def test_read_active_providers_projects_feature_config(tmp_secrets_path: Path):
+    """The provider-only view stays available for callers that don't care
+    about model/effort (planner's availability probe, older tests)."""
+    secrets.set_feature_config("vision", "gemini", "gemini-3.1-pro-high", "high")
+    assert secrets.read_active_providers() == {"vision": "gemini"}
+
+
+def test_set_feature_config_does_not_touch_api_keys(tmp_secrets_path: Path):
+    secrets.set_api_key("openai", "sk-keep")
+    secrets.set_feature_config("planner", "openai", "gpt-5.6-sol", "medium")
+    assert secrets.get_api_key("openai") == "sk-keep"

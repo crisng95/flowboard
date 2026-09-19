@@ -15,7 +15,6 @@ Endpoints:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -23,31 +22,9 @@ from sqlmodel import select
 
 from flowboard.db import get_session
 from flowboard.db.models import Node, Request
+from flowboard.timestamps import utc_iso
 
 router = APIRouter(prefix="/api/activity", tags=["activity"])
-
-
-def _utc_iso(dt: Optional[datetime]) -> Optional[str]:
-    """Serialize a UTC datetime as ISO with explicit ``Z`` suffix.
-
-    SQLite's ``DateTime`` column stores the value as an ISO string but
-    strips tz info on read-back, so models that wrote ``datetime.now(tz=utc)``
-    come back as **naive** datetimes here. Without an explicit suffix
-    the frontend's ``new Date(string)`` parses naive ISO as **local**
-    time — Vietnam (UTC+7) clients then read every timestamp as 7h in
-    the past, and "X minutes ago" computations show 7h+ offsets. We
-    annotate the value as UTC (naive → tag, aware → convert) before
-    serializing so the wire format unambiguously says "UTC."
-    """
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    else:
-        dt = dt.astimezone(timezone.utc)
-    # Replace the `+00:00` offset with `Z` — both are valid ISO-8601 UTC
-    # markers, but `Z` is shorter and matches what most JS code expects.
-    return dt.isoformat().replace("+00:00", "Z")
 
 
 def _duration_ms(req: Request) -> Optional[int]:
@@ -107,8 +84,8 @@ def list_activity(
             "status": r.status,
             "node_id": r.node_id,
             "node_short_id": short_ids.get(r.node_id) if r.node_id else None,
-            "created_at": _utc_iso(r.created_at),
-            "finished_at": _utc_iso(r.finished_at),
+            "created_at": utc_iso(r.created_at),
+            "finished_at": utc_iso(r.finished_at),
             "duration_ms": _duration_ms(r),
         }
         for r in rows
@@ -139,7 +116,7 @@ def get_activity_detail(request_id: int) -> dict:
         "params": req.params,
         "result": req.result,
         "error": req.error,
-        "created_at": _utc_iso(req.created_at),
-        "finished_at": _utc_iso(req.finished_at),
+        "created_at": utc_iso(req.created_at),
+        "finished_at": utc_iso(req.finished_at),
         "duration_ms": _duration_ms(req),
     }

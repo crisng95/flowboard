@@ -224,3 +224,110 @@ async def test_is_available_handles_missing_binary(monkeypatch):
     monkeypatch.setattr("flowboard.services.claude_cli.subprocess.run", _raise)
     assert await claude_cli.is_available() is False
     claude_cli.reset_availability_cache()
+
+
+@pytest.mark.asyncio
+async def test_run_claude_emits_model_and_effort_flags(monkeypatch):
+    """Per-feature selection reaches argv as `--model` / `--effort`."""
+    captured: dict = {}
+
+    def _fake_run(args, **kwargs):
+        captured["argv"] = list(args)
+        return _FakeResult(returncode=0, stdout=_envelope("ok"))
+
+    monkeypatch.setattr("flowboard.services.claude_cli.subprocess.run", _fake_run)
+    await claude_cli.run_claude("hi", model="opus", effort="xhigh")
+    argv = captured["argv"]
+    assert argv[argv.index("--model") + 1] == "opus"
+    assert argv[argv.index("--effort") + 1] == "xhigh"
+
+
+@pytest.mark.asyncio
+async def test_run_claude_omits_model_and_effort_when_unset(monkeypatch):
+    """Unset means "leave the user's own claude settings alone" — passing
+    a hard-coded model here would silently override their choice."""
+    captured: dict = {}
+
+    def _fake_run(args, **kwargs):
+        captured["argv"] = list(args)
+        return _FakeResult(returncode=0, stdout=_envelope("ok"))
+
+    monkeypatch.setattr("flowboard.services.claude_cli.subprocess.run", _fake_run)
+    await claude_cli.run_claude("hi")
+    assert "--model" not in captured["argv"]
+    assert "--effort" not in captured["argv"]
+
+
+# ── Event-loop discipline ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_claude_does_not_park_the_event_loop(monkeypatch):
+    """`subprocess.run` stays — see the module docstring for the Windows
+    `.cmd` reason — but runs in a worker thread.
+
+    The agent is one process on one loop, shared by the generation
+    worker, the extension WebSocket and every HTTP route. A `claude -p`
+    turn can run for minutes; blocking here froze all of it, and the
+    availability probe behind it sits on `/api/llm/providers`, which an
+    always-mounted badge polls every 30s.
+    """
+    import asyncio
+    import time as _time
+
+    _stub_resolve(monkeypatch)
+
+    def _slow(*_a, **_kw):
+        _time.sleep(0.25)
+        return _FakeResult(returncode=0, stdout=_envelope("ok"))
+
+    monkeypatch.setattr("flowboard.services.claude_cli.subprocess.run", _slow)
+
+    ticks = 0
+
+    async def _tick():
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    ticker = asyncio.create_task(_tick())
+    try:
+        out = await claude_cli.run_claude("hi")
+    finally:
+        ticker.cancel()
+
+    assert out == "ok"
+    assert ticks >= 5, "the event loop was parked for the whole subprocess call"
+
+
+@pytest.mark.asyncio
+async def test_availability_probe_does_not_park_the_event_loop(monkeypatch):
+    import asyncio
+    import time as _time
+
+    _stub_resolve(monkeypatch)
+    claude_cli.reset_availability_cache()
+
+    def _slow(*_a, **_kw):
+        _time.sleep(0.25)
+        return _FakeResult(returncode=0, stdout=b"1.0.0\n")
+
+    monkeypatch.setattr("flowboard.services.claude_cli.subprocess.run", _slow)
+
+    ticks = 0
+
+    async def _tick():
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    ticker = asyncio.create_task(_tick())
+    try:
+        assert await claude_cli.is_available(force=True) is True
+    finally:
+        ticker.cancel()
+        claude_cli.reset_availability_cache()
+
+    assert ticks >= 5, "the event loop was parked for the whole subprocess call"

@@ -1,5 +1,6 @@
-"""Tests for the LLM registry — feature routing, vision-capability gate,
-availability gate, and the default provider fallback.
+"""Tests for the LLM registry — feature routing, per-feature model/effort
+resolution, vision-capability gate, availability gate, and the default
+provider fallback.
 
 The registry is the only thing that knows concrete provider classes; every
 test here uses fake providers injected into ``_PROVIDERS`` so we never
@@ -38,6 +39,9 @@ class _FakeProvider:
     ):
         self.name = name
         self.supports_vision = supports_vision
+        self.supports_effort = True
+        self.efforts = ["low", "medium", "high"]
+        self.default_model = None
         self._available = available
         self._run_result = run_result
         self.run_calls: list[dict] = []
@@ -49,17 +53,24 @@ class _FakeProvider:
         system_prompt: Optional[str] = None,
         attachments: Optional[list[str]] = None,
         timeout: float = 90.0,
+        model: Optional[str] = None,
+        effort: Optional[str] = None,
     ) -> str:
         self.run_calls.append({
             "user_prompt": user_prompt,
             "system_prompt": system_prompt,
             "attachments": attachments,
             "timeout": timeout,
+            "model": model,
+            "effort": effort,
         })
         return self._run_result
 
     async def is_available(self) -> bool:
         return self._available
+
+    async def list_models(self, force: bool = False) -> list[dict]:
+        return [{"id": f"{self.name}-model", "label": self.name.title()}]
 
 
 @pytest.fixture
@@ -192,6 +203,89 @@ async def test_run_forwards_all_kwargs(tmp_secrets_path, fake_providers):
     assert call["timeout"] == 42.0
 
 
+# ── Per-feature model + effort resolution ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_run_forwards_configured_model_and_effort(
+    tmp_secrets_path, fake_providers
+):
+    """The feature's pinned model/effort reach the provider verbatim.
+    This is the whole reason featureConfig exists — without the forward,
+    every feature would silently run on the CLI's default model."""
+    secrets.set_feature_config("auto_prompt", "gemini", "gemini-3.8-flash-low", "low")
+    await registry.run_llm("auto_prompt", "hi")
+    call = fake_providers["gemini"].run_calls[0]
+    assert call["model"] == "gemini-3.8-flash-low"
+    assert call["effort"] == "low"
+
+
+@pytest.mark.asyncio
+async def test_run_passes_none_when_model_and_effort_unpinned(
+    tmp_secrets_path, fake_providers
+):
+    """Provider-only pin must send None, NOT a substituted default — the
+    provider omits the flag entirely so the CLI's own model setting wins.
+    Substituting anything here would silently override a choice the user
+    made inside `claude` / `agy` / `codex`."""
+    secrets.set_feature_provider("planner", "claude")
+    await registry.run_llm("planner", "hi")
+    call = fake_providers["claude"].run_calls[0]
+    assert call["model"] is None
+    assert call["effort"] is None
+
+
+@pytest.mark.asyncio
+async def test_features_carry_independent_model_and_effort(
+    tmp_secrets_path, fake_providers
+):
+    """Same provider, two features, two different model/effort pairs —
+    a cheap fast model for Auto-Prompt and a deep one for Vision is the
+    canonical setup this feature was built for."""
+    secrets.set_feature_config("auto_prompt", "gemini", "gemini-3.8-flash-low", "low")
+    secrets.set_feature_config("vision", "gemini", "gemini-3.1-pro-high", "high")
+    await registry.run_llm("auto_prompt", "p1")
+    await registry.run_llm("vision", "p2", attachments=["/tmp/x.jpg"])
+    calls = fake_providers["gemini"].run_calls
+    assert [c["model"] for c in calls] == [
+        "gemini-3.8-flash-low", "gemini-3.1-pro-high",
+    ]
+    assert [c["effort"] for c in calls] == ["low", "high"]
+
+
+@pytest.mark.asyncio
+async def test_run_drops_an_effort_the_provider_does_not_accept(
+    tmp_secrets_path, fake_providers, caplog
+):
+    """`secrets.json` is a file on disk. The HTTP layer validates what it
+    writes, but the file is hand-editable and a provider's ladder can
+    shrink under a config written against the older, longer one. This
+    value ends up inside a CLI flag (`-c model_reasoning_effort="…"` for
+    Codex), so an unrecognised one is dropped and logged rather than
+    forwarded — the call still runs, on the CLI's own effort setting."""
+    secrets.set_feature_config("planner", "gemini", "gemini-3.8-flash-low", "xhigh")
+    with caplog.at_level("WARNING"):
+        await registry.run_llm("planner", "hi")
+    call = fake_providers["gemini"].run_calls[0]
+    assert call["effort"] is None
+    # The model is untouched — unknown-but-valid ids are the documented
+    # escape hatch, and only the effort reaches a config-override flag.
+    assert call["model"] == "gemini-3.8-flash-low"
+    assert "dropping unknown effort" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_resolves_model_from_legacy_active_providers(
+    tmp_secrets_path, fake_providers
+):
+    """A pre-featureConfig secrets.json still routes; model/effort come
+    back None so nothing about the existing install's behaviour changes."""
+    secrets.write({"activeProviders": {"auto_prompt": "openai"}})
+    await registry.run_llm("auto_prompt", "hi")
+    call = fake_providers["openai"].run_calls[0]
+    assert call["model"] is None
+    assert call["effort"] is None
+
+
 # ── Real ClaudeProvider smoke (no actual subprocess) ───────────────────
 
 @pytest.mark.asyncio
@@ -240,3 +334,30 @@ async def test_real_claude_provider_delegates_to_claude_cli():
     assert kwargs["system_prompt"] == "s"
     assert kwargs["attachments"] == ["/x.jpg"]
     assert kwargs["timeout"] == 5.0
+
+
+@pytest.mark.asyncio
+async def test_real_claude_provider_threads_model_and_effort_to_cli():
+    """ClaudeProvider is a pass-through — model/effort must survive the
+    hop into claude_cli, where they become `--model` / `--effort` argv."""
+    from flowboard.services.llm.claude import ClaudeProvider
+
+    p = ClaudeProvider()
+    with patch(
+        "flowboard.services.claude_cli.run_claude", return_value="ok",
+    ) as mock_run:
+        await p.run("hello", model="opus", effort="xhigh")
+    kwargs = mock_run.call_args.kwargs
+    assert kwargs["model"] == "opus"
+    assert kwargs["effort"] == "xhigh"
+
+
+@pytest.mark.asyncio
+async def test_real_claude_provider_lists_alias_models():
+    """The claude CLI has no headless model listing, so the catalog is
+    static and alias-only — aliases track the latest model in each tier
+    and so don't rot the way a pinned full name would."""
+    from flowboard.services.llm.claude import ClaudeProvider
+
+    models = await ClaudeProvider().list_models()
+    assert {m["id"] for m in models} == {"fable", "opus", "sonnet", "haiku"}

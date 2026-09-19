@@ -21,16 +21,51 @@ The class API contract: ``is_available()`` is True if at least one mode
 is usable. ``run()`` picks the right mode automatically based on
 attachment presence + cached probe results. Callers stay ignorant of
 which transport ran.
+
+**Codex CLI flag migration (codex-cli 0.155.0).** The invocation this
+module used to emit — ``codex exec --output-format json -p -`` — is dead
+on current Codex and fails before the model is ever reached::
+
+    error: unexpected argument '--output-format' found
+
+Two things changed upstream and both had to be unwound:
+
+- ``--output-format`` no longer exists on ``codex exec``. The structured
+  replacement is ``-o/--output-last-message <FILE>``, which writes the
+  agent's final message (and nothing else) to a file. ``--json`` exists
+  too but emits a JSONL *event stream* meant for progress UIs, so it
+  would leave us re-implementing "find the last assistant message".
+  ``-o`` into a ``NamedTemporaryFile`` is the clean read.
+- ``-p`` was repurposed: it now means ``--profile``, not "prompt". The
+  prompt is a **positional** argument. Passing ``-p -`` therefore asked
+  Codex to load a config profile literally named ``-``. This is why the
+  prompt must no longer travel over stdin here even though the Claude
+  provider still does that for its own Windows ``.cmd`` reasons.
+
+The dispatch also pins ``--skip-git-repo-check`` (Flowboard's cwd is not
+guaranteed to be a git repo) and ``--sandbox read-only`` (we want a text
+answer, never a filesystem mutation). ``--sandbox read-only`` is a
+deliberate safety floor, not a performance tweak: Codex is agentic and
+would otherwise be free to write files while answering a prompt-synthesis
+question. stdin is pointed at ``DEVNULL`` because Codex appends piped
+stdin to the prompt as a ``<stdin>`` block when it is not a terminal.
+
+**Model / effort.** ``-m <model>`` selects the model;
+``-c model_reasoning_effort="<effort>"`` selects reasoning depth (Codex
+has no dedicated effort flag — it goes through the generic ``-c`` config
+override, whose value is parsed as TOML). Both are omitted when the
+caller passes None so the user's ``~/.codex/config.toml`` keeps applying.
 """
 from __future__ import annotations
 
 import asyncio
 import base64
-import json
 import logging
 import mimetypes
+import os
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -43,7 +78,6 @@ from .cli_utils import (
     resolve_cli_binary,
     validate_prompt_size,
     validate_attachment_paths,
-    DEFAULT_SUBPROCESS_TIMEOUT,
     CLI_PROBE_TIMEOUT,
 )
 
@@ -62,12 +96,48 @@ _MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 # Image-flag candidates ordered by likelihood. First match wins.
 _IMAGE_FLAG_CANDIDATES = ("--image", "--attach", "--file", "--input")
 
+# Static catalog. Unlike ``agy models``, Codex has no headless listing:
+# ``codex models`` exits with "Error: stdin is not a terminal", so there
+# is nothing to shell out to from a FastAPI worker. These slugs were read
+# off the CLI's own model cache (``~/.codex/models_cache.json``) at
+# codex-cli 0.155.0, filtered to the entries marked ``visibility: list``
+# — the hidden ones (``gpt-reserve``, ``codex-auto-review``) are internal
+# routing targets, not user-selectable models. Refresh this list from
+# that same file when bumping the pinned Codex version.
+_MODELS: list[dict] = [
+    {"id": "gpt-6-astra", "label": "GPT-6-Astra"},
+    {"id": "gpt-5.6-sol", "label": "GPT-5.6-Sol"},
+    {"id": "gpt-5.6-terra", "label": "GPT-5.6-Terra"},
+    {"id": "gpt-5.6-luna", "label": "GPT-5.6-Luna"},
+    {"id": "gpt-5.5", "label": "GPT-5.5"},
+]
+
+# Reasoning efforts. The API's own enum (surfaced verbatim when you send a
+# bad value) is "none, minimal, low, medium, high, xhigh, max"; the CLI's
+# model cache lists "low, medium, high, xhigh, max" (+ "ultra" on some
+# models) as the per-model supported set. We expose the intersection —
+# every value here is accepted by the API *and* supported by every model
+# in ``_MODELS``. ``none``/``minimal`` are API-only and ``ultra`` is
+# model-specific, so offering either would let the UI build a
+# model+effort pair that fails at dispatch time.
+_EFFORTS: list[str] = ["low", "medium", "high", "xhigh", "max"]
+
 
 class OpenAIProvider:
     """Conforms to ``LLMProvider``. Dual-mode dispatch."""
 
     name: str = "openai"
     supports_vision: bool = True  # via at least one of the two modes
+    supports_effort: bool = True
+    efforts: list[str] = _EFFORTS
+    # Advisory only — pre-selects a row in Settings. Dispatch leaves an
+    # unpinned model unpinned so ~/.codex/config.toml's `model` wins.
+    default_model: Optional[str] = "gpt-5.6-sol"
+    # Five slugs read by hand off ONE pinned Codex build's model cache
+    # (`codex models` can't run headlessly — see `_MODELS`). A user on a
+    # different build has models this list has never heard of, so it must
+    # not be validated against.
+    catalog_is_authoritative: bool = False
 
     def __init__(self) -> None:
         # CLI probe state (set by `_probe_cli`).
@@ -99,12 +169,22 @@ class OpenAIProvider:
         self._cli_probed = True
 
         # Step 1: does the binary exist + run `--version`?
+        #
+        # Both probes go through `asyncio.to_thread`: this runs from
+        # `is_available()`, which the /api/llm/providers route awaits, and
+        # that route is polled every 30s by an always-mounted badge.
+        # Blocking the loop here stalls the worker and the extension WS
+        # along with every other request.
         try:
-            codex_bin = resolve_cli_binary(_CLI_BIN, CLI_PROBE_TIMEOUT)
-            result = subprocess.run(
-                [codex_bin, "--version"],
-                capture_output=True,
-                timeout=CLI_PROBE_TIMEOUT,
+            codex_bin = await asyncio.to_thread(
+                resolve_cli_binary, _CLI_BIN, CLI_PROBE_TIMEOUT
+            )
+            result = await asyncio.to_thread(
+                lambda: subprocess.run(
+                    [codex_bin, "--version"],
+                    capture_output=True,
+                    timeout=CLI_PROBE_TIMEOUT,
+                )
             )
             self._cli_available = result.returncode == 0
         except (FileNotFoundError, PermissionError):
@@ -119,11 +199,15 @@ class OpenAIProvider:
 
         # Step 2: parse `--help` for an image-attachment flag.
         try:
-            codex_bin = resolve_cli_binary(_CLI_BIN, CLI_PROBE_TIMEOUT)
-            result = subprocess.run(
-                [codex_bin, "--help"],
-                capture_output=True,
-                timeout=CLI_PROBE_TIMEOUT,
+            codex_bin = await asyncio.to_thread(
+                resolve_cli_binary, _CLI_BIN, CLI_PROBE_TIMEOUT
+            )
+            result = await asyncio.to_thread(
+                lambda: subprocess.run(
+                    [codex_bin, "--help"],
+                    capture_output=True,
+                    timeout=CLI_PROBE_TIMEOUT,
+                )
             )
             stdout_b = result.stdout
         except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
@@ -169,6 +253,11 @@ class OpenAIProvider:
             return True
         return await self._api_available()
 
+    async def list_models(self, force: bool = False) -> list[dict]:
+        """Static catalog — see ``_MODELS`` for why there's nothing live
+        to fetch. ``force`` is accepted for protocol symmetry."""
+        return [dict(m) for m in _MODELS]
+
     async def run(
         self,
         user_prompt: str,
@@ -177,6 +266,7 @@ class OpenAIProvider:
         attachments: Optional[list[str]] = None,
         timeout: float = _DEFAULT_TIMEOUT,
         model: Optional[str] = None,
+        effort: Optional[str] = None,
     ) -> str:
         await self._probe_cli()
         api_ok = await self._api_available()
@@ -193,7 +283,7 @@ class OpenAIProvider:
             cli_supports_this = (self._cli_image_flag is not None) or not wants_vision
             if cli_supports_this:
                 return await self._run_cli(
-                    user_prompt, system_prompt, attachments, timeout
+                    user_prompt, system_prompt, attachments, timeout, model, effort
                 )
             # Codex is text-only — fall through to API for this dispatch.
             if not api_ok:
@@ -234,11 +324,12 @@ class OpenAIProvider:
         system_prompt: Optional[str],
         attachments: Optional[list[str]],
         timeout: float,
+        model: Optional[str] = None,
+        effort: Optional[str] = None,
     ) -> str:
-        """Spawn `codex exec --output-format json -p <prompt>` and parse
-        the JSON envelope (similar shape to `claude` CLI)."""
-        import os
-
+        """Spawn ``codex exec`` and read the final answer back from the
+        ``-o`` output file. See the module docstring for the flag
+        migration this replaced."""
         # Validate inputs
         try:
             validate_prompt_size(user_prompt)
@@ -248,63 +339,115 @@ class OpenAIProvider:
         except ValueError as exc:
             raise LLMError(f"Invalid input: {exc}") from exc
 
-        codex_bin = resolve_cli_binary(_CLI_BIN, CLI_PROBE_TIMEOUT)
-        # Pipe the prompt via stdin (`-` sentinel) instead of as an argv
-        # token. Same Windows ``.cmd`` shim rationale as claude_cli.py:
-        # cmd.exe re-parses argv for ``.cmd``-shimmed binaries and
-        # mangles newlines / quotes in long prompts. Stdin sidesteps the
-        # parser entirely.
+        codex_bin = await asyncio.to_thread(
+            resolve_cli_binary, _CLI_BIN, CLI_PROBE_TIMEOUT
+        )
+
+        # ``codex exec`` has no --system flag, so the system prompt is
+        # folded into the prompt body the same way the Gemini provider
+        # does it. (The old code passed ``--system``, which this version
+        # of Codex also rejects.)
+        full_prompt = (
+            f"[System: {system_prompt}]\n\n{user_prompt}"
+            if system_prompt
+            else user_prompt
+        )
+
+        # NamedTemporaryFile(delete=False) + explicit unlink: we need the
+        # path to survive being handed to a child process on every
+        # platform, and Codex opens it itself for writing.
+        tmp = tempfile.NamedTemporaryFile(
+            prefix="flowboard-codex-", suffix=".txt", delete=False
+        )
+        tmp.close()
+        out_path = tmp.name
+
         args: list[str] = [
-            codex_bin, "exec", "--output-format", "json", "-p", "-",
+            codex_bin, "exec",
+            "--skip-git-repo-check",
+            "--sandbox", "read-only",
+            "-o", out_path,
         ]
-        if system_prompt:
-            args += ["--system", system_prompt]
+        if model:
+            args += ["-m", model]
+        if effort:
+            # Value is parsed as TOML, hence the embedded quotes. `effort`
+            # is whitelist-validated on every path that can reach here —
+            # PUT /config and POST /providers/{name}/test share
+            # `routes/llm.py::_validate_effort`, and `registry.run_llm`
+            # re-checks what it read out of secrets.json — so there is
+            # nothing to escape. That claim was once true of the save path
+            # only, while Test forwarded the field raw into this same `-c`
+            # override that also configures `sandbox_mode`.
+            args += ["-c", f'model_reasoning_effort="{effort}"']
         if attachments and self._cli_image_flag:
             for path in attachments:
                 args += [self._cli_image_flag, os.path.abspath(path)]
+        # Prompt is positional and must come last.
+        args.append(full_prompt)
 
+        # `subprocess.run` (not asyncio's subprocess transport) for the
+        # same Windows `.cmd`-shim reason the Claude provider documents,
+        # wrapped in `asyncio.to_thread` so a multi-minute Codex turn
+        # doesn't park the loop the worker and the extension WS run on.
+        # Shutdown cost, known and accepted: `asyncio.to_thread` is not
+        # cancellable. Cancelling this coroutine returns control to the
+        # caller, but the thread keeps running until codex exits or its
+        # timeout fires, so a shutdown mid-turn can wait out the full
+        # deadline (the caller's timeout) before the process is free. Still
+        # strictly better than blocking the loop, which froze the worker,
+        # the extension WS and every HTTP route for the same duration.
         try:
-            result = subprocess.run(
-                args,
-                input=user_prompt.encode("utf-8"),
-                capture_output=True,
-                timeout=timeout,
+            result = await asyncio.to_thread(
+                lambda: subprocess.run(
+                    args,
+                    # Codex appends piped stdin to the prompt as a `<stdin>`
+                    # block when stdin isn't a terminal. DEVNULL keeps the
+                    # prompt exactly what we passed positionally.
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    timeout=timeout,
+                )
             )
         except FileNotFoundError as exc:
+            _unlink_quietly(out_path)
             raise LLMError("codex CLI not found on PATH") from exc
         except subprocess.TimeoutExpired as exc:
+            _unlink_quietly(out_path)
             raise LLMError(f"codex CLI timed out after {timeout}s") from exc
         except Exception as exc:  # noqa: BLE001
+            _unlink_quietly(out_path)
             raise LLMError(f"codex CLI error: {exc}") from exc
 
-        if result.returncode != 0:
-            stderr = result.stderr.decode(errors="replace")[:400]
-            raise LLMError(f"codex CLI exited {result.returncode}: {stderr}")
-
-        stdout = result.stdout.decode(errors="replace")
         try:
-            envelope = json.loads(stdout)
-        except json.JSONDecodeError as exc:
-            raise LLMError(
-                f"codex CLI returned non-JSON output: {stdout[:200]}"
-            ) from exc
+            if result.returncode != 0:
+                # Codex writes its failures to stdout (the event log), not
+                # stderr, so include both — a 400 from the API shows up as
+                # an `ERROR: {...}` block in stdout with stderr empty.
+                detail = (
+                    result.stderr.decode(errors="replace").strip()
+                    or result.stdout.decode(errors="replace").strip()
+                )
+                raise LLMError(
+                    f"codex CLI exited {result.returncode}: {detail[:400]}"
+                )
 
-        if not isinstance(envelope, dict):
-            raise LLMError("codex CLI envelope is not an object")
+            try:
+                answer = Path(out_path).read_text(errors="replace")
+            except OSError as exc:
+                raise LLMError(
+                    f"codex CLI did not write an output file: {exc}"
+                ) from exc
+        finally:
+            _unlink_quietly(out_path)
 
-        # Codex envelope shape mirrors Claude CLI: {result: "..."} or
-        # {is_error: true, ...}. Tolerate both `result` and `output_text`
-        # since the exact field name has shifted across CLI versions.
-        if envelope.get("is_error") or envelope.get("error"):
-            raise LLMError(
-                f"codex CLI reported error: "
-                f"{envelope.get('error') or envelope.get('result') or 'unknown'}"
-            )
-        for key in ("result", "output_text", "text"):
-            val = envelope.get(key)
-            if isinstance(val, str):
-                return val
-        raise LLMError(f"codex CLI envelope missing string output: {envelope!r:.200}")
+        if not answer.strip():
+            # Exit 0 with nothing written means the turn ended without a
+            # final assistant message. Fail loud rather than handing
+            # callers an empty string to parse (same class of bug as the
+            # Gemini provider's empty-response guard).
+            raise LLMError("codex CLI returned an empty response")
+        return answer.strip()
 
     # ── API dispatch ─────────────────────────────────────────────────
 
@@ -369,6 +512,18 @@ class OpenAIProvider:
 
 
 # ── helpers ───────────────────────────────────────────────────────────
+
+def _unlink_quietly(path: str) -> None:
+    """Remove the ``-o`` scratch file; a missing file is not an error.
+
+    Called on every exit path (including the error ones) so a long-running
+    agent doesn't leak one temp file per failed Codex dispatch.
+    """
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
 
 def _image_url_block(path: str) -> dict:
     p = Path(path)

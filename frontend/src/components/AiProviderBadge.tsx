@@ -3,6 +3,7 @@ import {
   getLlmConfig,
   getLlmProviders,
   type LLMConfig,
+  type LLMFeature,
   type LLMProviderInfo,
   type LLMProviderName,
 } from "../api/client";
@@ -13,13 +14,19 @@ import { AiProviderDialog } from "./AiProviderDialog";
  * left of the Sponsor button. Click opens the AiProviderDialog.
  *
  * Three render states:
- *  1. Not configured — `config.configured === false`. Renders a
- *     "Setup AI" CTA in warning style. The forced-setup gate at the App
- *     level usually opens the dialog before the user even sees this,
- *     but the badge stays consistent if they cancel out.
- *  2. Configured + healthy — single provider name + ✓ icon.
- *  3. Configured + unhealthy — single provider name + ⚠ (CLI got
- *     uninstalled / key revoked since setup). Click to reconfigure.
+ *  1. Not configured — `config.configured === false` (at least one
+ *     feature has no provider). Renders a "Setup AI" CTA in warning
+ *     style. The forced-setup gate at the App level usually opens the
+ *     dialog before the user even sees this, but the badge stays
+ *     consistent if they cancel out.
+ *  2. Configured + healthy — provider name + ✓ icon. Features can now
+ *     run on different providers, so the label collapses to the single
+ *     shared name when they agree and says "Mixed" when they don't;
+ *     the per-feature detail (provider · model · effort) lives in the
+ *     tooltip, which is the right place for three lines of text in a
+ *     toolbar chip.
+ *  3. Configured + unhealthy — name + ⚠ (a pinned CLI got uninstalled /
+ *     key revoked since setup). Click to reconfigure.
  */
 
 const PROVIDER_LABEL: Record<LLMProviderName, string> = {
@@ -27,6 +34,14 @@ const PROVIDER_LABEL: Record<LLMProviderName, string> = {
   gemini: "Gemini",
   openai: "OpenAI",
 };
+
+const FEATURE_LABEL: Record<LLMFeature, string> = {
+  auto_prompt: "Auto-prompt",
+  vision: "Vision",
+  planner: "Planner",
+};
+
+const FEATURES: LLMFeature[] = ["auto_prompt", "vision", "planner"];
 
 const POLL_INTERVAL_MS = 30_000;
 
@@ -95,7 +110,7 @@ export function AiProviderBadge() {
           type="button"
           className="ai-provider-badge ai-provider-badge--setup"
           onClick={() => setOpen(true)}
-          title="Pick an AI provider to power Auto-Prompt, Vision, and Planner."
+          title="Pick a provider for Auto-prompt, Vision, and Planner."
           aria-label="Set up AI provider"
         >
           <span className="ai-provider-badge__icon" aria-hidden="true">🤖</span>
@@ -112,22 +127,31 @@ export function AiProviderBadge() {
     );
   }
 
-  // Configured state — single-provider model means all 3 features point
-  // at the same name; pick auto_prompt as the canonical one (already
-  // guaranteed equal to vision/planner by the configured invariant).
-  const primary = config.auto_prompt as LLMProviderName;
-  const pinned = new Set<LLMProviderName>([
-    primary,
-    config.vision as LLMProviderName,
-    config.planner as LLMProviderName,
-  ]);
+  // Configured state. `configured=true` guarantees a provider on every
+  // feature, but not the same one — collapse to a single name only when
+  // all three agree.
+  const pinned = FEATURES.map((f) => config[f].provider).filter(
+    (name): name is LLMProviderName => name !== null,
+  );
+  const distinct = Array.from(new Set(pinned));
+  const label = distinct.length === 1 ? PROVIDER_LABEL[distinct[0]] : "Mixed";
   const unhealthy = providers
-    ? providers.some((p) => pinned.has(p.name) && !p.available)
+    ? providers.some((p) => distinct.includes(p.name) && !p.available)
     : false;
 
+  // One tooltip line per feature so the full picture (provider, model,
+  // effort) is one hover away without widening the chip.
   const tooltip =
-    `${PROVIDER_LABEL[primary]} powers Auto-Prompt, Vision, Planner`
-    + (unhealthy ? " · CLI unavailable — click to reconfigure" : "");
+    FEATURES.map((f) => {
+      const pin = config[f];
+      const parts = [
+        pin.provider ? PROVIDER_LABEL[pin.provider] : "—",
+        pin.model ?? "default model",
+        pin.effort ?? "default effort",
+      ];
+      return `${FEATURE_LABEL[f]}: ${parts.join(" · ")}`;
+    }).join("\n")
+    + (unhealthy ? "\n⚠ A pinned CLI is unavailable — click to reconfigure" : "");
 
   return (
     <>
@@ -139,7 +163,7 @@ export function AiProviderBadge() {
         aria-label="AI Providers"
       >
         <span className="ai-provider-badge__icon" aria-hidden="true">🤖</span>
-        <span className="ai-provider-badge__label">{PROVIDER_LABEL[primary]}</span>
+        <span className="ai-provider-badge__label">{label}</span>
         <span
           className={`ai-provider-badge__status ai-provider-badge__status--${
             unhealthy ? "warn" : "ok"

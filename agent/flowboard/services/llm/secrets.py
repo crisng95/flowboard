@@ -5,13 +5,36 @@ Schema of ``~/.flowboard/secrets.json``:
 ```json
 {
   "apiKeys": {"openai": "sk-..."},
+  "featureConfig": {
+    "auto_prompt": {"provider": "gemini", "model": "gemini-3.8-flash-low", "effort": "low"},
+    "vision":      {"provider": "gemini", "model": "gemini-3.8-flash-high", "effort": "high"},
+    "planner":     {"provider": "claude", "model": "sonnet", "effort": "medium"}
+  },
   "activeProviders": {
-    "auto_prompt": "claude",
+    "auto_prompt": "gemini",
     "vision": "gemini",
     "planner": "claude"
   }
 }
 ```
+
+**Why two blocks for the same thing.** ``activeProviders`` is the original
+"which provider serves this feature" map. ``featureConfig`` is its
+superset: same routing plus the per-feature model and reasoning effort.
+Both are maintained, deliberately:
+
+- **Read** prefers ``featureConfig`` and falls back to ``activeProviders``
+  (provider only; model and effort come back ``None``). An install that
+  upgraded from a pre-``featureConfig`` version keeps routing exactly
+  where it was routing before, with the CLIs' own model defaults applying
+  until the user picks something.
+- **Write** updates *both*. If the user later downgrades Flowboard, the
+  older build still finds ``activeProviders`` and keeps working instead of
+  presenting a bricked, seemingly-unconfigured install.
+
+The duplication costs a few bytes in a single-user JSON file and buys a
+lossless upgrade/downgrade path in both directions. Drop ``activeProviders``
+only once downgrades are no longer a concern.
 
 Stored as plain JSON with file mode ``0o600`` (owner read/write only).
 Single-user local app — OS-level file permissions are sufficient. We
@@ -99,49 +122,138 @@ def set_api_key(provider: str, key: Optional[str]) -> None:
     write(doc)
 
 
-# ── Active-providers helpers ───────────────────────────────────────────
+# ── Feature-config helpers ─────────────────────────────────────────────
 
 # Features the UI configures. Order matters only for display; iteration
 # order in this module is deterministic on Python 3.7+.
 _FEATURES: tuple[str, ...] = ("auto_prompt", "vision", "planner")
 
 
+def _clean_str(val: object) -> Optional[str]:
+    """Non-empty strings pass through; everything else becomes None.
+
+    Guards every read path against a hand-edited secrets.json holding
+    ``42`` or ``null`` where a provider / model / effort belongs.
+    """
+    return val if isinstance(val, str) and val else None
+
+
+def read_feature_config() -> dict[str, dict]:
+    """Return ``{feature: {"provider", "model", "effort"}}`` for every
+    feature the user has configured.
+
+    ``featureConfig`` wins when present. Otherwise the legacy
+    ``activeProviders`` map supplies the provider and ``model``/``effort``
+    come back ``None`` — see the module docstring for why both blocks
+    exist. A feature with no provider anywhere is simply absent from the
+    result; callers treat absence as "not configured" rather than
+    substituting a default, so an unconfigured feature fails loudly in the
+    dispatch path instead of silently routing somewhere the user didn't
+    pick.
+    """
+    doc = read()
+    feature_cfg = doc.get("featureConfig")
+    if not isinstance(feature_cfg, dict):
+        feature_cfg = {}
+    legacy = doc.get("activeProviders")
+    if not isinstance(legacy, dict):
+        legacy = {}
+
+    # File order, featureConfig first — deterministic without imposing an
+    # order the file itself doesn't have.
+    features = list(feature_cfg) + [f for f in legacy if f not in feature_cfg]
+
+    out: dict[str, dict] = {}
+    for feature in features:
+        entry = feature_cfg.get(feature)
+        if isinstance(entry, dict):
+            provider = _clean_str(entry.get("provider"))
+            if provider is not None:
+                out[feature] = {
+                    "provider": provider,
+                    "model": _clean_str(entry.get("model")),
+                    "effort": _clean_str(entry.get("effort")),
+                }
+                continue
+        # Back-compat: a pre-featureConfig install, or a featureConfig
+        # entry hand-edited into something unusable. The legacy block
+        # carries the provider and nothing else, so model/effort stay
+        # None rather than borrowing values from a mismatched entry.
+        provider = _clean_str(legacy.get(feature))
+        if provider is not None:
+            out[feature] = {"provider": provider, "model": None, "effort": None}
+    return out
+
+
 def read_active_providers() -> dict[str, str]:
     """Return ``{feature: provider_name}`` for features the user has
     explicitly picked. No defaults — missing keys are absent.
 
-    Callers must handle the missing case (a feature with no provider
-    pinned can't dispatch). The HTTP layer surfaces this via the
-    ``configured`` flag on ``GET /api/llm/config``; the dispatch layer
-    raises ``LLMError`` so the user sees a clear "open settings" message
-    instead of silently falling back to a provider they didn't pick.
+    A thin projection of :func:`read_feature_config` kept for callers that
+    only care about routing. Callers must handle the missing case (a
+    feature with no provider pinned can't dispatch). The HTTP layer
+    surfaces this via the ``configured`` flag on ``GET /api/llm/config``;
+    the dispatch layer raises ``LLMError`` so the user sees a clear "open
+    settings" message instead of silently falling back to a provider they
+    didn't pick.
     """
-    doc = read()
-    saved = doc.get("activeProviders") or {}
-    if not isinstance(saved, dict):
-        return {}
-    return {k: v for k, v in saved.items() if isinstance(v, str) and v}
+    return {f: cfg["provider"] for f, cfg in read_feature_config().items()}
 
 
 def is_active_providers_configured() -> bool:
-    """True when the user has completed the AI Provider setup flow.
+    """True when every feature has a provider pinned.
 
-    Single-provider model: every feature must be pinned AND all three
-    must point at the same provider. Mixed config (legacy hand-edits
-    or older versions that allowed per-feature) returns False so the
-    forced-setup gate prompts the user to consolidate.
+    This used to additionally require all three features to point at the
+    *same* provider (a single-provider UI invariant). That invariant is
+    gone: the user now configures each feature independently — provider,
+    model and reasoning effort — so a mixed config is the expected shape,
+    not a legacy accident to nag about. The flag now means exactly what
+    the forced-setup gate needs it to mean: "is there anywhere to route
+    every feature?"
     """
-    saved = read_active_providers()
-    if not all(f in saved for f in _FEATURES):
-        return False
-    values = {saved[f] for f in _FEATURES}
-    return len(values) == 1
+    saved = read_feature_config()
+    return all(f in saved for f in _FEATURES)
+
+
+def set_feature_config(
+    feature: str,
+    provider: str,
+    model: Optional[str] = None,
+    effort: Optional[str] = None,
+) -> None:
+    """Pin one feature to a provider + optional model + optional effort.
+
+    Caller validates all three (see ``routes/llm.py``). Writes both the
+    ``featureConfig`` entry and the legacy ``activeProviders`` entry so a
+    downgrade to an older Flowboard build still finds its routing — see
+    the module docstring.
+
+    ``model``/``effort`` of ``None`` are stored as JSON null rather than
+    omitted, so "the user explicitly cleared this" and "this key predates
+    the field" stay indistinguishable at the only place that matters:
+    both mean "don't pass the flag".
+    """
+    doc = read()
+    feature_cfg = dict(doc.get("featureConfig") or {})
+    feature_cfg[feature] = {
+        "provider": provider,
+        "model": model,
+        "effort": effort,
+    }
+    doc["featureConfig"] = feature_cfg
+
+    legacy = dict(doc.get("activeProviders") or {})
+    legacy[feature] = provider
+    doc["activeProviders"] = legacy
+
+    write(doc)
 
 
 def set_feature_provider(feature: str, provider: str) -> None:
-    """Pin one feature to one provider. Caller validates names."""
-    doc = read()
-    saved = dict(doc.get("activeProviders") or {})
-    saved[feature] = provider
-    doc["activeProviders"] = saved
-    write(doc)
+    """Pin one feature to one provider, leaving model/effort unset.
+
+    Convenience wrapper over :func:`set_feature_config` for callers that
+    only route (and for the many existing tests that predate model/effort
+    selection).
+    """
+    set_feature_config(feature, provider)

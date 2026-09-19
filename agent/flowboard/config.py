@@ -40,11 +40,25 @@ _load_dotenv(ROOT / ".env")
 STORAGE_DIR = Path(os.getenv("FLOWBOARD_STORAGE", ROOT / "storage"))
 DB_PATH = Path(os.getenv("FLOWBOARD_DB", STORAGE_DIR / "flowboard.db"))
 
-HTTP_PORT = int(os.getenv("FLOWBOARD_HTTP_PORT", "8101"))
+# There is deliberately no HTTP_PORT here. Nothing in `flowboard` reads
+# one — uvicorn takes the port from `--port` in the Makefile, which is the
+# single real knob (`FLOWBOARD_HTTP_PORT ?= 8434` there). A constant that
+# nothing imports reads like configuration and silently isn't.
 WS_HOST = os.getenv("FLOWBOARD_WS_HOST", "127.0.0.1")
-EXTENSION_WS_PORT = int(os.getenv("FLOWBOARD_EXT_WS_PORT", "9223"))
 
-PLANNER_MODEL = os.getenv("FLOWBOARD_PLANNER_MODEL", "claude-sonnet-4-6")
+# This one IS live — `ws_server.py` binds it. Default moved off 9223,
+# which collides with Chrome's own remote-debugging port and with common
+# local services. Changing it is not enough on its own: the extension
+# hardcodes the agent's ports in `extension/background.js` and
+# `extension/manifest.json`, so both have to be hand-edited to match.
+EXTENSION_WS_PORT = int(os.getenv("FLOWBOARD_EXT_WS_PORT", "8355"))
+
+# The planner's model + reasoning effort live per-feature in
+# ~/.flowboard/secrets.json (`featureConfig.planner`), set from
+# Settings → AI Providers. There is deliberately no env-var override:
+# a second knob that silently loses to the stored config is worse than
+# no knob at all.
+#
 # "cli" → always use claude CLI; "mock" → always mock; "auto" → CLI if available,
 # otherwise mock. Default auto.
 PLANNER_BACKEND = os.getenv("FLOWBOARD_PLANNER_BACKEND", "auto")

@@ -121,6 +121,27 @@ function edgeFromDto(dto: {
   };
 }
 
+// ── Reload resume ─────────────────────────────────────────────────────────
+// A board's nodes now carry their real in-flight status from the DB (the
+// worker writes it — see agent/flowboard/worker/processor.py), so a node
+// that was generating when the tab reloaded comes back rendering as busy.
+// Nothing re-attaches THIS page's poll loop to it though, so without the
+// call below the card would sit on the processing UI until the generation's
+// result was noticed by some later reload. Fire-and-forget: a board that
+// can't resume is still fully usable.
+//
+// Dynamic import for the same reason deleteNodeByRfId uses one — the
+// generation store imports this one, and a static import here would close
+// the cycle at module init.
+async function resumeActiveGenerations(boardId: number): Promise<void> {
+  try {
+    const { useGenerationStore } = await import("./generation");
+    await useGenerationStore.getState().resumeActiveRequests(boardId);
+  } catch {
+    // Module not loaded (tree-shaken test path) or the fetch failed.
+  }
+}
+
 // ── Tiny per-node debounce (no external deps) ─────────────────────────────
 const positionTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -283,6 +304,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           charVibe: n.data["charVibe"] as string | undefined,
           charGender: n.data["charGender"] as string | undefined,
           storyboardGrid: n.data["storyboardGrid"] as StoryboardGrid | undefined,
+          // The worker persists the partial-failure summary onto the
+          // node now, so a cold load has to read it back — otherwise a
+          // batch where some variants were blocked reloads looking
+          // clean. refreshBoardState already mapped it; these two did not.
+          error: n.data["error"] as string | undefined,
         },
       }));
 
@@ -297,6 +323,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         loading: false,
       });
       persistBoardId(detail.board.id);
+      void resumeActiveGenerations(detail.board.id);
     } catch (err) {
       set({ loading: false, error: err instanceof Error ? err.message : String(err) });
     }
@@ -339,6 +366,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           charVibe: n.data["charVibe"] as string | undefined,
           charGender: n.data["charGender"] as string | undefined,
           storyboardGrid: n.data["storyboardGrid"] as StoryboardGrid | undefined,
+          // The worker persists the partial-failure summary onto the
+          // node now, so a cold load has to read it back — otherwise a
+          // batch where some variants were blocked reloads looking
+          // clean. refreshBoardState already mapped it; these two did not.
+          error: n.data["error"] as string | undefined,
         },
       }));
       const edges: Edge[] = detail.edges.map(edgeFromDto);
@@ -350,6 +382,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         loading: false,
       });
       persistBoardId(detail.board.id);
+      void resumeActiveGenerations(detail.board.id);
     } catch (err) {
       set({ loading: false, error: err instanceof Error ? err.message : String(err) });
     }
@@ -427,6 +460,12 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       }));
       const edges: Edge[] = detail.edges.map(edgeFromDto);
       set({ nodes, edges });
+      // Same reason as loadInitialBoard / switchBoard: this path replaces the
+      // node list wholesale from the DB, so anything in flight comes back
+      // rendering as busy with no poll attached. `resumeActiveRequests`
+      // skips nodes a live poll already owns, so calling it on every refresh
+      // re-attaches only what actually lost its watcher.
+      void resumeActiveGenerations(boardId);
     } catch {
       // ignore — leave state alone, next poll will retry
     }

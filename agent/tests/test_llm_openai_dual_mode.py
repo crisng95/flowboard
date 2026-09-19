@@ -10,9 +10,14 @@ No real subprocess + no real network. Both transports are stubbed.
 The provider invokes ``codex`` synchronously via ``subprocess.run`` (a
 deliberate Windows-compat choice — asyncio subprocess on Windows requires
 ``ProactorEventLoop`` which FastAPI doesn't use). Tests stub
-``subprocess.run`` at the module boundary. Stdin-based prompt delivery
-(see test_run_text_via_cli) sidesteps the cmd.exe argv re-parser that
-mangles long prompts on ``.cmd``-shimmed npm installs.
+``subprocess.run`` at the module boundary.
+
+The CLI contract changed with codex-cli 0.155.0 and these tests pin the
+new one: ``--output-format`` no longer exists, ``-p`` now means
+``--profile`` (not "prompt"), the prompt is a positional argument, and
+the answer comes back through ``-o <file>`` rather than a stdout JSON
+envelope. The stub dispatcher therefore writes to the ``-o`` path the
+provider passes it, exactly as the real binary does.
 """
 from __future__ import annotations
 
@@ -250,48 +255,140 @@ async def test_mode_returns_none_when_nothing_configured(tmp_secrets_path, monke
 # ── run — CLI dispatch ────────────────────────────────────────────────
 
 
-def _route_dispatch(envelope_stdout: bytes, *, image_flag: Optional[str] = "--image"):
+def _route_dispatch(answer: str, *, image_flag: Optional[str] = "--image"):
     """Probe + dispatch in one dispatcher: --version/--help return probe
-    fixtures, anything else returns the supplied envelope."""
+    fixtures, anything else behaves like ``codex exec`` — it writes the
+    final message to the file named after ``-o`` and exits 0."""
     probe = _route_probe(help_image_flag=image_flag)
 
     def dispatcher(argv: list[str], kwargs: dict) -> _FakeResult:
         if "--version" in argv or "--help" in argv:
             return probe(argv, kwargs)
-        return _FakeResult(returncode=0, stdout=envelope_stdout)
+        Path(argv[argv.index("-o") + 1]).write_text(answer)
+        return _FakeResult(returncode=0)
 
     return dispatcher
+
+
+def _dispatch_calls(state) -> list[tuple[list[str], dict]]:
+    """Recorded subprocess calls minus the --version / --help probes."""
+    return [
+        (argv, kwargs) for argv, kwargs in state["calls"]
+        if "--version" not in argv and "--help" not in argv
+    ]
 
 
 @pytest.mark.asyncio
 async def test_run_text_via_cli_when_codex_available(
     tmp_secrets_path, monkeypatch
 ):
-    """Critical Windows fix: prompt is delivered via stdin (kwargs['input'])
-    rather than ``-p <prompt>`` argv. Same ``.cmd`` shim rationale as
-    claude_cli — cmd.exe re-parses argv for ``.cmd`` shims and mangles
-    long prompts. ``-p -`` argv signals stdin to codex."""
+    """The corrected invocation: prompt positional, answer via ``-o``."""
     p = OpenAIProvider()
     _stub_resolve(monkeypatch)
-    state = _stub_run(
-        monkeypatch,
-        _route_dispatch(b'{"result": "hello text"}\n'),
-    )
+    state = _stub_run(monkeypatch, _route_dispatch("hello text"))
     out = await p.run("hi", system_prompt="be terse")
     assert out == "hello text"
-    # Pull the dispatch call (skip --version + --help probes).
-    dispatch_calls = [
-        (argv, kwargs) for argv, kwargs in state["calls"]
-        if "--version" not in argv and "--help" not in argv
-    ]
+    dispatch_calls = _dispatch_calls(state)
     assert len(dispatch_calls) == 1
     argv, kwargs = dispatch_calls[0]
-    assert "exec" in argv
-    assert "-p" in argv and "-" in argv
-    # Prompt is on stdin, not in argv.
-    assert kwargs["input"] == b"hi"
-    assert "hi" not in argv
-    assert "--system" in argv
+    assert argv[1] == "exec"
+    assert "--skip-git-repo-check" in argv
+    assert argv[argv.index("--sandbox") + 1] == "read-only"
+    # Prompt is the last positional token, system prompt folded in.
+    assert argv[-1].endswith("hi")
+    assert "[System: be terse]" in argv[-1]
+
+
+@pytest.mark.asyncio
+async def test_run_cli_does_not_emit_the_dead_flags(tmp_secrets_path, monkeypatch):
+    """Regression guard for the flag migration. On codex-cli 0.155.0
+    ``--output-format`` is gone ("error: unexpected argument
+    '--output-format' found") and ``-p`` means ``--profile``, so the old
+    ``codex exec --output-format json -p -`` failed before the model was
+    ever reached. Neither may come back."""
+    p = OpenAIProvider()
+    _stub_resolve(monkeypatch)
+    state = _stub_run(monkeypatch, _route_dispatch("ok"))
+    await p.run("hi", system_prompt="be terse")
+    argv, kwargs = _dispatch_calls(state)[0]
+    assert "--output-format" not in argv
+    assert "-p" not in argv           # would now be read as --profile
+    assert "--profile" not in argv
+    assert "--system" not in argv     # codex exec has no --system either
+    # The prompt must not be piped: codex appends piped stdin to the
+    # prompt as a `<stdin>` block, duplicating what we passed positionally.
+    assert kwargs.get("input") is None
+    assert kwargs.get("stdin") is _subprocess.DEVNULL
+
+
+@pytest.mark.asyncio
+async def test_run_cli_passes_model_and_effort(tmp_secrets_path, monkeypatch):
+    """Codex has no dedicated effort flag — reasoning depth rides on the
+    generic ``-c`` config override, whose value is parsed as TOML (hence
+    the embedded quotes)."""
+    p = OpenAIProvider()
+    _stub_resolve(monkeypatch)
+    state = _stub_run(monkeypatch, _route_dispatch("ok"))
+    await p.run("hi", model="gpt-5.6-sol", effort="high")
+    argv, _kwargs = _dispatch_calls(state)[0]
+    assert argv[argv.index("-m") + 1] == "gpt-5.6-sol"
+    assert argv[argv.index("-c") + 1] == 'model_reasoning_effort="high"'
+
+
+@pytest.mark.asyncio
+async def test_run_cli_omits_model_and_effort_when_unset(
+    tmp_secrets_path, monkeypatch
+):
+    """Unset leaves ~/.codex/config.toml's own model/effort in charge."""
+    p = OpenAIProvider()
+    _stub_resolve(monkeypatch)
+    state = _stub_run(monkeypatch, _route_dispatch("ok"))
+    await p.run("hi")
+    argv, _kwargs = _dispatch_calls(state)[0]
+    assert "-m" not in argv
+    assert "-c" not in argv
+
+
+@pytest.mark.asyncio
+async def test_run_cli_cleans_up_the_output_file(tmp_secrets_path, monkeypatch):
+    """One temp file per dispatch would otherwise pile up for the life of
+    the agent process."""
+    seen: dict = {}
+    p = OpenAIProvider()
+    _stub_resolve(monkeypatch)
+    probe = _route_probe()
+
+    def dispatcher(argv: list[str], kwargs: dict) -> _FakeResult:
+        if "--version" in argv or "--help" in argv:
+            return probe(argv, kwargs)
+        seen["path"] = argv[argv.index("-o") + 1]
+        Path(seen["path"]).write_text("answer")
+        return _FakeResult(returncode=0)
+
+    _stub_run(monkeypatch, dispatcher)
+    assert await p.run("hi") == "answer"
+    assert not Path(seen["path"]).exists()
+
+
+@pytest.mark.asyncio
+async def test_run_cli_cleans_up_the_output_file_on_failure(
+    tmp_secrets_path, monkeypatch
+):
+    seen: dict = {}
+    p = OpenAIProvider()
+    _stub_resolve(monkeypatch)
+    probe = _route_probe()
+
+    def dispatcher(argv: list[str], kwargs: dict) -> _FakeResult:
+        if "--version" in argv or "--help" in argv:
+            return probe(argv, kwargs)
+        seen["path"] = argv[argv.index("-o") + 1]
+        return _FakeResult(returncode=1, stderr=b"boom")
+
+    _stub_run(monkeypatch, dispatcher)
+    with pytest.raises(LLMError):
+        await p.run("hi")
+    assert not Path(seen["path"]).exists()
 
 
 @pytest.mark.asyncio
@@ -308,7 +405,7 @@ async def test_run_vision_via_cli_when_image_flag_resolved(
     _stub_resolve(monkeypatch)
     state = _stub_run(
         monkeypatch,
-        _route_dispatch(b'{"result": "described"}\n', image_flag="--image"),
+        _route_dispatch("described", image_flag="--image"),
     )
     # Stub httpx to assert it's never called.
     httpx_called = {"n": 0}
@@ -392,10 +489,7 @@ async def test_run_text_via_codex_text_only_works(
     falls back. Sanity check that the mode-routing doesn't over-trigger."""
     p = OpenAIProvider()
     _stub_resolve(monkeypatch)
-    _stub_run(
-        monkeypatch,
-        _route_dispatch(b'{"result": "text answer"}\n', image_flag=None),
-    )
+    _stub_run(monkeypatch, _route_dispatch("text answer", image_flag=None))
     out = await p.run("hi")
     assert out == "text answer"
 
@@ -432,31 +526,63 @@ async def test_run_raises_when_neither_cli_nor_key(tmp_secrets_path, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_cli_envelope_error_field_raises(tmp_secrets_path, monkeypatch):
+async def test_cli_empty_output_file_raises(tmp_secrets_path, monkeypatch):
+    """Exit 0 but nothing written means the turn ended without a final
+    assistant message. Handing callers "" would push the failure three
+    layers downstream into a JSON parser — same class of bug the Gemini
+    provider guards against."""
     p = OpenAIProvider()
     _stub_resolve(monkeypatch)
-    _stub_run(
-        monkeypatch,
-        _route_dispatch(b'{"is_error": true, "error": "auth required"}\n'),
-    )
-    with pytest.raises(LLMError, match="codex CLI reported error"):
+    _stub_run(monkeypatch, _route_dispatch("   \n"))
+    with pytest.raises(LLMError, match="empty response"):
         await p.run("hi")
 
 
 @pytest.mark.asyncio
-async def test_cli_envelope_accepts_alternate_field_names(
-    tmp_secrets_path, monkeypatch
-):
-    """Codex CLI's output field name has shifted between versions — accept
-    `result`, `output_text`, or `text`."""
+async def test_cli_failure_surfaces_stdout_detail(tmp_secrets_path, monkeypatch):
+    """Codex writes API errors to stdout (its event log), not stderr — a
+    400 with an empty stderr must still produce a useful message."""
     p = OpenAIProvider()
     _stub_resolve(monkeypatch)
-    _stub_run(
-        monkeypatch,
-        _route_dispatch(b'{"output_text": "via output_text"}\n'),
-    )
-    out = await p.run("hi")
-    assert out == "via output_text"
+    probe = _route_probe()
+
+    def dispatcher(argv: list[str], kwargs: dict) -> _FakeResult:
+        if "--version" in argv or "--help" in argv:
+            return probe(argv, kwargs)
+        return _FakeResult(
+            returncode=1,
+            stdout=b'ERROR: {"error": {"message": "Invalid value: \'bogus\'"}}',
+            stderr=b"",
+        )
+
+    _stub_run(monkeypatch, dispatcher)
+    with pytest.raises(LLMError, match="Invalid value"):
+        await p.run("hi")
+
+
+# ── model catalog + effort ladder ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_models_returns_static_catalog(tmp_secrets_path):
+    """`codex models` needs a terminal ("Error: stdin is not a terminal"),
+    so there is nothing to shell out to from a FastAPI worker — the
+    catalog is static and must not spawn a subprocess."""
+    p = OpenAIProvider()
+    models = await p.list_models()
+    assert {"id": "gpt-5.6-sol", "label": "GPT-5.6-Sol"} in models
+    assert all(set(m) == {"id", "label"} for m in models)
+    # Hidden/internal routing targets are not user-selectable.
+    assert all(m["id"] not in ("gpt-reserve", "codex-auto-review") for m in models)
+
+
+def test_provider_declares_codex_effort_ladder():
+    """Intersection of the API's enum and every listed model's supported
+    levels. ``none``/``minimal`` are API-only and ``ultra`` is
+    model-specific, so neither is offered."""
+    p = OpenAIProvider()
+    assert p.supports_effort is True
+    assert p.efforts == ["low", "medium", "high", "xhigh", "max"]
 
 
 @pytest.mark.asyncio
@@ -474,3 +600,52 @@ async def test_cli_nonzero_exit_raises(tmp_secrets_path, monkeypatch):
     _stub_run(monkeypatch, dispatcher)
     with pytest.raises(LLMError, match="codex CLI exited 1"):
         await p.run("hi")
+
+
+# ── Event-loop discipline ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_cli_dispatch_does_not_park_the_event_loop(
+    tmp_secrets_path, monkeypatch
+):
+    """`subprocess.run` stays for the Windows `.cmd` reason above, but
+    runs in a worker thread.
+
+    One loop carries the generation worker, the extension WebSocket and
+    every HTTP route. The `--version` / `--help` probes behind
+    `is_available()` are reached from `/api/llm/providers`, which an
+    always-mounted badge polls every 30s; a Codex turn itself can run for
+    minutes.
+    """
+    import asyncio
+    import time as _time
+
+    p = OpenAIProvider()
+    _stub_resolve(monkeypatch)
+    inner = _route_dispatch("hello text")
+
+    def _slow(argv, kwargs):
+        _time.sleep(0.12)
+        return inner(argv, kwargs)
+
+    _stub_run(monkeypatch, _slow)
+
+    ticks = 0
+
+    async def _tick():
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    ticker = asyncio.create_task(_tick())
+    try:
+        out = await p.run("hi")
+    finally:
+        ticker.cancel()
+
+    assert out == "hello text"
+    # Three blocking calls here (--version, --help, dispatch); any one of
+    # them holding the loop would leave this near zero.
+    assert ticks >= 5, "the event loop was parked for the whole subprocess call"

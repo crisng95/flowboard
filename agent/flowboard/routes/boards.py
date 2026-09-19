@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import delete as sql_delete, select
 
@@ -15,8 +15,16 @@ from flowboard.db.models import (
     PlanRevision,
     Request,
 )
+# Shared rather than re-implemented: `utc_iso` is the single place that
+# knows SQLite hands datetimes back naive, and that a missing `Z` makes
+# every timestamp read 7h early on a UTC+7 client. See its docstring.
+from flowboard.timestamps import utc_iso
 
 router = APIRouter(prefix="/api/boards", tags=["boards"])
+
+# In-flight = the statuses the worker can still move a row out of.
+# `done` / `failed` / `timeout` / `canceled` are all terminal.
+ACTIVE_REQUEST_STATUSES = ("queued", "running")
 
 
 class BoardCreate(BaseModel):
@@ -52,6 +60,66 @@ def get_board(board_id: int):
         nodes = s.exec(select(Node).where(Node.board_id == board_id)).all()
         edges = s.exec(select(Edge).where(Edge.board_id == board_id)).all()
         return {"board": board, "nodes": nodes, "edges": edges}
+
+
+@router.get("/{board_id}/requests")
+def list_board_requests(
+    board_id: int,
+    active: bool = Query(
+        False, description="Only return in-flight (queued / running) rows"
+    ),
+    limit: int = Query(100, ge=1, le=500),
+) -> dict:
+    """Requests belonging to this board, newest first.
+
+    Exists so a freshly-loaded board can find the generations that are
+    still in flight and re-attach its poll loop to them. The worker keeps
+    `Node.status` and `Node.data` current on its own, but nothing tells a
+    reloaded page WHICH requests are still moving, and a node parked on
+    `running` with nobody watching it never picks up its result.
+
+    `/api/activity` answers almost the same question and is not reusable
+    here: it has no board filter, so a board-scoped resume would re-attach
+    polls for nodes that aren't on screen.
+
+    `params` rides along because the frontend rebuilds the poll's options
+    (prompt, aspect ratio) from it — the dispatch call that originally held
+    them died with the old page.
+
+    Requests reach a board only through their Node, so rows with a NULL
+    `node_id` — standalone `proxy` / `create_project` calls, and rows
+    detached by a node delete — are not board-scoped and never listed here.
+    """
+    with get_session() as s:
+        if not s.get(Board, board_id):
+            raise HTTPException(404, "board not found")
+        # Join rather than a second query: `node_short_id` is what the
+        # activity feed labels rows with, and the frontend uses it for the
+        # same purpose when reporting a resumed generation.
+        stmt = (
+            select(Request, Node.short_id)
+            .join(Node, Request.node_id == Node.id)
+            .where(Node.board_id == board_id)
+        )
+        if active:
+            stmt = stmt.where(Request.status.in_(ACTIVE_REQUEST_STATUSES))
+        stmt = stmt.order_by(Request.id.desc()).limit(limit)
+        rows = s.exec(stmt).all()
+
+        return {
+            "items": [
+                {
+                    "id": req.id,
+                    "type": req.type,
+                    "status": req.status,
+                    "node_id": req.node_id,
+                    "node_short_id": short_id,
+                    "created_at": utc_iso(req.created_at),
+                    "params": req.params,
+                }
+                for req, short_id in rows
+            ]
+        }
 
 
 @router.patch("/{board_id}")
