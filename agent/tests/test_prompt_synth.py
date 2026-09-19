@@ -1137,3 +1137,109 @@ async def test_aibrief_used_when_no_prompt(client, monkeypatch):
 
     assert "BRIEF-FALLBACK" in user
 
+
+
+# ── the composed prompt is written onto the node ──────────────────────────
+#
+# Nothing used to persist it at all. The dialog dropped the text into its
+# textarea, and it only reached the DB later as a side-effect of the
+# generation it was composed for — so a reload between "Generate" and the
+# dispatch threw a 30-90s LLM call away with nothing to show for it.
+
+
+def _node_data(node_id: int) -> dict:
+    with get_session() as s:
+        return dict(s.get(Node, node_id).data or {})
+
+
+@pytest.mark.asyncio
+async def test_auto_prompt_writes_the_composed_prompt_onto_the_node(
+    client, monkeypatch
+):
+    """`prompt` and not a new field: it is where the dispatch would have
+    put this exact text a moment later, and what downstream synth reads
+    as the node's authoritative description. Merged, not replaced."""
+    ids = _seed_board_with_chain()
+
+    async def stub_run(*a, **k):
+        return "Editorial photo of a young Korean woman in a white crewneck"
+
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
+    out = await prompt_synth.auto_prompt(ids["target_id"])
+
+    data = _node_data(ids["target_id"])
+    assert data["prompt"] == out
+    assert data["title"] == "Composed image"  # merge, not replace
+
+
+@pytest.mark.asyncio
+async def test_auto_prompt_batch_writes_the_first_prompt_onto_the_node(
+    client, monkeypatch
+):
+    """The caller dispatches with `prompts[0]` as the node's displayed
+    prompt — the rest ride in the request's params — so that is what the
+    node ends up holding either way."""
+    ids = _seed_board_with_chain()
+
+    async def stub_run(*a, **k):
+        return '["hands in pockets, weight on one leg", "hand at the collar"]'
+
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
+    out = await prompt_synth.auto_prompt_batch(ids["target_id"], 2)
+
+    assert len(out) == 2
+    assert _node_data(ids["target_id"])["prompt"] == out[0]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_node_write_changes_neither_the_result_nor_the_row(
+    client, monkeypatch
+):
+    """Same discipline as the worker's mirror: the provider call already
+    succeeded and cost real time. A node that can't be written must not
+    turn that into a 502, and must not stop the activity row settling
+    `done` with its result — the row is what makes the composed prompt
+    recoverable on the next load."""
+    from sqlmodel import select
+
+    from flowboard.db.models import Request
+
+    ids = _seed_board_with_chain()
+
+    async def stub_run(*a, **k):
+        return "a prompt that survives"
+
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
+
+    class _NotAModel:
+        pass
+
+    from flowboard import node_mirror
+    monkeypatch.setattr(node_mirror, "Node", _NotAModel)
+
+    out = await prompt_synth.auto_prompt(ids["target_id"])
+    assert out == "a prompt that survives"
+
+    with get_session() as s:
+        rows = list(
+            s.exec(
+                select(Request).where(Request.node_id == ids["target_id"])
+            ).all()
+        )
+    assert [r.status for r in rows] == ["done"]
+    assert rows[0].result["prompt"] == "a prompt that survives"
+    assert "prompt" not in _node_data(ids["target_id"])
+
+
+def test_route_auto_prompt_persists_through_the_service(client, monkeypatch):
+    """End to end through the route, because that is the path the browser
+    takes and the one a reload interrupts."""
+    ids = _seed_board_with_chain()
+
+    async def stub_run(*a, **k):
+        return "composed via the route"
+
+    monkeypatch.setattr(prompt_synth, "run_llm", stub_run)
+    r = client.post("/api/prompt/auto", json={"node_id": ids["target_id"]})
+    assert r.status_code == 200, r.text
+    assert _node_data(ids["target_id"])["prompt"] == "composed via the route"

@@ -22,6 +22,7 @@ import logging
 
 from typing import Optional
 
+from flowboard.node_mirror import apply_node_patch
 from flowboard.services import media as media_service
 from flowboard.services.activity import record_activity
 from flowboard.services.llm import run_llm
@@ -55,10 +56,19 @@ async def describe_media(media_id: str, *, node_id: Optional[int] = None) -> str
     configured Vision provider fails. Caller decides whether to retry
     or fall back.
 
-    ``node_id`` (optional) is forwarded to the activity log so the
-    feed can show "Vision · #abc1" instead of an orphan row. Callers
-    that know the node should pass it; the route-level handler that
-    only has ``media_id`` can leave it None.
+    ``node_id`` (optional) does two jobs. It labels the activity row, so
+    the feed shows "Vision · #abc1" instead of an orphan; and it makes
+    this call the writer of record for the node's ``aiBrief``.
+
+    That second job is the reason a reload no longer loses a brief. The
+    browser used to be the only writer: it awaited this response and then
+    PATCHed the node itself, so refreshing mid-call threw the brief away
+    even though the server had finished producing it (the server does not
+    cancel on client disconnect — the work runs to completion either way).
+    Writing it here means the answer lands on the node whether or not the
+    tab that asked for it is still listening. Callers without a node —
+    the route is callable with ``media_id`` alone — get the old
+    return-only behaviour.
 
     Activity log wraps the entire body — cache misses, fetch failures,
     and provider errors all show up as a single "failed" row. The user
@@ -107,4 +117,11 @@ async def describe_media(media_id: str, *, node_id: Optional[int] = None) -> str
         if len(text) > 400:
             text = text[:400].rstrip() + "…"
         activity.set_result({"description": text})
+        # Node first, then the row settles `done` when this block exits —
+        # the worker's ordering, for the worker's reason: a page that
+        # sees `done` should already be able to find the result on the
+        # node. `apply_node_patch` never raises, so a node that has been
+        # deleted (or a locked DB) cannot turn a finished vision call
+        # into a 502 or leave the activity row stuck on `running`.
+        apply_node_patch(node_id, data_patch={"aiBrief": text})
         return text

@@ -482,11 +482,33 @@ export interface BoardRequestItem {
   params: Record<string, unknown>;
 }
 
+/** The two families of in-flight request a reloading board can pick up.
+ * They need different handling, so the caller names the ones it can
+ * actually act on rather than filtering after the fact:
+ * - `worker`: media-producing generations, driven by `attachPoll`.
+ * - `sidecar`: the synchronous LLM activities (vision / auto-prompt),
+ *   whose result is text and which `attachSidecarPoll` handles.
+ * Backend rejects anything else — see `REQUEST_KINDS` in routes/boards.py. */
+export type BoardRequestKind = "worker" | "sidecar";
+
 /** Requests attached to this board's nodes. `active` narrows to the ones
- * still in flight (queued / running) — what a reloading board wants. */
-export function listBoardRequests(boardId: number, opts?: { active?: boolean }) {
-  const qs = opts?.active ? "?active=true" : "";
-  return api<{ items: BoardRequestItem[] }>(`/api/boards/${boardId}/requests${qs}`);
+ * still in flight (queued / running) — what a reloading board wants —
+ * and `kinds` says which of those the caller can handle. Omitting
+ * `kinds` gets `worker` only, which is the safe default: handing a
+ * sidecar row to the generation poll is what wiped nodes' images. */
+export function listBoardRequests(
+  boardId: number,
+  opts?: { active?: boolean; kinds?: BoardRequestKind[] },
+) {
+  const params = new URLSearchParams();
+  if (opts?.active) params.set("active", "true");
+  if (opts?.kinds && opts.kinds.length > 0) {
+    params.set("kinds", opts.kinds.join(","));
+  }
+  const qs = params.toString();
+  return api<{ items: BoardRequestItem[] }>(
+    `/api/boards/${boardId}/requests${qs ? `?${qs}` : ""}`,
+  );
 }
 
 // ── Plans + Pipeline runs ────────────────────────────────────────────────────
@@ -609,11 +631,19 @@ export async function autoPrompt(
   return res.json() as Promise<AutoPromptResponse>;
 }
 
-export async function describeMedia(mediaId: string): Promise<VisionDescribeResponse> {
+/** `nodeId` is optional on the wire but should always be passed from the
+ * board: it is what lets the backend write `aiBrief` onto the node itself
+ * (agent/flowboard/services/vision.py), so the brief survives a reload
+ * that kills this promise, and it is what puts the activity row on a
+ * board so `listBoardRequests` can find it again. */
+export async function describeMedia(
+  mediaId: string,
+  nodeId?: number,
+): Promise<VisionDescribeResponse> {
   const res = await fetch("/api/vision/describe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ media_id: mediaId }),
+    body: JSON.stringify({ media_id: mediaId, node_id: nodeId }),
   });
   if (!res.ok) {
     throw new Error(await extractErrorMessage(res));

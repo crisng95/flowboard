@@ -100,8 +100,9 @@ async def test_describe_media_propagates_provider_failure(monkeypatch, tmp_path)
 def test_describe_route_happy_path(client, monkeypatch):
     media_id = "44444444-2222-3333-4444-555555555555"
 
-    async def stub_describe(mid):
+    async def stub_describe(mid, *, node_id=None):
         assert mid == media_id
+        assert node_id is None  # body omitted it — the field is optional
         return "young Korean woman, neutral expression, dark hair tied back"
 
     monkeypatch.setattr(vision_service, "describe_media", stub_describe)
@@ -113,7 +114,7 @@ def test_describe_route_happy_path(client, monkeypatch):
 
 
 def test_describe_route_502_on_vision_error(client, monkeypatch):
-    async def stub_describe(mid):
+    async def stub_describe(mid, *, node_id=None):
         raise vision_service.VisionError("media not cached and could not be fetched")
 
     monkeypatch.setattr(vision_service, "describe_media", stub_describe)
@@ -123,3 +124,195 @@ def test_describe_route_502_on_vision_error(client, monkeypatch):
     )
     assert r.status_code == 502
     assert "not cached" in r.json()["detail"]
+
+
+# ── node_id: the activity row, and the node write ─────────────────────────
+#
+# These cover the reason a reload used to lose a brief. The browser was the
+# only writer: it awaited /api/vision/describe and then PATCHed the node
+# itself, so refreshing mid-call dropped the answer on the floor even though
+# the server had produced it. The service now writes `aiBrief` itself.
+
+
+def _seed_node(data: dict | None = None) -> tuple[int, int]:
+    """Board + one visual_asset node. Returns (board_id, node_id)."""
+    from flowboard.db import get_session
+    from flowboard.db.models import Board, Node
+
+    with get_session() as s:
+        b = Board(name="vision")
+        s.add(b)
+        s.commit()
+        s.refresh(b)
+        n = Node(
+            board_id=b.id,
+            short_id="vis1",
+            type="visual_asset",
+            x=0, y=0, w=240, h=180,
+            data=data if data is not None else {"title": "Asset"},
+            status="idle",
+        )
+        s.add(n)
+        s.commit()
+        s.refresh(n)
+        return b.id, n.id
+
+
+def _read_node_data(node_id: int) -> dict:
+    from flowboard.db import get_session
+    from flowboard.db.models import Node
+
+    with get_session() as s:
+        return dict(s.get(Node, node_id).data or {})
+
+
+def _rows_for(node_id: int) -> list:
+    from flowboard.db import get_session
+    from flowboard.db.models import Request
+    from sqlmodel import select
+
+    with get_session() as s:
+        return list(s.exec(select(Request).where(Request.node_id == node_id)).all())
+
+
+def test_describe_route_forwards_node_id(client, monkeypatch):
+    """The route has to carry `node_id` or the service can't write the
+    brief anywhere — vision rows used to land with `node_id=NULL`, which
+    also kept them out of every board-scoped listing."""
+    captured: dict = {}
+
+    async def stub_describe(mid, *, node_id=None):
+        captured["node_id"] = node_id
+        return "a brief"
+
+    monkeypatch.setattr(vision_service, "describe_media", stub_describe)
+    r = client.post(
+        "/api/vision/describe",
+        json={"media_id": "66666666-2222-3333-4444-555555555555", "node_id": 41},
+    )
+    assert r.status_code == 200, r.text
+    assert captured["node_id"] == 41
+
+
+@pytest.mark.asyncio
+async def test_describe_media_records_node_id_on_the_activity_row(
+    client, monkeypatch, tmp_path
+):
+    """The row is what a reloading page finds the call through, and it
+    only reaches a board through its node."""
+    media_id = "77777777-2222-3333-4444-555555555555"
+    fake = tmp_path / f"{media_id}.png"
+    fake.write_bytes(b"x")
+
+    from flowboard.services import media as media_service
+    monkeypatch.setattr(media_service, "cached_path", lambda mid: fake)
+
+    async def stub_run_llm(*a, **k):
+        return "navy linen shirt, relaxed fit"
+
+    monkeypatch.setattr(vision_service, "run_llm", stub_run_llm)
+
+    _board_id, node_id = _seed_node()
+    await vision_service.describe_media(media_id, node_id=node_id)
+
+    rows = _rows_for(node_id)
+    assert len(rows) == 1
+    assert rows[0].type == "vision"
+    assert rows[0].status == "done"
+    assert rows[0].result["description"] == "navy linen shirt, relaxed fit"
+
+
+@pytest.mark.asyncio
+async def test_describe_media_writes_the_brief_onto_the_node(
+    client, monkeypatch, tmp_path
+):
+    """The whole point: the answer lands on the node whether or not the
+    tab that asked for it is still listening. Merged, not replaced — the
+    node's other keys are everything else the card renders."""
+    media_id = "88888888-2222-3333-4444-555555555555"
+    fake = tmp_path / f"{media_id}.png"
+    fake.write_bytes(b"x")
+
+    from flowboard.services import media as media_service
+    monkeypatch.setattr(media_service, "cached_path", lambda mid: fake)
+
+    async def stub_run_llm(*a, **k):
+        return "white cotton crewneck t-shirt"
+
+    monkeypatch.setattr(vision_service, "run_llm", stub_run_llm)
+
+    _board_id, node_id = _seed_node(
+        {"title": "Asset", "mediaId": media_id, "thumbnailUrl": "blob:keep-me"}
+    )
+    await vision_service.describe_media(media_id, node_id=node_id)
+
+    data = _read_node_data(node_id)
+    assert data["aiBrief"] == "white cotton crewneck t-shirt"
+    assert data["thumbnailUrl"] == "blob:keep-me"
+    assert data["title"] == "Asset"
+
+
+@pytest.mark.asyncio
+async def test_describe_media_without_a_node_writes_nothing(
+    client, monkeypatch, tmp_path
+):
+    """`node_id` stays optional — the endpoint is callable on a media id
+    alone, and that path must not blow up looking for a node."""
+    media_id = "99999999-2222-3333-4444-555555555555"
+    fake = tmp_path / f"{media_id}.png"
+    fake.write_bytes(b"x")
+
+    from flowboard.services import media as media_service
+    monkeypatch.setattr(media_service, "cached_path", lambda mid: fake)
+
+    async def stub_run_llm(*a, **k):
+        return "a brief"
+
+    monkeypatch.setattr(vision_service, "run_llm", stub_run_llm)
+
+    _board_id, node_id = _seed_node()
+    out = await vision_service.describe_media(media_id)
+    assert out == "a brief"
+    assert "aiBrief" not in _read_node_data(node_id)
+
+
+@pytest.mark.asyncio
+async def test_a_failing_node_write_changes_neither_the_result_nor_the_row(
+    client, monkeypatch, tmp_path
+):
+    """Same discipline as the worker's mirror: the LLM call is the
+    expensive part and it already succeeded. A node that can't be written
+    (deleted mid-flight, locked DB) must not turn that into a 502, and
+    must not stop the row settling `done` with its result — the row is
+    what makes the answer recoverable on the next load.
+
+    Swapping the mapped class out makes `Session.get()` raise before it
+    touches the database, which is as close to "the node write went
+    wrong" as we can get without faking the ORM.
+    """
+    media_id = "aaaaaaaa-2222-3333-4444-555555555555"
+    fake = tmp_path / f"{media_id}.png"
+    fake.write_bytes(b"x")
+
+    from flowboard.services import media as media_service
+    monkeypatch.setattr(media_service, "cached_path", lambda mid: fake)
+
+    async def stub_run_llm(*a, **k):
+        return "a brief that survives"
+
+    monkeypatch.setattr(vision_service, "run_llm", stub_run_llm)
+
+    class _NotAModel:
+        pass
+
+    from flowboard import node_mirror
+    monkeypatch.setattr(node_mirror, "Node", _NotAModel)
+
+    _board_id, node_id = _seed_node()
+    out = await vision_service.describe_media(media_id, node_id=node_id)
+
+    assert out == "a brief that survives"
+    rows = _rows_for(node_id)
+    assert [r.status for r in rows] == ["done"]
+    assert rows[0].result["description"] == "a brief that survives"
+    assert "aiBrief" not in _read_node_data(node_id)

@@ -6,7 +6,7 @@ import {
   listBoardRequests,
   patchNode,
 } from "../api/client";
-import { useBoardStore } from "./board";
+import { useBoardStore, type FlowboardNodeData } from "./board";
 import { useSettingsStore } from "./settings";
 
 type PollEntry = { requestId: number; timerId: ReturnType<typeof setTimeout> | null };
@@ -16,8 +16,27 @@ type PollEntry = { requestId: number; timerId: ReturnType<typeof setTimeout> | n
 // endpoint ships them — see `resumeActiveRequests`.
 type PollOpts = { prompt: string; aspectRatio?: string };
 
+// The synchronous LLM activities. Mirrors `SIDECAR_REQUEST_TYPES` in
+// agent/flowboard/request_types.py, and for the same reason the media
+// copy below exists: the poll that handles these has to be safe on its
+// own terms whatever the backend hands it.
+type SidecarType = "vision" | "auto_prompt" | "auto_prompt_batch";
+
+const SIDECAR_TYPES = new Set<string>([
+  "vision",
+  "auto_prompt",
+  "auto_prompt_batch",
+]);
+
 interface GenerationState {
   active: Record<string, PollEntry>;
+  // Sidecar polls get their own ownership map, NOT a second entry in
+  // `active`. The two kinds are independent concerns that can legitimately
+  // run on the same node at the same time — a generation writes media, a
+  // vision call writes `aiBrief` — so sharing one map would make
+  // dispatching a generation silently orphan an in-flight vision poll,
+  // and vice versa.
+  sidecar: Record<string, PollEntry>;
   openDialog: { rfId: string | null; prompt: string };
   openViewer: { rfId: string | null; idx: number };
   projectId: string | null;
@@ -59,8 +78,9 @@ interface GenerationState {
     opts: { prompt: string; refMediaIds?: string[]; aspectRatio?: string },
   ): Promise<void>;
 
-  // Re-attach the poll loop to generations that are still in flight on the
-  // backend. Called after a board loads, because a page reload kills every
+  // Re-attach a poll to everything still in flight on the backend —
+  // generations AND the synchronous LLM activities, each through its own
+  // loop. Called after a board loads, because a page reload kills every
   // poll this store had running.
   resumeActiveRequests(boardId: number): Promise<void>;
 
@@ -409,8 +429,163 @@ function attachPoll(rfId: string, requestId: number, opts: PollOpts) {
   scheduleNextPoll();
 }
 
+// ── Sidecar poll loop ────────────────────────────────────────────────────
+// A deliberately separate, much smaller loop for the synchronous LLM
+// activities. Pointing `attachPoll` at one of these is exactly the bug
+// that wiped nodes' images: that loop carries generation semantics it
+// reads off the result — `media_ids`, `slot_errors`, model stamps — and a
+// `vision` result has none of them, so it spread an empty media list over
+// the node. This one knows only about text.
+//
+// It keeps the one thing from `attachPoll` that is not about generations:
+// the ownership token. `sidecar[rfId]` names exactly one request per node,
+// and a chain may only touch the node while the entry still points at ITS
+// `requestId` — so a second sidecar call on the same node hands ownership
+// over rather than racing the first. Every await is a place ownership can
+// move, so every await is followed by the check.
+
+function ownsSidecarPoll(rfId: string, requestId: number): boolean {
+  return useGenerationStore.getState().sidecar[rfId]?.requestId === requestId;
+}
+
+function releaseSidecarPoll(rfId: string, requestId: number) {
+  useGenerationStore.setState((s) => {
+    // Guarded: a terminal chain must not delete an entry that already
+    // belongs to a newer request on this node.
+    if (s.sidecar[rfId]?.requestId !== requestId) return s;
+    const next = { ...s.sidecar };
+    delete next[rfId];
+    return { sidecar: next };
+  });
+}
+
+// Which node field each activity's "busy" flag lives in. The two are
+// rendered identically (NodeCard's "Analyzing…" / "Composing…" overlay)
+// but they are distinct states — a node can legitimately have had a
+// vision brief and be composing a prompt.
+//
+// Returns a patch rather than the key name on purpose: `FlowboardNodeData`
+// carries an index signature, so a computed `{ [key]: value }` would type-
+// check against a misspelled key and fail silently at runtime.
+function sidecarStatusPatch(
+  type: SidecarType,
+  value: "pending" | "failed" | undefined,
+): Partial<FlowboardNodeData> {
+  return type === "vision"
+    ? { aiBriefStatus: value }
+    : { autoPromptStatus: value };
+}
+
+// Turn a settled sidecar result into the node fields it belongs in. This
+// is the whole difference between the two loops: text out, never media.
+// Mirrors what the backend already wrote onto the node when it settled
+// the row (services/vision.py, services/prompt_synth.py) — the backend is
+// the authority, this just brings THIS tab's in-memory board in line
+// without waiting for a reload.
+function sidecarDonePatch(
+  type: SidecarType,
+  result: Record<string, unknown>,
+): Partial<FlowboardNodeData> {
+  if (type === "vision") {
+    const description = result["description"];
+    return {
+      aiBriefStatus: "done",
+      ...(typeof description === "string" && description
+        ? { aiBrief: description }
+        : {}),
+    };
+  }
+  // Auto-prompt: `autoPromptStatus` clears rather than going to "done",
+  // matching what GenerationDialog does on its own success path — the
+  // status exists only to render the busy treatment.
+  const single = result["prompt"];
+  const batch = result["prompts"];
+  const text =
+    typeof single === "string" && single
+      ? single
+      : Array.isArray(batch) && typeof batch[0] === "string"
+      ? (batch[0] as string)
+      : null;
+  return {
+    autoPromptStatus: undefined,
+    ...(text ? { prompt: text } : {}),
+  };
+}
+
+function attachSidecarPoll(rfId: string, requestId: number, type: SidecarType) {
+  const MAX_NETWORK_RETRIES = 8;
+  let networkRetries = 0;
+
+  function scheduleNextPoll() {
+    if (!ownsSidecarPoll(rfId, requestId)) return;
+
+    const timerId = setTimeout(async () => {
+      if (!ownsSidecarPoll(rfId, requestId)) return;
+      try {
+        const req = await getRequest(requestId);
+        if (!ownsSidecarPoll(rfId, requestId)) return;
+        networkRetries = 0;
+
+        if (req.status === "done") {
+          useBoardStore
+            .getState()
+            .updateNodeData(rfId, sidecarDonePatch(type, req.result));
+          releaseSidecarPoll(rfId, requestId);
+        } else if (req.status === "failed" || req.status === "timeout") {
+          // No `data.error` and no `status: "error"` here: those belong to
+          // the generation the node exists to render. A failed brief is a
+          // missing nicety, and the node may well be showing a perfectly
+          // good image at the same time.
+          useBoardStore
+            .getState()
+            .updateNodeData(rfId, sidecarStatusPatch(type, "failed"));
+          releaseSidecarPoll(rfId, requestId);
+        } else if (req.status === "canceled") {
+          useBoardStore
+            .getState()
+            .updateNodeData(rfId, sidecarStatusPatch(type, undefined));
+          releaseSidecarPoll(rfId, requestId);
+        } else {
+          // queued / running — hold the busy flag and keep waiting.
+          useGenerationStore.setState((s) => ({
+            sidecar: { ...s.sidecar, [rfId]: { requestId, timerId: null } },
+          }));
+          scheduleNextPoll();
+        }
+      } catch {
+        if (!ownsSidecarPoll(rfId, requestId)) return;
+        networkRetries += 1;
+        if (networkRetries >= MAX_NETWORK_RETRIES) {
+          // Give the node its card back rather than leaving it dimmed
+          // forever. The backend still holds the real answer; the next
+          // board load picks it up off `Node.data`.
+          useBoardStore
+            .getState()
+            .updateNodeData(rfId, sidecarStatusPatch(type, "failed"));
+          releaseSidecarPoll(rfId, requestId);
+          return;
+        }
+        scheduleNextPoll();
+      }
+    }, 1500);
+
+    useGenerationStore.setState((s) => ({
+      sidecar: { ...s.sidecar, [rfId]: { requestId, timerId } },
+    }));
+  }
+
+  const outgoing = useGenerationStore.getState().sidecar[rfId];
+  if (outgoing && outgoing.timerId !== null) clearTimeout(outgoing.timerId);
+
+  useGenerationStore.setState((s) => ({
+    sidecar: { ...s.sidecar, [rfId]: { requestId, timerId: null } },
+  }));
+  scheduleNextPoll();
+}
+
 export const useGenerationStore = create<GenerationState>((set, get) => ({
   active: {},
+  sidecar: {},
   openDialog: { rfId: null, prompt: "" },
   openViewer: { rfId: null, idx: 0 },
   projectId: null,
@@ -624,14 +799,23 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
   },
 
   async resumeActiveRequests(boardId) {
-    // A page reload wipes every timer this store had running, so a
-    // generation dispatched before the refresh has nobody watching it. The
-    // worker keeps the node's status and result current on its own now, but
-    // the board still needs to know WHICH requests are still moving so the
-    // card ticks over to `done` without waiting for the next manual reload.
+    // A page reload wipes every timer this store had running, so anything
+    // dispatched before the refresh has nobody watching it. The backend
+    // keeps the node current on its own now — the worker for generations,
+    // the service itself for vision / auto-prompt — but the board still
+    // needs to know WHICH requests are still moving so the card ticks
+    // over without waiting for the next manual reload.
+    //
+    // Both kinds in one round trip, then routed by type below. They are
+    // NOT interchangeable: a sidecar row through `attachPoll` is the bug
+    // that wiped nodes' images, so the split is enforced by the switch
+    // here as well as by the backend's `kinds` filter.
     let items;
     try {
-      ({ items } = await listBoardRequests(boardId, { active: true }));
+      ({ items } = await listBoardRequests(boardId, {
+        active: true,
+        kinds: ["worker", "sidecar"],
+      }));
     } catch {
       // Non-fatal: the board is usable, the affected nodes just sit on
       // whatever status the DB gave them until the next load.
@@ -641,6 +825,23 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     for (const item of items) {
       if (item.node_id === null) continue;
       const rfId = String(item.node_id);
+
+      if (SIDECAR_TYPES.has(item.type)) {
+        // Its own ownership map, so this never collides with a generation
+        // poll on the same node.
+        if (get().sidecar[rfId] !== undefined) continue;
+        const type = item.type as SidecarType;
+        // Restore the busy treatment straight away rather than waiting
+        // ~1.5s for the first poll. This is the state the reload lost —
+        // the node came back from the DB looking idle while the server
+        // was still mid-call.
+        useBoardStore
+          .getState()
+          .updateNodeData(rfId, sidecarStatusPatch(type, "pending"));
+        attachSidecarPoll(rfId, item.id, type);
+        continue;
+      }
+
       // A poll we started in this session already owns this node — don't
       // stack a second one on it.
       if (get().active[rfId] !== undefined) continue;
