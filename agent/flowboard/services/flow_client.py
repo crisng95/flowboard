@@ -3,7 +3,7 @@
 Ported + trimmed from flowkit (https://github.com/crisng95/flowkit).
 
 Control flow:
-1. Extension opens WS to :9223.
+1. Extension opens WS to the agent (``EXTENSION_WS_PORT``, default 8355).
 2. Agent sends ``{type:"callback_secret", secret}`` immediately.
 3. When the agent wants to run a Flow RPC it calls
    ``flow_client.batch_rpc(rpcid, freq, ...)``, which sends

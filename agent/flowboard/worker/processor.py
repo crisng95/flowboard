@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 
 from flowboard.db import get_session
-from flowboard.db.models import Request
+from flowboard.db.models import Node, Request
 from flowboard.services import media as media_service
 from flowboard.services.flow_client import flow_client
 from flowboard.services.flow_sdk import get_flow_sdk, resolve_paygate_tier
@@ -687,6 +687,343 @@ _DEFAULT_HANDLERS: dict[str, Handler] = {
 }
 
 
+# ── Node mirroring ────────────────────────────────────────────────────────
+# Until this landed, the browser was the ONLY place a generation's live
+# state lived. `Request.status` moved queued→running→done in the DB, but
+# `Node.status` was never written — the frontend poll loop held "running"
+# in zustand and PATCHed the finished media onto the node itself. Both
+# halves died with the tab: hit F5 mid-generation and the board reloaded
+# from a DB that still said the node was idle, and when the request landed
+# a few seconds later there was no poll left to write the media anywhere.
+# The generation was paid for and rendered, and the result was dropped.
+#
+# The worker is the one observer that survives a reload, so it now writes
+# both: `Node.status` on every transition and the completion payload into
+# `Node.data`. The frontend still PATCHes the same values when the tab is
+# alive (see frontend/src/store/generation.ts) — that write is now a
+# redundant mirror of this one rather than the system of record.
+#
+# Everything here is best-effort. `_process_one`'s Request stamp is what
+# stops a request being stranded in `running` forever, so a Node write must
+# never raise past this boundary: a stale node card is a cosmetic problem,
+# an unsettled request is a dead generation.
+
+
+def _iso_utc_now() -> str:
+    """`renderedAt` in the same shape the frontend writes it.
+
+    The frontend stamps `new Date().toISOString()` (always `…Z`), and
+    ResultViewer parses it straight back through `new Date()`. Emitting the
+    `+00:00` spelling would parse too, but keeping one format on the column
+    means nothing downstream has to know which writer produced the value.
+    """
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# Request types whose entire purpose is to render media. Everything else
+# (`proxy`, `create_project`) legitimately settles with a bare envelope.
+#
+# This list is why the zero-media check lives on `req.type` and not on the
+# result: `_handle_gen_image` returns `(resp, None)` for any envelope
+# without a top-level `"error"`, and `_extract_media_ids` yields `[]` when
+# nothing actually rendered. Judging by the result alone, that pair reads
+# as a clean success, `_node_completion_patch` returns `{}` (it has no
+# media to write), and the node flips to `done` still wearing the PREVIOUS
+# run's `mediaIds` / `renderedAt`. The UI shows nothing until F5, then
+# shows the old images as if they were the new ones.
+_MEDIA_PRODUCING_TYPES: frozenset[str] = frozenset(
+    {"gen_image", "gen_video", "gen_video_omni", "edit_image"}
+)
+
+
+def _expects_media(request_type: str) -> bool:
+    """True when a clean result from this type MUST carry rendered media."""
+    return request_type in _MEDIA_PRODUCING_TYPES
+
+
+def _has_media(result: dict) -> bool:
+    """True when `result` carries at least one real (non-placeholder) id.
+
+    `media_ids` uses positional `None`s for variants that were blocked or
+    timed out, so a list of nothing but placeholders is still "nothing
+    rendered".
+    """
+    media_ids = result.get("media_ids")
+    if not isinstance(media_ids, list):
+        return False
+    return any(isinstance(m, str) and m for m in media_ids)
+
+
+def _node_completion_patch(req: Request, result: dict) -> dict:
+    """Build the `Node.data` delta for a successfully completed request.
+
+    Deliberately mirrors the payload `generation.ts` PATCHes on `done` so
+    nothing downstream has to learn a second shape. Two rules keep it safe:
+
+      * Only keys we can actually derive are present. A key we know nothing
+        about is absent from the patch and survives the merge untouched.
+      * `None` is the "delete this key" sentinel, matching what the
+        PATCH /api/nodes/{id} merge documents. Used to clear keys that
+        belong to the *previous* run and would otherwise be read as
+        describing this one (`error`, `aiBrief`).
+    """
+    params = req.params or {}
+    media_ids = result.get("media_ids")
+    if not isinstance(media_ids, list) or not media_ids:
+        # Nothing media-shaped came back. `proxy` / `create_project` rows
+        # look like this, and so would any future handler with a bare
+        # envelope. Writing the media keys anyway would blank whatever the
+        # node is currently showing, so write nothing at all.
+        return {}
+
+    patch: dict = {
+        "mediaIds": media_ids,
+        "renderedAt": _iso_utc_now(),
+        # A stale "✨ …" brief from a previous run would otherwise render
+        # underneath a fresh image as if it described it. The frontend
+        # clears it with the same `null` sentinel on every completion.
+        "aiBrief": None,
+    }
+    # `media_ids` carries positional `null` placeholders for variants that
+    # were blocked or timed out; the first real id is the node's primary.
+    media_id = next((m for m in media_ids if isinstance(m, str) and m), None)
+    if media_id:
+        patch["mediaId"] = media_id
+    # `variantCount` drives how many tiles NodeCard lays out, and it wins
+    # over `mediaIds.length` when both are present — so leaving a previous
+    # run's value in place is not neutral. A 1-variant run after a
+    # 4-variant one reloads as four tiles with three broken; the other way
+    # round it HIDES three generated images. The dispatched
+    # `variant_count` is the authority where there is one (only `gen_image`
+    # sets it); every other type falls through to `len(media_ids)`, which
+    # is the right answer there because that list keeps its positional
+    # `null`s and so still describes the full slot layout.
+    raw_count = params.get("variant_count")
+    patch["variantCount"] = (
+        raw_count if isinstance(raw_count, int) and raw_count > 0 else len(media_ids)
+    )
+    slot_errors = result.get("slot_errors")
+    if isinstance(slot_errors, list):
+        patch["slotErrors"] = slot_errors
+    # A partial batch stays `done` — some variants rendered — but carries a
+    # one-line summary of what got blocked. `None` clears the key when this
+    # run was clean.
+    partial_error = result.get("partial_error")
+    patch["error"] = partial_error if isinstance(partial_error, str) and partial_error else None
+
+    prompt = params.get("prompt")
+    if isinstance(prompt, str) and prompt:
+        patch["prompt"] = prompt
+    aspect = params.get("aspect_ratio")
+    if isinstance(aspect, str) and aspect:
+        patch["aspectRatio"] = aspect
+
+    # Model stamp — which checkpoint actually rendered this, so the detail
+    # panel can say "Banana Pro" / "Quality" instead of guessing from the
+    # user's *current* settings. Read from the dispatched params, which are
+    # what the request was submitted with.
+    if req.type in ("gen_image", "edit_image"):
+        image_model = params.get("image_model")
+        if isinstance(image_model, str) and image_model:
+            patch["imageModel"] = image_model
+    elif req.type == "gen_video":
+        # For Veo the dispatched quality IS the model selector.
+        video_quality = params.get("video_quality")
+        if isinstance(video_quality, str) and video_quality:
+            patch["videoQuality"] = video_quality
+    elif req.type == "gen_video_omni":
+        # Omni Flash is duration-scoped: derive the Flow model key the same
+        # way resolve_omni_flash_model (and the frontend) do.
+        duration_s = params.get("duration_s")
+        if duration_s in (4, 6, 8, 10):
+            patch["videoQuality"] = f"abra_r2v_{duration_s}s"
+    return patch
+
+
+def _mirror_node(
+    session,
+    node_id: Optional[int],
+    *,
+    status: Optional[str] = None,
+    data_patch: Optional[dict] = None,
+) -> None:
+    """Stage a request's outcome onto its Node, inside the caller's session.
+
+    Staging only — the caller commits. Running in the same session as the
+    Request update is what lets the two land in one commit, but it is also
+    why this has to be careful: the Request stamp is already pending on
+    this session, and anything that throws here must not take it down.
+
+    Two guards, for two different ways that used to happen:
+
+      * ``no_autoflush``. ``session.get(Node, …)`` normally autoflushes the
+        pending Request first. If that flush raised, the ``except`` below
+        swallowed it and left the Session rollback-pending, so the caller's
+        ``commit()`` — outside every guard — died with
+        ``PendingRollbackError``, which landed in the worker's outer
+        handler and rewrote a *successful, paid* generation as ``failed``.
+        Not flushing here means a Node lookup can never carry the Request
+        with it.
+      * The blanket ``except``, for a Node that refuses to update at all
+        (deleted mid-flight, unexpected column state). A stale node card
+        is cosmetic; an unsettled request is a dead generation.
+
+    The commit itself is guarded by ``_commit_settlement``.
+    """
+    if node_id is None:
+        return
+    try:
+        with session.no_autoflush:
+            node = session.get(Node, node_id)
+            if node is None:
+                # Node deleted while its generation was in flight. The
+                # request row survives (delete_node detaches rather than
+                # deletes) and settles normally; there is just nothing
+                # left to mirror onto.
+                return
+            if status is not None:
+                node.status = status
+            if data_patch:
+                merged = dict(node.data or {})
+                for key, value in data_patch.items():
+                    if value is None:
+                        merged.pop(key, None)
+                    else:
+                        merged[key] = value
+                node.data = merged
+            session.add(node)
+    except Exception:  # noqa: BLE001
+        logger.exception("worker: node mirror failed for node_id=%s", node_id)
+
+
+def _commit_settlement(
+    session,
+    *,
+    rid: int,
+    stamp: dict,
+    node_id: Optional[int],
+    node_status: Optional[str] = None,
+    node_data_patch: Optional[dict] = None,
+) -> None:
+    """Write a request's terminal outcome, mirroring onto its node if it can.
+
+    ``stamp`` is the set of ``Request`` columns the outcome consists of
+    (``status`` / ``error`` / ``result`` / ``finished_at``). It is passed
+    as data rather than applied by the caller because it may have to be
+    replayed into a second session.
+
+    The happy path is one commit: Request and Node land together or
+    neither does. When that commit fails — ``StaleDataError`` because the
+    Node was deleted between the lookup and the flush, ``OperationalError:
+    database is locked``, anything else — the Request stamp is **not**
+    negotiable. It is the only thing standing between the user and a
+    request stranded in ``running`` forever, and when the outcome is
+    ``done`` it carries ``result`` with the media ids of a generation that
+    has already been paid for. So we roll back, drop the node half
+    entirely, and re-apply the same stamp to the Request alone in a fresh
+    session. The node mirror is strictly best-effort; the Request stamp is
+    the system of record.
+
+    Two properties of that recovery are load-bearing, and both are easy to
+    undo by accident:
+
+      * It replays the **actual** outcome. The exception must not escape to
+        ``_process_one``'s outer handler, which hardcodes ``failed`` — that
+        would flatten ``timeout`` into a generic error and bin the
+        ``result`` of a generation that succeeded. Everything the outcome
+        consists of travels in ``stamp`` for exactly this reason.
+      * It writes **no node**. Whatever broke the first commit may still be
+        broken (a sustained ``database is locked`` is the obvious case), and
+        a second node write would raise again, get swallowed, and strand the
+        request in ``running`` — the original bug, one level down.
+
+    ``test_a_failing_node_write_preserves_the_requests_real_outcome`` and
+    the listener it runs under pin both.
+
+    Once the Request is safe, the node gets one more attempt in a third
+    session — see the comment at that point for why nothing else would
+    ever reconcile it.
+    """
+    req = session.get(Request, rid)
+    if req is None:
+        return
+    for key, value in stamp.items():
+        setattr(req, key, value)
+    session.add(req)
+    _mirror_node(session, node_id, status=node_status, data_patch=node_data_patch)
+    try:
+        session.commit()
+        return
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "worker: settlement commit failed for rid=%s (node_id=%s); "
+            "retrying the request stamp without the node mirror",
+            rid, node_id,
+        )
+        # Guarded, because `rollback()` itself can raise on an invalidated
+        # connection — and an exception escaping here would reach
+        # `_process_one`'s outer handler, which hardcodes `failed`. That is
+        # the one outcome this whole function exists to prevent, so it does
+        # not get to happen through a bare two-line gap. A Session we
+        # couldn't roll back is one we simply stop using; the retry below
+        # opens its own.
+        try:
+            session.rollback()
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "worker: rollback after a failed settlement commit also "
+                "failed for rid=%s; abandoning this session", rid,
+            )
+
+    try:
+        with get_session() as retry:
+            req = retry.get(Request, rid)
+            if req is None:
+                return
+            for key, value in stamp.items():
+                setattr(req, key, value)
+            retry.add(req)
+            retry.commit()
+    except Exception:  # noqa: BLE001
+        # Nothing left to try. The startup sweep in main.py will pick the
+        # row up as an orphan on the next boot.
+        logger.exception("worker: request stamp retry failed for rid=%s", rid)
+        return
+
+    # The Request is safe. Now go back for the node, in a third session of
+    # its own.
+    #
+    # Dropping the node half is what saves the result, but nothing else
+    # ever reconciles it: `/requests?active=true` won't return this row
+    # (it is terminal now) and the startup sweep only looks at in-flight
+    # requests, so a node left stamped `running` stays that way. A live tab
+    # papers over it — its poll PATCHes the same values — but a reloaded or
+    # closed tab is exactly the case this mirror exists for, and it would
+    # come back to a card spinning on a generation that finished.
+    #
+    # One more attempt, fully guarded, clears the common transient cause (a
+    # brief `database is locked` on the node UPDATE).
+    if node_id is None:
+        return
+    try:
+        with get_session() as reconcile:
+            _mirror_node(
+                reconcile, node_id, status=node_status, data_patch=node_data_patch
+            )
+            reconcile.commit()
+    except Exception:  # noqa: BLE001
+        # The floor: Request correct, node stale. Logged loudly because
+        # from the outside it looks like a hung generation — the card sits
+        # on its old state while the request says done — and this line is
+        # the only thing that says otherwise.
+        logger.exception(
+            "worker: node %s could not be reconciled after rid=%s settled "
+            "as %s; the card will keep rendering its previous state until "
+            "something writes to it again",
+            node_id, rid, stamp.get("status"),
+        )
+
+
 class WorkerController:
     """Single-consumer async queue worker."""
 
@@ -751,15 +1088,29 @@ class WorkerController:
                     return
                 handler = self._handlers.get(req.type)
                 if handler is None:
-                    req.status = "failed"
-                    req.error = f"unknown_request_type:{req.type}"
-                    req.finished_at = datetime.now(timezone.utc)
-                    s.add(req)
-                    s.commit()
+                    _commit_settlement(
+                        s,
+                        rid=rid,
+                        stamp={
+                            "status": "failed",
+                            "error": f"unknown_request_type:{req.type}",
+                            "finished_at": datetime.now(timezone.utc),
+                        },
+                        node_id=req.node_id,
+                        node_status="error",
+                    )
                     return
 
                 req.status = "running"
                 s.add(req)
+                # Persist the processing state so a reloaded board renders
+                # the node as busy without needing the browser to remember.
+                _mirror_node(s, req.node_id, status="running")
+                # Plain commit, not `_commit_settlement`: this is not a
+                # terminal stamp and there is no result to protect yet.
+                # If it fails, letting the exception reach the handler
+                # below — which marks the row failed — is the right
+                # outcome, because nothing has been dispatched.
                 s.commit()
                 params = dict(req.params or {})
                 # Enrich with the request's node_id so handlers that need
@@ -789,29 +1140,75 @@ class WorkerController:
                         s.add(req)
                         s.commit()
                     return
-                req.result = result if isinstance(result, dict) else {"value": result}
-                req.finished_at = datetime.now(timezone.utc)
+                result_dict = result if isinstance(result, dict) else {"value": result}
+                # A media-producing type that came back clean but rendered
+                # nothing is a failure, not a success. Deciding that here —
+                # on `req.type`, not on "was there media in the envelope" —
+                # is what keeps `proxy` / `create_project` (legitimately
+                # media-free) out of it. See _expects_media.
+                if not err and _expects_media(req.type) and not _has_media(result_dict):
+                    err = "no_media_returned"
+                stamp: dict = {
+                    "result": result_dict,
+                    "finished_at": datetime.now(timezone.utc),
+                }
                 if err:
                     # Video-poll exhaustion gets its own status so the UI
                     # can render "TIMEOUT" instead of a generic failure.
-                    req.status = "timeout" if err == "timeout_waiting_video" else "failed"
-                    req.error = err
+                    stamp["status"] = (
+                        "timeout" if err == "timeout_waiting_video" else "failed"
+                    )
+                    stamp["error"] = err
                 else:
-                    req.status = "done"
-                    req.error = None
-                s.add(req)
-                s.commit()
+                    stamp["status"] = "done"
+                    stamp["error"] = None
+                # Building the patch is guarded separately from applying it
+                # so neither half can throw past the Request stamp.
+                node_patch: Optional[dict] = None
+                if not err:
+                    try:
+                        node_patch = _node_completion_patch(req, result_dict)
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "worker: node completion patch failed for rid=%s", rid
+                        )
+                # Mirror onto the node in the same commit. Node.status uses
+                # the vocabulary the cards render (idle|queued|running|
+                # done|error), so both terminal failure modes collapse to
+                # `error` — the distinction between failed and timeout
+                # lives on the request row the activity feed reads.
+                _commit_settlement(
+                    s,
+                    rid=rid,
+                    stamp=stamp,
+                    node_id=req.node_id,
+                    node_status="error" if err else "done",
+                    node_data_patch=node_patch,
+                )
         except Exception as exc:  # noqa: BLE001
             logger.exception("worker exception on rid=%s", rid)
             try:
                 with get_session() as s:
                     req = s.get(Request, rid)
                     if req is not None and req.status != "canceled":
-                        req.status = "failed"
-                        req.error = str(exc)[:500]
-                        req.finished_at = datetime.now(timezone.utc)
-                        s.add(req)
-                        s.commit()
+                        # Same guarded shape as the happy path: if this
+                        # commit is the thing that's broken (a locked DB,
+                        # say) the failure stamp still has to land, or the
+                        # row is stranded in `running` for good. Without
+                        # the node half the card keeps the `running` stamp
+                        # from dispatch and a reloaded board spins forever
+                        # on a request that already gave up.
+                        _commit_settlement(
+                            s,
+                            rid=rid,
+                            stamp={
+                                "status": "failed",
+                                "error": str(exc)[:500],
+                                "finished_at": datetime.now(timezone.utc),
+                            },
+                            node_id=req.node_id,
+                            node_status="error",
+                        )
             except Exception:  # noqa: BLE001
                 logger.exception("worker: failed to record failure for rid=%s", rid)
         finally:

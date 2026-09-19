@@ -5,8 +5,8 @@
  * Captures Bearer token and proxies API calls through the browser context.
  */
 
-const AGENT_WS_URL  = 'ws://127.0.0.1:9223';
-const CALLBACK_URL  = 'http://127.0.0.1:8101/api/ext/callback';
+const AGENT_WS_URL  = 'ws://127.0.0.1:8355';
+const CALLBACK_URL  = 'http://127.0.0.1:8434/api/ext/callback';
 
 let ws               = null;
 let flowKey          = null;

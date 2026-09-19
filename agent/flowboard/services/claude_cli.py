@@ -9,6 +9,13 @@ The CLI is invoked with ``--output-format json`` so we get a structured
 envelope of the form ``{"type":"result","result":"<LLM text>", ...}``. The
 ``result`` field is the LLM's plain-text response — we return that string
 and let the caller parse further (e.g. extract a fenced JSON block).
+
+``--model`` and ``--effort`` are threaded through as optional arguments so
+each Flowboard feature can pin its own model/effort pair (see
+``services/llm/secrets.py``'s ``featureConfig``). Both are omitted from
+argv when the caller passes ``None`` — the CLI then uses whatever the user
+selected in their own ``claude`` session settings, which is the behaviour
+every existing install already has.
 """
 from __future__ import annotations
 
@@ -40,13 +47,20 @@ class ClaudeCliError(RuntimeError):
 
 
 async def _probe_available() -> bool:
-    # Try to resolve and probe claude binary
+    # Try to resolve and probe claude binary. Both halves run in a worker
+    # thread: `resolve_cli_binary` shells out too on Windows, and this
+    # probe is reached from the /api/llm/providers route the Settings
+    # badge polls, so blocking here blocks every other request.
     try:
-        claude_bin = resolve_cli_binary(_CLI_BIN, CLI_PROBE_TIMEOUT)
-        result = subprocess.run(
-            [claude_bin, "--version"],
-            capture_output=True,
-            timeout=CLI_PROBE_TIMEOUT,
+        claude_bin = await asyncio.to_thread(
+            resolve_cli_binary, _CLI_BIN, CLI_PROBE_TIMEOUT
+        )
+        result = await asyncio.to_thread(
+            lambda: subprocess.run(
+                [claude_bin, "--version"],
+                capture_output=True,
+                timeout=CLI_PROBE_TIMEOUT,
+            )
         )
         if result.returncode == 0:
             logger.info("claude_cli: SUCCESS - found claude at %s", claude_bin)
@@ -82,6 +96,8 @@ async def run_claude(
     system_prompt: Optional[str] = None,
     attachments: Optional[list[str]] = None,
     timeout: float = DEFAULT_TIMEOUT,
+    model: Optional[str] = None,
+    effort: Optional[str] = None,
 ) -> str:
     """Invoke ``claude -p PROMPT`` and return the LLM's text result.
 
@@ -96,6 +112,11 @@ async def run_claude(
     (``--permission-mode bypassPermissions``); without these the CLI
     prompts the user for permission and our `-p` non-interactive call gets
     a refusal text back instead of a description.
+
+    ``model`` accepts either an alias (``sonnet`` / ``opus`` / ``fable`` /
+    ``haiku``) or a full model name (``claude-fable-5``); ``effort`` is one
+    of ``low|medium|high|xhigh|max``. Both are dropped from argv when None
+    so the user's own CLI settings keep applying — see module docstring.
 
     Raises ``ClaudeCliError`` on failure, timeout, or malformed envelope.
     The prompt is passed as a separate argv token — no shell interpolation.
@@ -118,7 +139,9 @@ async def run_claude(
         full_prompt = f"{user_prompt}\n\n{suffix}" if user_prompt else suffix
 
     # Resolve claude binary path: try PATH first, then npm locations
-    claude_bin = resolve_cli_binary(_CLI_BIN, CLI_PROBE_TIMEOUT)
+    claude_bin = await asyncio.to_thread(
+        resolve_cli_binary, _CLI_BIN, CLI_PROBE_TIMEOUT
+    )
     # Pipe the prompt via stdin instead of `-p <prompt>` argv.
     #
     # Why: on Windows, npm-installed CLIs are ``.cmd`` shims. Python's
@@ -137,6 +160,10 @@ async def run_claude(
     # entirely — bytes flow straight to claude's stdin. macOS / Linux
     # behaviour is unchanged (stdin works there too).
     args: list[str] = [claude_bin, "-p", "--output-format", "json"]
+    if model:
+        args += ["--model", model]
+    if effort:
+        args += ["--effort", effort]
     if system_prompt:
         args += ["--append-system-prompt", system_prompt]
     if attachments:
@@ -151,14 +178,27 @@ async def run_claude(
                 args += ["--add-dir", parent]
         args += ["--permission-mode", "bypassPermissions"]
 
-    # Use synchronous subprocess.run() to avoid asyncio subprocess issues on Windows.
+    # Still synchronous subprocess.run() — asyncio's subprocess transport
+    # cannot reliably spawn the npm `.cmd` shims this CLI ships as on
+    # Windows. `asyncio.to_thread` keeps that compatibility and only moves
+    # the blocking off the event loop, which the worker, the extension WS
+    # and every HTTP route share. A `claude -p` turn can run for minutes.
+    # Shutdown cost, known and accepted: `asyncio.to_thread` is not
+    # cancellable. Cancelling this coroutine returns control to the
+    # caller, but the thread keeps running until claude exits or its
+    # timeout fires, so a shutdown mid-turn can wait out the full
+    # deadline (the caller's timeout) before the process is free. Still
+    # strictly better than blocking the loop, which froze the worker, the
+    # extension WS and every HTTP route for the same duration.
     try:
-        result = subprocess.run(
-            args,
-            input=full_prompt.encode("utf-8"),
-            capture_output=True,
-            timeout=timeout,
-            text=False,
+        result = await asyncio.to_thread(
+            lambda: subprocess.run(
+                args,
+                input=full_prompt.encode("utf-8"),
+                capture_output=True,
+                timeout=timeout,
+                text=False,
+            )
         )
     except FileNotFoundError as exc:
         raise ClaudeCliError("claude CLI not found on PATH") from exc

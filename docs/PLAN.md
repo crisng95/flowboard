@@ -18,7 +18,7 @@ realtime over WebSocket as generation completes.
 ```
 [React Canvas] ─HTTP/WS─► [FastAPI Agent + SQLite]
                                 ▲
-                                │ WebSocket :9223
+                                │ WebSocket :8355
                                 ▼
                       [Chrome MV3 Extension]
                                 │

@@ -72,6 +72,19 @@ def cancel_request(request_id: int):
         req.error = "canceled"
         req.finished_at = datetime.now(timezone.utc)
         s.add(req)
+        # Clear the node's in-flight stamp here rather than in the worker.
+        # The worker mirrors Node.status on every transition it makes, but
+        # it deliberately leaves canceled rows alone (a late-arriving result
+        # must not resurrect them), so a cancel is the one transition out of
+        # `running` it never sees. Without this the card would sit on the
+        # processing UI forever after a reload, with no request left to
+        # poll. Mirrors what the frontend poll does on `canceled`: back to
+        # idle, keeping whatever the node was showing before.
+        if req.node_id is not None:
+            node = s.get(Node, req.node_id)
+            if node is not None and node.status in ("queued", "running"):
+                node.status = "idle"
+                s.add(node)
         s.commit()
         s.refresh(req)
         return req

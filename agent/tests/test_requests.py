@@ -841,6 +841,57 @@ def test_recover_orphan_running_requests_marks_them_failed(client):
     assert _recover_orphan_running_requests() == 0
 
 
+def test_recover_sweeps_queued_rows_too(client):
+    """A `queued` row is orphaned harder than a `running` one: the worker's
+    queue is an in-process asyncio.Queue that nothing replays at boot, so
+    the row has no consumer at all. Leaving it behind is worse than doing
+    nothing, because `ACTIVE_REQUEST_STATUSES` counts `queued` as in-flight
+    and the resume endpoint hands it to the browser to poll forever."""
+    from datetime import datetime, timezone
+
+    from sqlmodel import select as _select
+
+    from flowboard.db import get_session
+    from flowboard.db.models import Node, Request
+    from flowboard.main import _recover_orphan_running_requests
+
+    board = client.post("/api/boards", json={"name": "B"}).json()
+    node = client.post(
+        "/api/nodes", json={"board_id": board["id"], "type": "image", "data": {}}
+    ).json()
+    with get_session() as s:
+        n = s.get(Node, node["id"])
+        n.status = "queued"
+        s.add(n)
+        s.add(Request(
+            node_id=node["id"],
+            type="gen_image",
+            status="queued",
+            params={},
+            created_at=datetime.now(timezone.utc),
+        ))
+        s.commit()
+
+    assert _recover_orphan_running_requests() == 1
+
+    with get_session() as s:
+        req = s.exec(_select(Request)).one()
+        # Distinct from `agent_restart_lost` on purpose: this one never
+        # dispatched, so unlike a row that died mid-run it cannot have
+        # burned credits upstream. The activity feed reads the difference.
+        assert (req.status, req.error) == ("failed", "agent_restart_never_started")
+
+    # The node's busy stamp is cleared in the same pass, or the card spins
+    # forever with no in-flight request left to poll.
+    assert client.get(f"/api/boards/{board['id']}").json()["nodes"][0]["status"] == "error"
+
+    # And nothing is handed back to the browser as still worth polling.
+    active = client.get(
+        f"/api/boards/{board['id']}/requests", params={"active": "true"}
+    ).json()
+    assert active["items"] == []
+
+
 # ── Omni Flash r2v ─────────────────────────────────────────────────────────
 
 

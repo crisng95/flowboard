@@ -16,8 +16,8 @@
     "https://flow-content.google/*",
     "https://labs.google/*",
     "https://aisandbox-pa.googleapis.com/*",
-    "http://127.0.0.1:8101/*",
-    "http://localhost:8101/*"
+    "http://127.0.0.1:8434/*",
+    "http://localhost:8434/*"
   ],
   "background": {
     "service_worker": "background.js"

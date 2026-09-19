@@ -1,5 +1,14 @@
 .PHONY: help install install-dev update dev agent frontend extension clean
 
+# HTTP port for the agent. This is the ONLY place it is configured — the
+# agent reads it from uvicorn's `--port` below and nowhere else, so there
+# is no matching variable in `.env`. Off the conventional 8101 because
+# that port is commonly taken by other local services; override per run
+# with `FLOWBOARD_HTTP_PORT=9000 make agent`. Moving it also means editing
+# the extension (`background.js`, `manifest.json`) and the frontend's Vite
+# proxy, all three of which hardcode the agent's address.
+FLOWBOARD_HTTP_PORT ?= 8434
+
 # Prefer uv (https://github.com/astral-sh/uv) — ~10× faster than pip.
 # Falls back to stdlib venv + pip when uv is not installed.
 HAS_UV := $(shell command -v uv 2>/dev/null)
@@ -10,7 +19,7 @@ help:
 	@echo "  make install-dev  - install agent with dev extras (ruff, pytest)"
 	@echo "  make update       - upgrade existing deps (agent + frontend)"
 	@echo "  make dev          - hint: run agent + frontend in separate terminals"
-	@echo "  make agent        - run agent only (FastAPI on :8101)"
+	@echo "  make agent        - run agent only (FastAPI on :$(FLOWBOARD_HTTP_PORT))"
 	@echo "  make frontend     - run frontend only (Vite on :5173)"
 	@echo "  make extension    - package extension (unpacked: load from ./extension)"
 	@echo "  make clean        - remove build + cache"
@@ -44,7 +53,7 @@ dev:
 	@echo "Load ./extension as unpacked extension in chrome://extensions."
 
 agent:
-	cd agent && .venv/bin/uvicorn flowboard.main:app --reload --port 8101
+	cd agent && .venv/bin/uvicorn flowboard.main:app --reload --port $(FLOWBOARD_HTTP_PORT)
 
 frontend:
 	cd frontend && npm run dev

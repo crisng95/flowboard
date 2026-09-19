@@ -1,7 +1,13 @@
-"""Standalone WebSocket server on :9223 for the Chrome extension bridge.
+"""Standalone WebSocket server for the Chrome extension bridge.
 
-Kept separate from the FastAPI :8101 app to match flowkit's pattern — the
-extension's `background.js` connects to `ws://127.0.0.1:9223` only.
+Kept separate from the FastAPI app to match flowkit's pattern — the
+extension's `background.js` opens a WebSocket to the agent and POSTs
+responses back over HTTP, and the two ports are independent.
+
+The port is ``EXTENSION_WS_PORT`` (default 8355; the HTTP side defaults to
+8434 via the Makefile). The extension hardcodes both, so moving either one
+means editing ``extension/background.js`` and ``extension/manifest.json``
+to match.
 """
 from __future__ import annotations
 

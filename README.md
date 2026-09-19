@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/Veo%203.1-i2v-FF6F00?logo=google&logoColor=white" alt="Veo 3.1"/>
   <img src="https://img.shields.io/badge/Flow-Pro%20%2F%20Ultra%20only-EA4335?logo=google&logoColor=white" alt="Flow Pro / Ultra only"/>
   <img src="https://img.shields.io/badge/LLM-Claude%20%C2%B7%20Gemini%20%C2%B7%20Codex-D97757" alt="Claude / Gemini / OpenAI Codex"/>
-  <img src="https://img.shields.io/badge/Tests-406%20passing-success?logo=pytest&logoColor=white" alt="406 passing"/>
+  <img src="https://img.shields.io/badge/Tests-517%20passing-success?logo=pytest&logoColor=white" alt="517 passing"/>
   <img src="https://img.shields.io/badge/Status-personal%20local--only-orange" alt="Status"/>
 </p>
 
@@ -62,13 +62,15 @@
 >    - **Claude Code** (default, recommended) —
 >      [`@anthropic-ai/claude-code`](https://docs.claude.com/claude-code/install) ·
 >      OAuth via your Claude subscription · fully tested in production.
->    - **Gemini CLI** — [`@google/gemini-cli`](https://github.com/google-gemini/gemini-cli) ·
->      OAuth via Google AI · tested live; ~15 s slower per call than
->      Claude due to subprocess cold-start.
+>    - **Gemini** — the Antigravity CLI (`agy`) on `PATH` · OAuth via
+>      Google AI · tested live. Google's old `@google/gemini-cli` is
+>      **dead** for individual Code Assist tiers (every call returns
+>      `IneligibleTierError`), so this provider drives `agy` instead.
+>      The provider is still called `gemini` everywhere in the config
+>      and API — only the binary changed. Self-updates via `agy update`.
 >    - **OpenAI Codex** —
 >      [`@openai/codex`](https://github.com/openai/codex) · OAuth via
->      ChatGPT Plus/Pro · provider class implemented + auto-detected
->      but **not yet smoke-tested end-to-end**; treat as beta.
+>      ChatGPT Plus/Pro · tested live.
 >
 >    Flowboard does not call any cloud LLM API directly — every
 >    auto-prompt / vision / planner round-trip shells out to the CLI
@@ -314,9 +316,9 @@ matching vocab from the system prompt.
 ```
 ┌──────────────────────┐    ┌────────────────────┐    ┌──────────────────────┐
 │  Chrome MV3 ext      │◄───┤  FastAPI agent     ├───►│  SQLite (storage/)   │
-│  - content script    │ WS │  127.0.0.1:8101    │    │  Board, Node, Edge,  │
+│  - content script    │ WS │  127.0.0.1:8434    │    │  Board, Node, Edge,  │
 │  - injected MAIN     │ ws │  + worker queue    │    │  Request, Asset,     │
-│  - CDN URL allow     │9223│  + WS server :9223 │    │  Plan, ChatMessage,  │
+│  - CDN URL allow     │8355│  + WS server :8355 │    │  Plan, ChatMessage,  │
 │  - Captcha bridge    │    │  + LLM CLI bridge  │    │  BoardFlowProject    │
 └──────────────────────┘    └─────────┬──────────┘    └──────────────────────┘
         ▲                             │
@@ -359,7 +361,7 @@ matching vocab from the system prompt.
 | **Python 3.11** | Agent runtime (FastAPI + SQLModel) |
 | **Node 20+** | Frontend dev server (Vite) |
 | **Chrome / Chromium** | **Mandatory** — hosts the MV3 extension that proxies every Google Flow API call. The agent has zero direct path to Flow without it. |
-| **One LLM CLI** on `PATH` | Vision describe + auto-prompt + planner. Pick one — defaults to **Claude Code** ([`@anthropic-ai/claude-code`](https://docs.claude.com/claude-code/install)); also supports **Gemini CLI** ([`@google/gemini-cli`](https://github.com/google-gemini/gemini-cli)) and **OpenAI Codex** ([`@openai/codex`](https://github.com/openai/codex), provider implemented but not yet smoke-tested). All use OAuth against your existing AI subscription — no API key needed. |
+| **One LLM CLI** on `PATH` | Vision describe + auto-prompt + planner. Pick one per feature — defaults to **Claude Code** ([`@anthropic-ai/claude-code`](https://docs.claude.com/claude-code/install)); also supports **Gemini** (the Antigravity CLI, `agy` — *not* the retired `@google/gemini-cli`) and **OpenAI Codex** ([`@openai/codex`](https://github.com/openai/codex)). All use OAuth against your existing AI subscription — no API key needed. |
 | **Google Flow `Pro` or `Ultra` plan** at [`flow.google.com`](https://flow.google.com/) | **Free tier and trial accounts will not work.** Veo 3.1 i2v + GEM_PIX_2 image gen are gated to paid plans. |
 | **One signed-in Flow tab, left open** | Mandatory since the September 2026 migration: Flow signs every call in the page with a session cookie, a per-page token and a single-use reCAPTCHA. None of it can be replayed from outside the browser. |
 
@@ -374,7 +376,7 @@ Steps 3 + 4:
 make install        # agent venv + frontend deps (uses uv if available, else pip)
 make install-dev    # same, but adds ruff + pytest extras
 make update         # upgrade agent + frontend deps in place
-make agent          # run FastAPI on :8101
+make agent          # run FastAPI on :8434
 make frontend       # run Vite on :5173
 ```
 
@@ -446,14 +448,14 @@ python3.11 -m venv .venv
 
 # `--timeout-graceful-shutdown 2` keeps `--reload` snappy when you save
 # a Python file — without it, uvicorn waits forever for the WS to drain.
-.venv/bin/uvicorn flowboard.main:app --reload --port 8101 \
+.venv/bin/uvicorn flowboard.main:app --reload --port 8434 \
   --timeout-graceful-shutdown 2
 ```
 
 Smoke-test:
 
 ```bash
-curl http://127.0.0.1:8101/api/health
+curl http://127.0.0.1:8434/api/health
 # {"ok":true,"extension_connected":true,"ws_stats":{"connected":true,"flow_key_present":false,...}}
 #                                                                      ^^^^^
 #                       Expected. There is no bearer token on this transport.
@@ -503,10 +505,10 @@ cp .env.example .env    # then fill in FLOWBOARD_FLOW_PROJECT_ID
 Restart the agent, then check:
 
 ```bash
-curl -s http://127.0.0.1:8101/api/health
+curl -s http://127.0.0.1:8434/api/health
 # {"ok":true,"extension_connected":true,"ws_stats":{"connected":true,"flow_key_present":false,...}}
 
-curl -s http://127.0.0.1:8101/api/auth/me
+curl -s http://127.0.0.1:8434/api/auth/me
 # {"paygate_tier":"PAYGATE_TIER_TWO","paygate_tier_source":"configured","identity_available":false,...}
 ```
 
@@ -546,7 +548,7 @@ ten traps worth not re-discovering:
 ```bash
 # Agent
 cd agent && .venv/bin/python -m pytest -q
-# 406 passed
+# 517 passed
 
 # Frontend
 cd frontend && npx tsc -p . --noEmit && npx vite build
@@ -615,21 +617,75 @@ cd frontend && npx tsc -p . --noEmit && npx vite build
 ### AI Providers (multi-LLM)
 
 A **🤖 Provider** chip in the top-right toolbar opens a dialog where
-you switch which LLM powers Flowboard. One provider serves all three
-features (Auto-Prompt / Vision / Planner) — switching is one decision,
-not three. Per-feature test buttons run a small ping per feature and
-gate the **Apply changes** button until all three pass green, so you
-never apply a switch that's silently broken.
+you wire up the LLMs that power Flowboard. Each of the three features —
+**Auto-Prompt**, **Vision**, **Planner** — picks its own **provider**,
+**model** and **reasoning effort**, independently. A cheap fast model
+for Auto-Prompt and a deep one for Planner is the setup this screen
+exists for.
+
+Per-feature test buttons run a small ping using the exact
+provider/model/effort that row is showing, so a green tick means that
+combination works — not just that the CLI is installed. Tests are
+advisory: **Apply changes** is not gated on them, because pinning a
+provider before you finish setting it up is legitimate (dispatch fails
+loudly later with a message pointing back here).
 
 | Provider | Auth | Status |
 |---|---|---|
 | **Claude Code** | OAuth via `claude` CLI · Anthropic browser sign-in | ✅ Default · production-tested |
-| **Gemini CLI** | OAuth via `gemini` CLI · Google AI Ultra plan | ✅ Tested · ~15 s slower than Claude |
-| **OpenAI Codex** | OAuth via `codex` CLI · ChatGPT Plus/Pro | ⚠ Provider implemented but not yet smoke-tested |
+| **Gemini** | OAuth via `agy` (Antigravity CLI) · Google AI Ultra plan | ✅ Tested live |
+| **OpenAI Codex** | OAuth via `codex` CLI · ChatGPT Plus/Pro | ✅ Tested live |
 
-Backend keeps a Grok REST provider class for power users who edit
-`~/.flowboard/secrets.json` directly, but the UI doesn't surface it
-because xAI hasn't shipped an end-user CLI.
+#### Models and effort
+
+Model lists differ in how they're sourced. `agy` can enumerate its own
+models, so the Gemini dropdown is **live** (`agy models`, cached ~5 min,
+with a refresh button). `claude` and `codex` have no headless listing
+command, so their catalogs are **static**: Claude's is alias-only
+(`sonnet` / `opus` / `fable` / `haiku`, which always track the latest
+model in each tier), Codex's is the set of user-selectable slugs its
+own model cache advertises.
+
+Effort vocabularies are **not** shared — each provider is validated
+against its own ladder, and the settings API rejects a value the chosen
+provider doesn't know:
+
+| Provider | Efforts |
+|---|---|
+| **Claude Code** | `low` · `medium` · `high` · `xhigh` · `max` |
+| **OpenAI Codex** | `low` · `medium` · `high` · `xhigh` · `max` |
+| **Gemini** (`agy`) | `low` · `medium` · `high` |
+
+Leaving model or effort unset is meaningful: Flowboard omits the flag
+entirely, so whatever you configured inside `claude` / `agy` / `codex`
+itself stays in charge. It never substitutes a default of its own.
+
+#### `~/.flowboard/secrets.json`
+
+Settings are stored locally at mode `0600`:
+
+```json
+{
+  "apiKeys": { "openai": "sk-..." },
+  "featureConfig": {
+    "auto_prompt": { "provider": "gemini", "model": "gemini-3.8-flash-low",  "effort": "low"  },
+    "vision":      { "provider": "gemini", "model": "gemini-3.8-flash-high", "effort": "high" },
+    "planner":     { "provider": "claude", "model": "opus",                  "effort": "xhigh" }
+  },
+  "activeProviders": {
+    "auto_prompt": "gemini",
+    "vision": "gemini",
+    "planner": "claude"
+  }
+}
+```
+
+`featureConfig` is the real setting. `activeProviders` is the older
+provider-only map, kept in sync on every write purely so downgrading
+Flowboard doesn't brick an install. Reads prefer `featureConfig` and
+fall back to `activeProviders` per feature, with `model`/`effort` null
+— which is why upgrading from an older build keeps routing exactly
+where it was routing before.
 
 ### Activity feed
 
@@ -676,13 +732,13 @@ agent/                  FastAPI service (Python 3.11)
       flow_sdk.py       Flow semantics on top of it (models, aspects,
                         polling); the only file that knows Flow's schema
       flow_client.py    WebSocket bridge to the Chrome extension
-      llm/              Multi-LLM provider layer (registry, secrets,
-                        Claude / Gemini / OpenAI Codex / Grok)
+      llm/              Multi-LLM provider layer (registry, per-feature
+                        secrets, Claude / Gemini (agy) / OpenAI Codex)
       claude_cli.py     Subprocess detail behind ClaudeProvider
     worker/             In-process queue (gen_image, gen_video,
                         edit_image, upload_image)
     db/                 SQLModel definitions
-  tests/                406 pytest tests (batch_harness.py decodes the
+  tests/                517 pytest tests (batch_harness.py decodes the
                         f.req envelope so tests assert on the wire)
 
 frontend/               Vite + React + ReactFlow
@@ -707,7 +763,7 @@ storage/                Local cache + SQLite (gitignored)
 
 ## Status
 
-Personal local-only tool. **406 / 406 tests passing** (agent), tsc
+Personal local-only tool. **517 / 517 tests passing** (agent), tsc
 clean (frontend). Caveats:
 
 - ⚠ **Google Flow plan must be `Pro` or `Ultra`.** Free tier and trial
@@ -730,10 +786,9 @@ clean (frontend). Caveats:
   `PUBLIC_ERROR_AUDIO_FILTERED`) — surfaced verbatim in the activity
   feed + failed-request error so the user can diagnose / iterate.
 - ⚠ Auto-prompt + vision + planner require **one** LLM CLI on `PATH`
-  (Claude Code recommended; Gemini CLI tested; OpenAI Codex provider
-  implemented but not yet smoke-tested). Without any CLI, the
-  `Generate` button still works if you type your own prompt — only
-  the auto-prompt-from-empty path is unavailable.
+  (Claude Code recommended; `agy` and OpenAI Codex both tested live).
+  Without any CLI, the `Generate` button still works if you type your
+  own prompt — only the auto-prompt-from-empty path is unavailable.
 
 ## Related
 
@@ -746,6 +801,98 @@ clean (frontend). Caveats:
 
 Dates are release dates. Entries lead with what changed for you; refactors,
 CI and test-only work are left out unless they change how the thing behaves.
+
+### v1.4.0 — 2026-09-19 — per-feature AI providers, and reloads that keep their place
+
+Two of the three AI providers had stopped working. Fixing them turned into the
+provider settings this should have had from the start: Auto-Prompt, Vision and
+Planner are now configured independently, each with its own model and
+reasoning effort.
+
+**Refreshing the page mid-generation no longer loses the run — or the
+result.** The node's `running` state lived only in the browser tab, and the
+finished image or clip was written onto the node by the *browser's* poll
+loop. So an F5 while Flow was rendering did two things: the card stopped
+showing progress, and the poll that was going to save the result died with
+the page. The generation still completed on the agent, and its media was
+never attached to anything.
+
+The agent is now the source of truth. The worker stamps `Node.status` and
+merges the finished result into the node in the same commit that closes the
+request, so a run completes correctly with no browser attached at all. On
+load the board asks `GET /api/boards/{id}/requests?active=true` for anything
+still in flight and re-attaches its poll, so a reloaded card picks up where
+it left off. Cancelling a request, and restarting the agent with a request
+mid-flight, both clear the node's busy stamp — otherwise a card would spin
+forever waiting on a poll that no longer exists.
+
+**Breaking — Gemini now runs on a different binary.** Google retired
+`@google/gemini-cli` for individual accounts; it fails with
+`IneligibleTierError: This client is no longer supported for Gemini Code
+Assist for individuals` and no flag brings it back. Install the Antigravity
+CLI (`agy`) and keep it on `PATH`. The provider id is still `gemini`, so
+saved configuration keeps routing where it was — only the binary changed.
+Note the other side of that: an install *without* `agy` will watch a
+`gemini` provider that worked yesterday start failing, because the old
+binary is no longer consulted at all. Nothing is silently rerouted; the
+provider reports unavailable and any feature pinned to it says so.
+
+**Breaking — the extension WebSocket port default moved from 9223 to
+8355.** 9223 collides with Chrome's own remote-debugging port and with a
+lot of local tooling. The shipped extension is already on the new port, so
+a fresh install needs nothing; if you had pinned `FLOWBOARD_EXT_WS_PORT`
+to the old value, either drop the override or edit `AGENT_WS_URL` in
+`extension/background.js` to match. The agent's HTTP port is set only in
+the Makefile (`FLOWBOARD_HTTP_PORT ?= 8434`) — the env var of the same
+name never reached the agent and has been removed from `.env.example`
+rather than left looking functional.
+
+**Fixed**
+- **OpenAI Codex never dispatched.** The agent ran `codex exec
+  --output-format json -p <prompt>`, and on `codex-cli` 0.155.0 both flags
+  are wrong: `--output-format` was removed, and `-p` now means `--profile`,
+  so the prompt was being read as a config profile name. Every call died with
+  `unexpected argument '--output-format' found`. It now runs `codex exec
+  --skip-git-repo-check --sandbox read-only -o <file> [-m …]
+  [-c model_reasoning_effort=…]` and reads the answer back from the file.
+- Codex was also being handed the prompt twice — it appends piped stdin as a
+  `<stdin>` block on top of the positional prompt. Stdin is now closed.
+- An `agy` reply that comes back empty because a tool was auto-denied
+  headlessly is reported as an error instead of returning `""`. The empty
+  string used to travel downstream and surface as a JSON parse failure
+  somewhere unrelated.
+- Vision through `agy` works without `--dangerously-skip-permissions`. Given a
+  bare `@path` the CLI tries to shell out and gets denied; the attachment
+  prompt now steers it to its file-reading tool instead. Flowboard never
+  passes that flag, and a test asserts it.
+
+**Added**
+- **Per-feature provider, model and effort.** Each feature is configured on
+  its own row in Settings → AI Providers — put a cheap low-effort model on
+  Auto-Prompt and a strong one on Planner. Effort ladders differ per provider
+  (`claude` and `codex` reach `xhigh`/`max`; `agy` stops at `high`) and the UI
+  only ever offers what that provider accepts.
+- Model catalogs. `agy models` is read live with a 5-minute cache and a
+  refresh button; `claude` and `codex` ship static lists because neither can
+  enumerate models headlessly. A provider whose catalog can't be fetched gets
+  a free-text field rather than blocking you.
+- `featureConfig` in `~/.flowboard/secrets.json`, holding provider + model +
+  effort per feature. Reads prefer it and fall back to the older
+  `activeProviders` map, so an existing install keeps working untouched;
+  writes update both, so a downgrade still finds a configured install.
+
+**Removed**
+- `FLOWBOARD_GEMINI_MODEL` — per-feature model selection replaces it, and its
+  default pointed at a model `agy` doesn't serve.
+- `FLOWBOARD_PLANNER_MODEL` — it was read into a constant that nothing
+  imported, and it now contradicts the planner's real model in
+  `featureConfig`. A second knob that silently loses is worse than none.
+- The one-provider-for-everything rule. Picking a provider is three decisions
+  now, which is the point.
+- Apply is no longer gated on a passing connection test. Per-feature that
+  meant up to three pings, and three at once is what triggered
+  `MODEL_CAPACITY_EXHAUSTED`. Tests are advisory per row; pre-pinning a
+  provider you haven't set up yet is allowed and fails loudly at dispatch.
 
 ### v1.3.0 — 2026-09-18 — the Flow migration
 
@@ -853,9 +1000,9 @@ MIT (proposed — license file pending).
 Generated media in this README was produced through the pipeline using
 [Google Flow](https://labs.google/flow). Auto-prompt + vision synthesis
 defaults to [Claude](https://claude.ai) via the local CLI; multi-LLM
-support adds Google's [Gemini CLI](https://github.com/google-gemini/gemini-cli)
-and OpenAI's [Codex CLI](https://github.com/openai/codex) as alternative
-providers — pick one in `Settings → AI Providers`.
+support adds Google's Gemini (via the Antigravity CLI, `agy`) and
+OpenAI's [Codex CLI](https://github.com/openai/codex) as alternative
+providers — pick one per feature in `Settings → AI Providers`.
 
 ---
 
