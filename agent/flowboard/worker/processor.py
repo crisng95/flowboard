@@ -16,6 +16,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from flowboard.db import get_session
 from flowboard.db.models import Node, Request
+from flowboard.request_types import MEDIA_PRODUCING_TYPES
 from flowboard.services import media as media_service
 from flowboard.services.flow_client import flow_client
 from flowboard.services.flow_sdk import get_flow_sdk, resolve_paygate_tier
@@ -720,25 +721,17 @@ def _iso_utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-# Request types whose entire purpose is to render media. Everything else
-# (`proxy`, `create_project`) legitimately settles with a bare envelope.
-#
-# This list is why the zero-media check lives on `req.type` and not on the
-# result: `_handle_gen_image` returns `(resp, None)` for any envelope
-# without a top-level `"error"`, and `_extract_media_ids` yields `[]` when
-# nothing actually rendered. Judging by the result alone, that pair reads
-# as a clean success, `_node_completion_patch` returns `{}` (it has no
-# media to write), and the node flips to `done` still wearing the PREVIOUS
-# run's `mediaIds` / `renderedAt`. The UI shows nothing until F5, then
-# shows the old images as if they were the new ones.
-_MEDIA_PRODUCING_TYPES: frozenset[str] = frozenset(
-    {"gen_image", "gen_video", "gen_video_omni", "edit_image"}
-)
-
-
+# The shared type set is why the zero-media check lives on `req.type` and
+# not on the result: `_handle_gen_image` returns `(resp, None)` for any
+# envelope without a top-level `"error"`, and `_extract_media_ids` yields
+# `[]` when nothing actually rendered. Judging by the result alone, that
+# pair reads as a clean success, `_node_completion_patch` returns `{}` (it
+# has no media to write), and the node flips to `done` still wearing the
+# PREVIOUS run's `mediaIds` / `renderedAt`. The UI shows nothing until F5,
+# then shows the old images as if they were the new ones.
 def _expects_media(request_type: str) -> bool:
     """True when a clean result from this type MUST carry rendered media."""
-    return request_type in _MEDIA_PRODUCING_TYPES
+    return request_type in MEDIA_PRODUCING_TYPES
 
 
 def _has_media(result: dict) -> bool:

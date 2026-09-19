@@ -19,12 +19,25 @@ from flowboard.db.models import (
 # knows SQLite hands datetimes back naive, and that a missing `Z` makes
 # every timestamp read 7h early on a UTC+7 client. See its docstring.
 from flowboard.timestamps import utc_iso
+# Same reason: the set of types that render media is shared with the
+# worker rather than restated here. See `list_board_requests`.
+from flowboard.request_types import MEDIA_PRODUCING_TYPES
 
 router = APIRouter(prefix="/api/boards", tags=["boards"])
 
 # In-flight = the statuses the worker can still move a row out of.
 # `done` / `failed` / `timeout` / `canceled` are all terminal.
 ACTIVE_REQUEST_STATUSES = ("queued", "running")
+
+# ...and in-flight is not enough on its own: `vision` and `auto_prompt`
+# also open a `running` Request row (services/activity.py), against a node,
+# and they settle it themselves inside their own HTTP handler. They are
+# never queued to the worker, so there is nothing for a resumed poll to
+# wait on — and polling them is actively destructive, because their result
+# carries no `media_ids` and the frontend reads that absence as "this node
+# rendered nothing". `MEDIA_PRODUCING_TYPES` is exactly the set the worker
+# dispatches AND whose result a generation poll can act on.
+RESUMABLE_REQUEST_TYPES = tuple(sorted(MEDIA_PRODUCING_TYPES))
 
 
 class BoardCreate(BaseModel):
@@ -89,6 +102,12 @@ def list_board_requests(
     Requests reach a board only through their Node, so rows with a NULL
     `node_id` — standalone `proxy` / `create_project` calls, and rows
     detached by a node delete — are not board-scoped and never listed here.
+
+    `active=true` narrows by type as well as status (see
+    `RESUMABLE_REQUEST_TYPES`); `active=false` deliberately does not. The
+    full listing is a debugging view and should stay honest about every
+    row the board carries, including the `vision` / `auto_prompt` ones
+    nobody resumes.
     """
     with get_session() as s:
         if not s.get(Board, board_id):
@@ -103,6 +122,7 @@ def list_board_requests(
         )
         if active:
             stmt = stmt.where(Request.status.in_(ACTIVE_REQUEST_STATUSES))
+            stmt = stmt.where(Request.type.in_(RESUMABLE_REQUEST_TYPES))
         stmt = stmt.order_by(Request.id.desc()).limit(limit)
         rows = s.exec(stmt).all()
 
