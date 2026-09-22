@@ -46,8 +46,9 @@ import re
 import time
 from typing import Any, Optional
 
-from flowboard.config import DEFAULT_PAYGATE_TIER, FLOW_PROJECT_ID
+from flowboard.config import DEFAULT_PAYGATE_TIER
 from flowboard.services import flow_batch as fb
+from flowboard.services.flow_project import effective_project_id
 from flowboard.services.flow_client import FlowClient, flow_client
 
 logger = logging.getLogger(__name__)
@@ -435,8 +436,12 @@ class FlowSDK:
         candidate = str(project_id or "").strip()
         if candidate and is_valid_project_id(candidate):
             return candidate
-        if FLOW_PROJECT_ID and is_valid_project_id(FLOW_PROJECT_ID):
-            return FLOW_PROJECT_ID
+        # Resolved, not imported: the pinned project is settable at runtime,
+        # and a module-level constant would pin it to whatever .env said at
+        # boot while the dashboard reported the override. See flow_project.
+        pinned = effective_project_id()
+        if pinned:
+            return pinned
         raise fb.FlowBatchError(NO_FLOW_PROJECT)
 
     def _remember_operation(self, operation_id: str, project_id: str) -> None:
@@ -495,13 +500,14 @@ class FlowSDK:
         every board — so it is reported as ``reused`` instead of letting the
         caller believe a fresh project was created.
         """
-        if FLOW_PROJECT_ID and is_valid_project_id(FLOW_PROJECT_ID):
+        pinned = effective_project_id()
+        if pinned:
             logger.info(
                 "create_project(%r): reusing pinned Flow project %s — Flow no "
                 "longer exposes project creation",
-                title, FLOW_PROJECT_ID[:12],
+                title, pinned[:12],
             )
-            return {"raw": None, "project_id": FLOW_PROJECT_ID, "reused": True}
+            return {"raw": None, "project_id": pinned, "reused": True}
         return {"raw": None, "error": NO_FLOW_PROJECT}
 
     # ── image generation (ogiZ0b) ──────────────────────────────────────────
@@ -944,7 +950,9 @@ class FlowSDK:
         rounds = self._operation_polls.get(operation_id, 0) + 1
         self._operation_polls[operation_id] = rounds
 
-        project_id = self._operation_projects.get(operation_id) or FLOW_PROJECT_ID
+        project_id = (
+            self._operation_projects.get(operation_id) or effective_project_id()
+        )
         complaint: Optional[str] = None
         worth_looking = rounds % 3 == 0
         try:

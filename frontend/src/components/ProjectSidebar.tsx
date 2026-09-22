@@ -67,13 +67,13 @@ export function ProjectSidebar() {
       // Refresh status, then push any orphans up to Flow in one shot.
       const res = await refreshStatus();
       if (res.flow_listing && !res.flow_listing.available) {
-        // Nothing to push: Flow cannot create a project to push into. Say so
-        // rather than calling sync-up, which answers 501 and would surface as
-        // a red error for something that is expected.
+        // Listing went away between the render that showed this button and
+        // the click. Nothing to push — Flow cannot create a project to push
+        // into — so say so rather than calling sync-up for a guaranteed 501.
         setSyncSummary(
           res.flow_listing.pinned_project_id
             ? "Flow no longer creates projects — all boards use the pinned one"
-            : "Flow no longer creates projects — pin FLOWBOARD_FLOW_PROJECT_ID",
+            : "Flow no longer creates projects — set one in Settings → Google Flow project",
         );
         return;
       }
@@ -243,21 +243,31 @@ export function ProjectSidebar() {
             >
               <span aria-hidden="true">+</span> New project
             </button>
-            <button
-              type="button"
-              className="project-sidebar__sync"
-              onClick={handleSyncClick}
-              disabled={syncing}
-              title={
-                flowListing && !flowListing.available
-                  ? "Flow no longer exposes project creation — boards share the pinned Flow project"
-                  : "Push every local board up to Google Flow — creates a Flow project for any board that's missing one"
-              }
-              aria-label="Sync local boards up to Google Flow"
-            >
-              {syncing ? "…" : "🔄"}
-            </button>
+            {/* Only rendered while Flow can actually be listed / written to.
+                On the current transport it never can, and sync-up answers
+                501 every time — a button whose only outcome is a refusal is
+                worse than the line below, which names the fix. It comes back
+                by itself if flow_sdk ever regains the RPC. */}
+            {flowListing?.available && (
+              <button
+                type="button"
+                className="project-sidebar__sync"
+                onClick={handleSyncClick}
+                disabled={syncing}
+                title="Push every local board up to Google Flow — creates a Flow project for any board that's missing one"
+                aria-label="Sync local boards up to Google Flow"
+              >
+                {syncing ? "…" : "🔄"}
+              </button>
+            )}
           </div>
+          {flowListing && !flowListing.available && (
+            <div className="project-sidebar__sync-note">
+              {flowListing.pinned_project_id
+                ? "Mọi board generate vào Flow project đã ghim. Đổi ở Settings → Google Flow project."
+                : "Chưa ghim Flow project nào — generate sẽ lỗi. Mở Settings → Google Flow project và dán uuid."}
+            </div>
+          )}
           {syncError && (
             <div className="project-sidebar__sync-error" role="status">
               Flow sync: {syncError}
@@ -305,7 +315,7 @@ export function ProjectSidebar() {
                         onClick={() => switchBoard(b.id)}
                         title={
                           isOrphan
-                            ? `${b.name} — Flow project ${status?.flow_project_id ?? ""} không tồn tại trên Google Flow. Click ⋯ → Rebind to re-link.`
+                            ? `${b.name} — Flow project ${status?.flow_project_id ?? ""} không tồn tại trên Google Flow. Mở Settings → Google Flow project và dán uuid mới; các board sẽ được trỏ lại.`
                             : b.name
                         }
                       >
@@ -313,7 +323,7 @@ export function ProjectSidebar() {
                         {isOrphan && (
                           <span
                             className="project-sidebar__orphan-badge"
-                            title="Flow project not found — rebind required"
+                            title="Flow project not found — pin a new one in Settings → Google Flow project"
                             aria-label="orphan"
                           >
                             ⚠
@@ -362,7 +372,12 @@ export function ProjectSidebar() {
       {/* Pinned-bottom account chip — sits below the project list because
           the list above has flex: 1 and pushes everything that follows
           to the bottom of the column. */}
-      <AccountPanel collapsed={collapsed} />
+      <AccountPanel
+        collapsed={collapsed}
+        onFlowProjectChange={() => {
+          refreshStatus().catch(() => {});
+        }}
+      />
 
       {deleteTarget && (
         <div

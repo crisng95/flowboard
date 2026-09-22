@@ -9,6 +9,29 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+#: AppSetting key holding the dashboard-set Google Flow project id.
+#: Named once here so the resolver, the routes and the tests cannot drift
+#: apart over a string literal.
+FLOW_PROJECT_SETTING_KEY = "flow_project_id"
+
+
+class AppSetting(SQLModel, table=True):
+    """Runtime-settable configuration, one row per key.
+
+    Exists because the pinned Flow project had nowhere durable to live but
+    ``FLOWBOARD_FLOW_PROJECT_ID``, which ``config`` reads once at import —
+    so changing which project Flowboard generates into meant editing ``.env``
+    and restarting the agent.
+
+    Values are plain strings. There is one setting today, and a typed column
+    per setting would make every future knob a schema migration; parsing at
+    the edge that cares is cheaper.
+    """
+    key: str = Field(primary_key=True)
+    value: str
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
 class Board(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
