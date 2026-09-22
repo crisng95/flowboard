@@ -157,6 +157,15 @@ button:disabled {
   color: #f87171;
 }
 
+/* Replaces the Sync button while Flow exposes no project listing —
+ * states the situation and names where the fix lives. */
+.project-sidebar__sync-note {
+  margin: 0 10px 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
 .project-sidebar__orphan-badge {
   display: inline-flex;
   align-items: center;
@@ -897,6 +906,98 @@ button:disabled {
   font-size: 11px;
   color: var(--muted);
   line-height: 1.5;
+}
+
+/* Pinned Flow project row — uuid field + Save, with the clear/override
+ * action and its result lines stacked underneath. */
+.settings-panel__project-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.settings-panel__project-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.settings-panel__project-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settings-panel__project-input:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.settings-panel__project-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel-high);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.settings-panel__project-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.settings-panel__project-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-panel__project-clear {
+  display: block;
+  margin-top: 6px;
+  padding: 0;
+  font-size: 11px;
+  text-align: left;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.settings-panel__project-clear:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.settings-panel__project-clear:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.settings-panel__project-error {
+  margin-top: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  border-radius: 6px;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.1);
+  color: #fca5a5;
+}
+
+.settings-panel__project-ok {
+  margin-top: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  border-radius: 6px;
+  background: rgba(110, 231, 183, 0.12);
+  color: #6ee7b7;
 }
 
 .settings-panel__kv {

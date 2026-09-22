@@ -1084,6 +1084,76 @@ export function getFlowSyncStatus(): Promise<SyncStatusResponse> {
   return api<SyncStatusResponse>("/api/flow/projects");
 }
 
-export function syncBoardsUpToFlow(): Promise<SyncUpResponse> {
-  return api<SyncUpResponse>("/api/flow/projects/sync-up", { method: "POST" });
+export async function syncBoardsUpToFlow(): Promise<SyncUpResponse> {
+  const res = await fetch("/api/flow/projects/sync-up", { method: "POST" });
+  if (!res.ok) {
+    // The refusal body is {message, reason, fix, pinned_project_id}. `api()`
+    // drops it entirely and extractErrorMessage keeps only `message` — but
+    // `fix` is the half that says what to do about it, so join the two.
+    const detail = await res
+      .json()
+      .then((b) => (b as { detail?: unknown } | null)?.detail)
+      .catch(() => null);
+    const d = (detail ?? {}) as { message?: unknown; fix?: unknown };
+    const parts = [d.message, d.fix].filter(
+      (p): p is string => typeof p === "string" && p.length > 0,
+    );
+    throw new Error(
+      parts.length > 0 ? parts.join(" ") : `${res.status} ${res.statusText}`,
+    );
+  }
+  return res.json() as Promise<SyncUpResponse>;
+}
+
+// ── Pinned Flow project ───────────────────────────────────────────────────
+// The single Flow project every board generates into. Flow dropped project
+// creation and listing in the September 2026 migration, so this uuid is the
+// only thing standing between a fresh install and "no project" on every
+// dispatch. Server state — deliberately NOT mirrored into the persisted
+// settings store.
+
+/** Where the effective id comes from. `"override"` = saved from Settings
+ * (wins), `"env"` = FLOWBOARD_FLOW_PROJECT_ID, `"none"` = nothing anywhere,
+ * which is the state where generation cannot work at all. */
+export type PinnedProjectSource = "override" | "env" | "none";
+
+export interface PinnedFlowProject {
+  /** The effective id. null when `source` is `"none"`. */
+  flow_project_id: string | null;
+  source: PinnedProjectSource;
+  /** What .env pins, shown so the user can see what clearing falls back to. */
+  env_project_id: string | null;
+}
+
+export interface PinnedFlowProjectUpdate extends PinnedFlowProject {
+  /** Existing boards re-pointed at the new project by this write. */
+  rebound_boards: number;
+}
+
+export function getPinnedFlowProject(): Promise<PinnedFlowProject> {
+  return api<PinnedFlowProject>("/api/flow/projects/pinned");
+}
+
+/** `null` clears the override and falls back to .env. */
+export async function setPinnedFlowProject(
+  flowProjectId: string | null,
+): Promise<PinnedFlowProjectUpdate> {
+  const res = await fetch("/api/flow/projects/pinned", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ flow_project_id: flowProjectId }),
+  });
+  if (!res.ok) {
+    // The 400 `detail` already names exactly what is wrong with the uuid the
+    // user typed, so it goes through verbatim — humanizeBackendError() would
+    // only risk swapping an actionable sentence for a generic one.
+    const body = await res.json().catch(() => null);
+    const detail = (body as { detail?: unknown } | null)?.detail;
+    throw new Error(
+      typeof detail === "string" && detail
+        ? detail
+        : `${res.status} ${res.statusText}`,
+    );
+  }
+  return res.json() as Promise<PinnedFlowProjectUpdate>;
 }

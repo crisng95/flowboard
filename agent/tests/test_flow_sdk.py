@@ -12,6 +12,7 @@ indices so the magic numbers live in one place.
 """
 import pytest
 
+from flowboard import config
 from flowboard.services import flow_batch as fb
 from flowboard.services.flow_sdk import (
     DEFAULT_PAYGATE_TIER,
@@ -86,9 +87,10 @@ def test_resolve_paygate_tier_refuses_anything_else(bad):
 
 @pytest.mark.asyncio
 async def test_create_project_refuses_when_no_project_is_pinned(monkeypatch):
-    from flowboard.services import flow_sdk
-
-    monkeypatch.setattr(flow_sdk, "FLOW_PROJECT_ID", "")
+    # The env default is patched on `config`, not on `flow_sdk`: the SDK
+    # resolves the pinned project per call now (flow_project.effective_project_id)
+    # so there is no module constant left to shadow.
+    monkeypatch.setattr(config, "FLOW_PROJECT_ID", "")
     out = await FlowSDK(client=BatchRecorder()).create_project("Board")
     assert out["error"].startswith("NO_FLOW_PROJECT")
     assert "FLOWBOARD_FLOW_PROJECT_ID" in out["error"]
@@ -97,9 +99,7 @@ async def test_create_project_refuses_when_no_project_is_pinned(monkeypatch):
 @pytest.mark.asyncio
 async def test_create_project_hands_back_the_pinned_project_marked_reused(monkeypatch):
     """It must not claim to have created something. Boards share one project."""
-    from flowboard.services import flow_sdk
-
-    monkeypatch.setattr(flow_sdk, "FLOW_PROJECT_ID", PID)
+    monkeypatch.setattr(config, "FLOW_PROJECT_ID", PID)
     out = await FlowSDK(client=BatchRecorder()).create_project("Board")
     assert out["project_id"] == PID
     assert out["reused"] is True
@@ -278,18 +278,12 @@ async def test_gen_image_returns_entries_with_signed_urls():
 
 
 @pytest.mark.asyncio
-async def test_gen_image_without_a_project_says_so():
-    from flowboard.services import flow_sdk
-
+async def test_gen_image_without_a_project_says_so(monkeypatch):
     monkey = BatchRecorder()
-    original = flow_sdk.FLOW_PROJECT_ID
-    flow_sdk.FLOW_PROJECT_ID = ""
-    try:
-        out = await FlowSDK(client=monkey).gen_image(
-            prompt="x", project_id="", paygate_tier=TIER,
-        )
-    finally:
-        flow_sdk.FLOW_PROJECT_ID = original
+    monkeypatch.setattr(config, "FLOW_PROJECT_ID", "")
+    out = await FlowSDK(client=monkey).gen_image(
+        prompt="x", project_id="", paygate_tier=TIER,
+    )
     assert out["error"].startswith("NO_FLOW_PROJECT")
     assert monkey.calls == [], "must not reach the bridge without a project"
 

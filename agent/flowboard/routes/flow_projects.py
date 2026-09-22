@@ -28,7 +28,13 @@ batchexecute RPC for listing a user's projects, and none for creating one, so:
     a shared workspace as if each board owned it.
 
 Generation does not depend on any of this: a board with no binding falls back
-to FLOWBOARD_FLOW_PROJECT_ID. See flow_sdk.search_user_projects.
+to the pinned project. See flow_sdk.search_user_projects.
+
+Which project that is used to be settable only in ``.env``. It is now settable
+at runtime through ``GET``/``PUT /api/flow/projects/pinned`` and resolved
+everywhere via ``flow_project.effective_project_id`` — the routes below
+included, because a status endpoint that reported the env value while
+generation used an override would be worse than not reporting one at all.
 """
 from __future__ import annotations
 
@@ -36,10 +42,15 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from flowboard.db import get_session
 from flowboard.db.models import Board, BoardFlowProject
-from flowboard.config import FLOW_PROJECT_ID
+from flowboard.services.flow_project import (
+    effective_project_id,
+    project_setting,
+    set_override,
+)
 from flowboard.services.flow_sdk import get_flow_sdk, is_valid_project_id
 
 logger = logging.getLogger(__name__)
@@ -113,9 +124,48 @@ async def get_sync_status(tool: str = "PINHOLE"):
         "flow_listing": {
             "available": unavailable is None,
             "reason": unavailable,
-            "pinned_project_id": FLOW_PROJECT_ID or None,
+            "pinned_project_id": effective_project_id() or None,
         },
     }
+
+
+class PinnedProjectUpdate(BaseModel):
+    """Body of ``PUT /pinned``. ``None`` (or ``""``) clears the override."""
+    flow_project_id: Optional[str] = None
+
+
+@router.get("/pinned")
+def get_pinned_project():
+    """The Flow project everything generates into, and where it came from.
+
+    Deliberately on ``/pinned`` under the existing plural prefix rather than a
+    new top-level ``/api/flow/project``: one character between two live routes
+    is a trap, and this genuinely is a property of the project collection.
+
+    Response: ``{"flow_project_id": str|null, "source": "override"|"env"|"none",
+    "env_project_id": str|null}``.
+    """
+    return project_setting()
+
+
+@router.put("/pinned")
+def set_pinned_project(body: PinnedProjectUpdate):
+    """Pin a Flow project at runtime, or clear the pin back to ``.env``.
+
+    Answers the same shape as ``GET`` plus ``rebound_boards`` — how many
+    boards were moved off the previous effective project onto this one. That
+    count is not decoration: boards persist their own binding, so a change
+    here that did not move them would leave them generating into the old
+    project. See ``flow_project._rebind_boards`` for which rows move.
+
+    A malformed id is a 400 whose ``detail`` says how to find the right value,
+    and nothing is written.
+    """
+    try:
+        rebound = set_override(body.flow_project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {**project_setting(), "rebound_boards": rebound}
 
 
 @router.post("/sync-up")
@@ -145,11 +195,11 @@ async def sync_up(tool: str = "PINHOLE"):
                 ),
                 "reason": unavailable,
                 "fix": (
-                    "Create one project in the Flow UI and pin its uuid as "
-                    "FLOWBOARD_FLOW_PROJECT_ID. Boards with no binding use it "
-                    "automatically, so generation keeps working."
+                    "Create one project in the Flow UI and pin its uuid — in "
+                    "Settings, or as FLOWBOARD_FLOW_PROJECT_ID. Boards with no "
+                    "binding use it automatically, so generation keeps working."
                 ),
-                "pinned_project_id": FLOW_PROJECT_ID or None,
+                "pinned_project_id": effective_project_id() or None,
             },
         )
 

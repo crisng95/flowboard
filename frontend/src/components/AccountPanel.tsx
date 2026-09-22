@@ -26,7 +26,16 @@ const APP_VERSION: string = packageJson.version;
  * When the sidebar is collapsed (44px wide), render only the avatar +
  * cog stacked vertically so the chip still fits.
  */
-export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
+export function AccountPanel({
+  collapsed = false,
+  onFlowProjectChange,
+}: {
+  collapsed?: boolean;
+  // Fired after Settings re-pins the Flow project. The sidebar reads the
+  // pinned id too, so it has to re-read rather than keep showing the value
+  // the user just replaced.
+  onFlowProjectChange?: () => void;
+}) {
   const setStorePaygateTier = useGenerationStore.setState;
   const [open, setOpen] = useState(false);
   const [profile, setProfile] = useState<AuthMe | null>(null);
@@ -364,6 +373,7 @@ export function AccountPanel({ collapsed = false }: { collapsed?: boolean }) {
           setOpen(false);
         } : undefined}
         logoutPending={logoutPending}
+        onFlowProjectChange={onFlowProjectChange}
       />
     </>
   );
