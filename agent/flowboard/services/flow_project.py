@@ -44,8 +44,7 @@ INVALID_PROJECT_ID_MESSAGE = (
     "That is not a Flow project ID. Open the project in Flow and copy the "
     "address out of your browser's address bar — you can paste the whole "
     "address here, or just the ID inside it, which looks like "
-    "1dfd992a-4149-4f97-9d68-a1ede77d3fc3. Letters, digits, dashes and "
-    "underscores only, up to 128 characters."
+    "1dfd992a-4149-4f97-9d68-a1ede77d3fc3."
 )
 
 #: A Flow project id as Flow itself mints them: a canonical uuid. The

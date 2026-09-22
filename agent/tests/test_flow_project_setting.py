@@ -40,9 +40,12 @@ from flowboard.services.flow_project import (
 from flowboard.services.flow_sdk import FlowSDK
 from tests.batch_harness import BatchRecorder, image_recorder
 
-ENV_PID = "11111111-1111-1111-1111-111111111111"
-OVERRIDE_PID = "22222222-2222-2222-2222-222222222222"
-OTHER_PID = "33333333-3333-3333-3333-333333333333"
+# Real hex, letters included. All-digit uuids would make
+# `test_uppercase_hex_is_accepted` assert nothing, since "1111".upper() is
+# "1111" — which is how a case-sensitivity regression got through once.
+ENV_PID = "1a1d7e3c-1111-4b1c-8d1e-111111111111"
+OVERRIDE_PID = "2b2e8f4a-2222-4c2d-9e2f-222222222222"
+OTHER_PID = "3c3f9a5b-3333-4d3e-8f3a-333333333333"
 
 
 @pytest.fixture
@@ -265,6 +268,29 @@ def test_a_pasted_address_is_accepted_and_only_the_uuid_is_stored(
     assert r.status_code == 200
     assert r.json()["flow_project_id"] == OVERRIDE_PID
     assert _stored() == OVERRIDE_PID
+
+
+@pytest.mark.parametrize("run_on", [
+    OVERRIDE_PID + "abcdef",   # extra hex glued to the tail
+    OVERRIDE_PID + "f",        # a 13-character final block
+    "ff" + OVERRIDE_PID,       # extra hex glued to the head
+    OVERRIDE_PID + "-dead",    # another dash-joined hex run after it
+])
+def test_a_longer_hex_run_is_rejected_rather_than_truncated(
+    client, env_pinned, run_on
+):
+    """The lookarounds in `_UUID_RE` are what stop this, and nothing else was
+    proving they earn their keep.
+
+    A plain search finds a uuid *inside* a longer hex run and returns the first
+    36 characters of it. That is the worst shape of failure this endpoint can
+    have: no error, a stored id that is subtly not the one the user pasted, and
+    every board silently rebound onto it. Refusing is the only safe answer —
+    we cannot know which 36 characters they meant.
+    """
+    r = client.put("/api/flow/projects/pinned", json={"flow_project_id": run_on})
+    assert r.status_code == 400
+    assert _stored() is None
 
 
 def test_a_url_without_a_uuid_in_it_is_still_rejected(client, env_pinned):
