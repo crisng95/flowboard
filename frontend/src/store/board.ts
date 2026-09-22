@@ -323,6 +323,14 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         loading: false,
       });
       persistBoardId(detail.board.id);
+      // `ensureProjectId` resolves per board but caches globally, so without
+      // this a board change would dispatch under the previous board's project.
+      // Harmless while every board shares one Flow project, which is all Flow
+      // still allows — but it is the same stale-binding bug, and a latent one
+      // is still one.
+      void import("./generation").then(({ useGenerationStore }) => {
+        useGenerationStore.setState({ projectId: null });
+      });
       void resumeActiveGenerations(detail.board.id);
     } catch (err) {
       set({ loading: false, error: err instanceof Error ? err.message : String(err) });
@@ -382,6 +390,14 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         loading: false,
       });
       persistBoardId(detail.board.id);
+      // `ensureProjectId` resolves per board but caches globally, so without
+      // this a board change would dispatch under the previous board's project.
+      // Harmless while every board shares one Flow project, which is all Flow
+      // still allows — but it is the same stale-binding bug, and a latent one
+      // is still one.
+      void import("./generation").then(({ useGenerationStore }) => {
+        useGenerationStore.setState({ projectId: null });
+      });
       void resumeActiveGenerations(detail.board.id);
     } catch (err) {
       set({ loading: false, error: err instanceof Error ? err.message : String(err) });

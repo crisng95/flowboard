@@ -42,7 +42,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from flowboard.db import get_session
 from flowboard.db.models import Board, BoardFlowProject
@@ -130,8 +130,15 @@ async def get_sync_status(tool: str = "PINHOLE"):
 
 
 class PinnedProjectUpdate(BaseModel):
-    """Body of ``PUT /pinned``. ``None`` (or ``""``) clears the override."""
-    flow_project_id: Optional[str] = None
+    """Body of ``PUT /pinned``. An explicit ``null`` (or ``""``) clears it.
+
+    The field is REQUIRED on purpose. With a default, an omitted field and an
+    explicit ``null`` were indistinguishable, so ``PUT {}`` — a truncated or
+    mangled body, or a client that forgot the payload — silently destroyed the
+    override and rebound every board. Clearing the pin is a destructive act and
+    has to be asked for by name; omission is now a 422.
+    """
+    flow_project_id: Optional[str] = Field(...)
 
 
 @router.get("/pinned")

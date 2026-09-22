@@ -144,15 +144,24 @@ def _env_project_id() -> str:
     return (config.FLOW_PROJECT_ID or "").strip()
 
 
-def effective_project_id() -> str:
-    """The Flow project id every RPC falls back to. ``""`` when there is none."""
-    override = _stored_override()
+def _resolve(override: Optional[str]) -> str:
+    """Effective id for a given override, without reading the database.
+
+    Split out so :func:`set_override` can work out what the new effective id
+    *will be* from inside its own uncommitted transaction, where re-reading
+    would still return the old value.
+    """
     if override:
         return override
     env = _env_project_id()
     if env and _is_valid(env):
         return env
     return ""
+
+
+def effective_project_id() -> str:
+    """The Flow project id every RPC falls back to. ``""`` when there is none."""
+    return _resolve(_stored_override())
 
 
 def project_setting() -> dict:
@@ -207,7 +216,15 @@ def set_override(value: Optional[str]) -> int:
             raise ValueError(INVALID_PROJECT_ID_MESSAGE)
 
     previous = effective_project_id()
+    # Resolved from the pending value, not re-read: the write below has not
+    # committed yet, so a read would still answer with the old override.
+    current = _resolve(new_value)
 
+    # The setting and the board bindings move together or not at all. Split
+    # across two transactions, a failure between them left the pin saying one
+    # project while every board still generated into the other — and a retry
+    # then saw `current == previous`, rebound nothing, and stranded them there
+    # permanently.
     with get_session() as s:
         row = s.get(AppSetting, FLOW_PROJECT_SETTING_KEY)
         if new_value is None:
@@ -219,22 +236,25 @@ def set_override(value: Optional[str]) -> int:
             row.value = new_value
             row.updated_at = datetime.now(timezone.utc)
             s.add(row)
+        rebound = _rebind_boards(s, previous, current) if current != previous else 0
         s.commit()
 
-    current = effective_project_id()
-    if current == previous:
-        return 0
-    logger.info(
-        "flow project override %s: effective project %s → %s",
-        "cleared" if new_value is None else "set",
-        previous or "(none)",
-        current or "(none)",
-    )
-    return _rebind_boards(previous, current)
+    if current != previous:
+        logger.info(
+            "flow project override %s: effective project %s → %s (%d board(s) moved)",
+            "cleared" if new_value is None else "set",
+            previous or "(none)",
+            current or "(none)",
+            rebound,
+        )
+    return rebound
 
 
-def _rebind_boards(old: str, new: str) -> int:
-    """Move the boards that were following the old effective id onto the new one.
+def _rebind_boards(s, old: str, new: str) -> int:
+    """Move every board on the old effective id onto the new one.
+
+    Runs in the caller's session and does NOT commit — the setting row and
+    these rows have to land together, or the pin and the boards disagree.
 
     ``BoardFlowProject`` rows persist whichever project a board was bound to.
     Leaving them alone would have those boards keep generating into the OLD
@@ -242,26 +262,27 @@ def _rebind_boards(old: str, new: str) -> int:
     wrong-target write, which is exactly the failure this setting exists to
     remove.
 
-    Rows pointing at anything else are deliberately left untouched. Those were
-    bound to a project chosen for that board specifically, and silently
-    retargeting them would be a worse surprise than leaving them where the
-    user put them.
+    Be honest about the limit: this moves *every* row equal to the old id, and
+    nothing in the data distinguishes "this board took the default that was in
+    force" from "someone bound this board here on purpose". A board
+    deliberately pinned to the outgoing project moves too. Telling them apart
+    needs a `followed_default` column on ``BoardFlowProject``; until there is
+    one, the UI says "boards on the previous project" rather than implying
+    only followers move.
 
-    Clearing down to no project at all rebinds nothing either: ``""`` is not a
+    Clearing down to no project at all rebinds nothing: ``""`` is not a
     project any board could generate into, so a board keeps the last real
     binding it had, which still works.
     """
     if not old or not new:
         return 0
-    with get_session() as s:
-        rows = s.exec(
-            select(BoardFlowProject).where(BoardFlowProject.flow_project_id == old)
-        ).all()
-        for row in rows:
-            row.flow_project_id = new
-            s.add(row)
-        s.commit()
-        count = len(rows)
+    rows = s.exec(
+        select(BoardFlowProject).where(BoardFlowProject.flow_project_id == old)
+    ).all()
+    for row in rows:
+        row.flow_project_id = new
+        s.add(row)
+    count = len(rows)
     if count:
         logger.info("rebound %d board(s) from flow project %s to %s", count, old, new)
     return count

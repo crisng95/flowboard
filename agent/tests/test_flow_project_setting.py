@@ -24,6 +24,8 @@ to have configured would pass or fail by machine.
 import pytest
 
 from flowboard import config
+from sqlmodel import select
+
 from flowboard.db import get_session
 from flowboard.db.models import (
     FLOW_PROJECT_SETTING_KEY,
@@ -37,6 +39,7 @@ from flowboard.services.flow_project import (
     project_setting,
     set_override,
 )
+from flowboard.services import flow_project
 from flowboard.services.flow_sdk import FlowSDK
 from tests.batch_harness import BatchRecorder, image_recorder
 
@@ -59,6 +62,25 @@ def env_pinned(monkeypatch):
 def no_env(monkeypatch):
     monkeypatch.setattr(config, "FLOW_PROJECT_ID", "")
     return ""
+
+
+def _bind_board(client, project_id: str) -> int:
+    """A board bound to *project_id*. Returns its id."""
+    with get_session() as s:
+        board = Board(name="b")
+        s.add(board)
+        s.commit()
+        s.refresh(board)
+        s.add(BoardFlowProject(board_id=board.id, flow_project_id=project_id))
+        s.commit()
+        return board.id
+
+
+def _board_binding():
+    """The single bound board's project id, for the atomicity tests."""
+    with get_session() as s:
+        rows = s.exec(select(BoardFlowProject)).all()
+        return rows[0].flow_project_id if rows else None
 
 
 def _stored():
@@ -484,3 +506,66 @@ def test_the_override_survives_a_fresh_read(client, env_pinned):
     with get_session() as s:
         assert s.get(Board, 0) is None  # unrelated read: the session is fresh
     assert effective_project_id() == OVERRIDE_PID
+
+
+# ── the setting and the bindings move together, or not at all ──────────────
+
+
+def test_a_failed_rebind_rolls_the_setting_back_too(client, env_pinned, monkeypatch):
+    """These were two transactions once, and the gap between them was the bug.
+
+    A failure after the setting committed left the pin saying one project
+    while every board still generated into the other — and because the retry
+    then saw the setting already at the new value, it computed
+    ``current == previous``, rebound nothing, and stranded those boards for
+    good. One transaction means a failure leaves nothing behind to be stranded.
+    """
+    _bind_board(client, OTHER_PID if False else ENV_PID)
+
+    def boom(*a, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(flow_project, "_rebind_boards", boom)
+
+    with pytest.raises(RuntimeError):
+        flow_project.set_override(OVERRIDE_PID)
+
+    assert _stored() is None, "the setting must not survive a failed rebind"
+    assert effective_project_id() == ENV_PID
+    assert _board_binding() == ENV_PID, "the board must not have moved either"
+
+
+def test_a_successful_change_moves_both(client, env_pinned):
+    """The other half: normally both land."""
+    _bind_board(client, ENV_PID)
+    assert flow_project.set_override(OVERRIDE_PID) == 1
+    assert _stored() == OVERRIDE_PID
+    assert _board_binding() == OVERRIDE_PID
+
+
+# ── clearing the pin has to be asked for by name ───────────────────────────
+
+
+def test_an_omitted_field_is_a_422_not_a_silent_clear(client, env_pinned):
+    """``PUT {}`` used to return 200 and destroy the override, because an
+    omitted field and an explicit ``null`` were the same value once the model
+    had a default. A truncated body, or a client that forgot its payload,
+    became a destructive no-arg call against every board.
+    """
+    flow_project.set_override(OVERRIDE_PID)
+    _bind_board(client, OVERRIDE_PID)
+
+    r = client.put("/api/flow/projects/pinned", json={})
+
+    assert r.status_code == 422
+    assert _stored() == OVERRIDE_PID, "an omitted field must change nothing"
+    assert _board_binding() == OVERRIDE_PID
+
+
+def test_an_explicit_null_still_clears(client, env_pinned):
+    """Being strict about omission must not break the documented way to clear."""
+    flow_project.set_override(OVERRIDE_PID)
+    r = client.put("/api/flow/projects/pinned", json={"flow_project_id": None})
+    assert r.status_code == 200
+    assert _stored() is None
+    assert r.json()["source"] == "env"

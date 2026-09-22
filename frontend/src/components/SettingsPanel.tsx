@@ -193,6 +193,14 @@ export function SettingsPanel({
         env_project_id: res.env_project_id,
       });
       setProjectDraft(res.flow_project_id ?? "");
+      // The generation store caches the project id for the whole page load
+      // and nothing else clears it. Without this the dialog says "Saved",
+      // the backend rebinds the boards, and every subsequent dispatch still
+      // carries the OLD uuid — which flow_sdk takes as an explicit argument
+      // and never resolves, so renders keep landing in the previous Flow
+      // project with no error anywhere. Exactly the failure this whole
+      // setting exists to remove, one layer up.
+      useGenerationStore.setState({ projectId: null });
       setProjectNotice(
         res.rebound_boards > 0
           ? `Saved — ${res.rebound_boards} board${res.rebound_boards === 1 ? "" : "s"} re-pointed at this project`
