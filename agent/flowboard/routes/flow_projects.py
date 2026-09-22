@@ -138,7 +138,7 @@ class PinnedProjectUpdate(BaseModel):
     override and rebound every board. Clearing the pin is a destructive act and
     has to be asked for by name; omission is now a 422.
     """
-    flow_project_id: Optional[str] = Field(...)
+    flow_project_id: Optional[str] = Field(..., max_length=512)
 
 
 @router.get("/pinned")

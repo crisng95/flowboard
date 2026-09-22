@@ -315,6 +315,29 @@ def test_a_longer_hex_run_is_rejected_rather_than_truncated(
     assert _stored() is None
 
 
+def test_a_uuid_in_a_query_parameter_is_not_mistaken_for_the_project(
+    client, env_pinned
+):
+    """`/project/new?ref=<uuid>` has no project uuid in its path, so "first
+    uuid anywhere" pinned whatever rode along in a share or tracking
+    parameter — silently, and shaped exactly like a correct save."""
+    r = client.put(
+        "/api/flow/projects/pinned",
+        json={"flow_project_id": f"https://flow.google.com/project/new?ref={OTHER_PID}"},
+    )
+    assert r.status_code == 400
+    assert _stored() is None
+
+
+def test_the_project_segment_wins_over_anything_else_in_the_url(client, env_pinned):
+    """When the path does name a project, that is the answer regardless of
+    what else the URL carries."""
+    url = f"https://flow.google.com/project/{OVERRIDE_PID}/scene/{OTHER_PID}?ref={ENV_PID}"
+    r = client.put("/api/flow/projects/pinned", json={"flow_project_id": url})
+    assert r.status_code == 200
+    assert r.json()["flow_project_id"] == OVERRIDE_PID
+
+
 def test_a_url_without_a_uuid_in_it_is_still_rejected(client, env_pinned):
     """Being forgiving about URLs must not become accepting any URL."""
     r = client.put(
@@ -334,15 +357,24 @@ def test_a_deep_link_takes_the_project_not_the_scene(client, env_pinned):
     assert r.json()["flow_project_id"] == OVERRIDE_PID
 
 
-def test_uppercase_hex_is_accepted(client, env_pinned):
-    """Nothing says a copied id arrives lowercased, and Flow's own uuids are
-    case-insensitive. Rejecting one would be a baffling error to receive."""
+def test_uppercase_hex_is_accepted_and_canonicalised(client, env_pinned):
+    """Accepted, because nothing says a copied id arrives lowercased and
+    rejecting one would be a baffling error to receive. Stored lower-cased,
+    because Flow mints them that way.
+
+    Storing the paste verbatim was not cosmetic. Bindings compare as strings,
+    so re-pinning the same uuid in a different case rewrote every board's
+    binding and announced "N boards re-pointed" for a change that moved
+    nothing — and if Flow compares project ids case-sensitively, which cannot
+    be checked from in here, the pin would name a project Flow 404s on.
+    """
     r = client.put(
         "/api/flow/projects/pinned",
         json={"flow_project_id": OVERRIDE_PID.upper()},
     )
     assert r.status_code == 200
-    assert r.json()["flow_project_id"] == OVERRIDE_PID.upper()
+    assert r.json()["flow_project_id"] == OVERRIDE_PID
+    assert _stored() == OVERRIDE_PID
 
 
 def test_a_plain_uuid_still_works(client, env_pinned):
@@ -441,16 +473,47 @@ def test_boards_on_the_previous_effective_project_follow_it(client, env_pinned):
     assert _binding(board_id) == OVERRIDE_PID
 
 
-def test_boards_bound_elsewhere_are_left_alone(client, env_pinned):
-    """A board pointing at a project the user chose for it specifically is not
-    the pinned default following along — retargeting it would be the surprise."""
+def test_every_binding_follows_the_pin(client, env_pinned):
+    """Deliberately inverted from "boards bound elsewhere are left alone".
+
+    That rule sounded protective and protected nothing: no binding in this
+    app is ever chosen deliberately. Exactly two lines write one — the value
+    always comes from `create_project()`, i.e. the pin of the moment, and the
+    other sits behind an unconditional 501. There is no rebind endpoint.
+
+    Worse, `== old` had a hole with no workaround, covered below in
+    `test_repinning_after_a_clear_still_moves_the_boards`. Adopting every
+    binding closes it, and is what a user changing the pin actually means.
+    """
     follower = _bind(client, "Follows", ENV_PID)
-    elsewhere = _bind(client, "Elsewhere", OTHER_PID)
+    stale = _bind(client, "Stale", OTHER_PID)
 
     r = client.put("/api/flow/projects/pinned", json={"flow_project_id": OVERRIDE_PID})
-    assert r.json()["rebound_boards"] == 1
+    assert r.json()["rebound_boards"] == 2
     assert _binding(follower) == OVERRIDE_PID
-    assert _binding(elsewhere) == OTHER_PID
+    assert _binding(stale) == OVERRIDE_PID
+
+
+def test_repinning_after_a_clear_still_moves_the_boards(client, env_pinned, monkeypatch):
+    """Two clicks, no hand-edited database, no error, permanently wrong.
+
+    Clearing the pin on an install with no `.env` value leaves the effective
+    id empty — correctly, that rebinds nothing. Setting a new one then had
+    `old == ""`, so the rebind bailed and every board stayed on the project
+    from *before* the clear. `GET /pinned` named the new project while every
+    generation went to the old one, for good.
+    """
+    monkeypatch.setattr(config, "FLOW_PROJECT_ID", "")
+    set_override(OVERRIDE_PID)
+    board = _bind(client, "b", OVERRIDE_PID)
+
+    client.put("/api/flow/projects/pinned", json={"flow_project_id": None})
+    assert _binding(board) == OVERRIDE_PID, "clearing alone must not move it"
+
+    r = client.put("/api/flow/projects/pinned", json={"flow_project_id": OTHER_PID})
+    assert r.json()["flow_project_id"] == OTHER_PID
+    assert r.json()["rebound_boards"] == 1
+    assert _binding(board) == OTHER_PID, "the board must not be stranded by the clear"
 
 
 def test_clearing_an_override_rebinds_followers_back_to_env(client, env_pinned):

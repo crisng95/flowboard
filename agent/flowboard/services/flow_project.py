@@ -50,11 +50,22 @@ INVALID_PROJECT_ID_MESSAGE = (
 #: A Flow project id as Flow itself mints them: a canonical uuid. The
 #: lookarounds matter — without them a search would happily accept the first
 #: 36 characters of a longer hex run and store a truncated id.
-_UUID_RE = re.compile(
-    r"(?<![0-9a-fA-F-])"
+_UUID = (
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
-    r"(?![0-9a-fA-F-])"
 )
+_UUID_RE = re.compile(r"(?<![0-9a-fA-F-])" + _UUID + r"(?![0-9a-fA-F-])")
+
+#: The uuid that is genuinely the project: the one right after a ``project/``
+#: segment. Without this, "first uuid anywhere" pins whatever rode along in a
+#: share or tracking parameter — ``/project/new?ref=<uuid>`` has no project
+#: uuid in its path at all, and quietly pinned the referrer's.
+_PROJECT_SEGMENT_RE = re.compile(r"project/(" + _UUID + r")(?![0-9a-fA-F-])")
+
+#: Whether the text names a project path at all. If it does but the segment is
+#: not a uuid — ``/project/new`` — then the text is a Flow URL that does not
+#: identify a project, and falling back to "first uuid anywhere" would pin
+#: whatever rode along in a query parameter.
+_HAS_PROJECT_SEGMENT_RE = re.compile(r"project/")
 
 
 # ── reading is loose, writing is strict, and that asymmetry is deliberate ──
@@ -94,15 +105,29 @@ def normalize_project_id(value: str) -> Optional[str]:
     same with a trailing slash, and the same with ``?foo=bar`` after it all
     reduce to ``<uuid>``, which is what gets stored.
 
-    The FIRST uuid wins. Flow puts the project ahead of the scene in its URLs,
-    so on a deep link that is the right one; there is no way to tell them apart
-    from the text alone, and picking the first at least makes it predictable.
+    A uuid directly after a ``project/`` segment wins outright — that is the
+    project by construction, whatever else the URL carries. If the text has a
+    ``project/`` segment that is NOT a uuid (``/project/new``), nothing is
+    returned: the URL is a Flow address that does not identify a project, and
+    taking the first uuid anywhere would pin whatever rode along in a share or
+    tracking parameter. Only text with no ``project/`` segment at all falls
+    back to the first uuid, which is the right answer for a bare paste.
+
+    The result is lower-cased. Flow mints these in lower case; storing an
+    uppercase paste verbatim left the pin no longer byte-matching what Flow
+    issued, and made `_rebind_boards` "move" every board from a uuid to the
+    same uuid in a different case, announcing a change that changed nothing.
     """
     text = (value or "").strip()
     if not text:
         return None
+    segment = _PROJECT_SEGMENT_RE.search(text)
+    if segment:
+        return segment.group(1).lower()
+    if _HAS_PROJECT_SEGMENT_RE.search(text):
+        return None
     match = _UUID_RE.search(text)
-    return match.group(0) if match else None
+    return match.group(0).lower() if match else None
 
 
 def _stored_override() -> Optional[str]:
@@ -262,22 +287,31 @@ def _rebind_boards(s, old: str, new: str) -> int:
     wrong-target write, which is exactly the failure this setting exists to
     remove.
 
-    Be honest about the limit: this moves *every* row equal to the old id, and
-    nothing in the data distinguishes "this board took the default that was in
-    force" from "someone bound this board here on purpose". A board
-    deliberately pinned to the outgoing project moves too. Telling them apart
-    needs a `followed_default` column on ``BoardFlowProject``; until there is
-    one, the UI says "boards on the previous project" rather than implying
-    only followers move.
+    Every binding moves, not just the ones equal to the outgoing id.
 
-    Clearing down to no project at all rebinds nothing: ``""`` is not a
-    project any board could generate into, so a board keeps the last real
-    binding it had, which still works.
+    That reads aggressive and is not, because no binding in this application
+    was ever chosen deliberately. Exactly two lines write
+    ``BoardFlowProject.flow_project_id``: ``routes/projects.py``, whose value
+    comes from ``create_project()`` and is therefore always the pin of the
+    moment, and a line inside ``sync_up``, which is unreachable behind an
+    unconditional 501. There is no rebind endpoint. So every row is a snapshot
+    of whatever the pin was when that board first generated, and adopting them
+    all is what the user means by changing the pin.
+
+    Matching only ``== old`` had a hole with no workaround: clearing the pin
+    and then setting a new one left ``old`` empty on the second step, so the
+    rebind bailed and every board stayed on the project from before the clear
+    — ``GET /pinned`` naming one project while generation used another,
+    permanently, after two clicks and with no error anywhere.
+
+    Clearing down to no project still rebinds nothing: ``""`` is not a project
+    any board could generate into, so a board keeps the last real binding it
+    had, which still works.
     """
-    if not old or not new:
+    if not new:
         return 0
     rows = s.exec(
-        select(BoardFlowProject).where(BoardFlowProject.flow_project_id == old)
+        select(BoardFlowProject).where(BoardFlowProject.flow_project_id != new)
     ).all()
     for row in rows:
         row.flow_project_id = new

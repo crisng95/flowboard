@@ -27,11 +27,14 @@ function humanizeBackendError(token: string): string | null {
     );
   }
   if (t.includes("no_flow_project")) {
+    // This is what a user with nothing pinned sees on their first failed
+    // generation — the exact moment to name the field that fixes it, rather
+    // than the .env-and-restart workflow that no longer has to be used.
     return (
       "Flow no longer lets Flowboard create projects — that endpoint went "
-      + "with Google's September 2026 migration. Create one project in the "
-      + "Flow UI, copy its uuid from the address bar, and set "
-      + "FLOWBOARD_FLOW_PROJECT_ID to it before restarting the agent."
+      + "with Google's September 2026 migration. Open a project at "
+      + "flow.google.com, copy its address, and paste it into Settings → "
+      + "Google Flow project."
     );
   }
   if (t.includes("unsupported_on_batch_api")) {

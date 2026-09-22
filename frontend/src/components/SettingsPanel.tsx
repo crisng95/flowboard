@@ -14,6 +14,11 @@ import {
 import packageJson from "../../package.json";
 
 const APP_VERSION: string = packageJson.version;
+// Loose on purpose: "is there a uuid in what they typed", not the backend's
+// full project/-segment rule. Used only to enable the Save button.
+const UUID_ANYWHERE =
+  /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
+
 const COMMUNITY_URL = "https://www.facebook.com/groups/flowkit.flowboard.community";
 
 /**
@@ -216,8 +221,28 @@ export function SettingsPanel({
   }
 
   const trimmedDraft = projectDraft.trim();
+  // Mirrors the backend's shape rule loosely, only to decide whether Save is
+  // worth offering — the server stays the judge and its 400 is shown verbatim.
+  const draftUuid = trimmedDraft.match(UUID_ANYWHERE)?.[0]?.toLowerCase() ?? null;
+  // Two things had to be fixed together here.
+  //
+  // Comparing against the *effective* id meant a user on the .env default
+  // could never turn it into a durable override — Save was permanently
+  // disabled on the value the dialog was showing them. Comparing against the
+  // override only fixes that.
+  //
+  // But doing just that opens the other half: the read path deliberately
+  // accepts a legacy non-uuid `.env` value, so the dialog can be displaying
+  // something the strict write path would reject. Requiring a uuid in the
+  // draft is what stops the user clicking Save on the value in front of them
+  // and being told it is not a Flow project ID.
   const canSaveProject =
-    !!trimmedDraft && trimmedDraft !== (flowProject?.flow_project_id ?? "");
+    !!draftUuid &&
+    (flowProject?.source !== "override" || draftUuid !== flowProject.flow_project_id);
+  const legacyEnvId =
+    flowProject?.source === "env" &&
+    !!flowProject.flow_project_id &&
+    !UUID_ANYWHERE.test(flowProject.flow_project_id);
 
   if (!open) return null;
 
@@ -337,6 +362,14 @@ export function SettingsPanel({
                 {projectSaving ? "Saving…" : "Save"}
               </button>
             </div>
+
+            {legacyEnvId && (
+              <div className="settings-panel__hint">
+                The id in <code>.env</code> is not a uuid. It still works —
+                anything already pinned keeps working — but pinning it from
+                here would need a uuid, so Save stays off until you paste one.
+              </div>
+            )}
 
             {flowProject.source === "override" && (
               <button
