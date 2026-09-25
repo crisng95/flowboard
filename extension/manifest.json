@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Flowboard Bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local bridge for Google Flow — runs batchexecute RPCs inside a signed-in flow.google.com tab and mints reCAPTCHA for Flowboard.",
   "permissions": [
     "storage",
@@ -36,6 +36,18 @@
       "js": [
         "content.js"
       ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://flow.google.com/*",
+        "https://labs.google/fx/tools/flow*",
+        "https://labs.google/fx/*/tools/flow*"
+      ],
+      "js": [
+        "injected.js"
+      ],
+      "world": "MAIN",
       "run_at": "document_start"
     }
   ],
