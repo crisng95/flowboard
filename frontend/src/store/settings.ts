@@ -49,15 +49,23 @@ export const OMNI_FLASH_CREDIT_COST: Record<4 | 6 | 8 | 10, number> = {
 export type OmniFlashDuration = 4 | 6 | 8 | 10;
 export const OMNI_FLASH_DURATIONS: OmniFlashDuration[] = [4, 6, 8, 10];
 
+// Generation backend. "flow" = the existing Chrome-extension → Google
+// Flow path. "muse" = delegated to a Pax worker via the provider-job
+// queue (no Flow plan, no extension needed). Picked per dispatch in the
+// GenerationDialog and sticky — persisted here like the model picks.
+export type MediaProviderKey = "flow" | "muse";
+
 interface SettingsState {
   imageModel: ImageModelKey;
   videoQuality: VideoQuality;
   videoModel: VideoModelFamily;
   omniFlashDuration: OmniFlashDuration;
+  mediaProvider: MediaProviderKey;
   setImageModel(model: ImageModelKey): void;
   setVideoQuality(q: VideoQuality): void;
   setVideoModel(m: VideoModelFamily): void;
   setOmniFlashDuration(d: OmniFlashDuration): void;
+  setMediaProvider(p: MediaProviderKey): void;
 }
 
 const STORAGE_KEY = "flowboard.settings.v1";
@@ -67,6 +75,7 @@ interface PersistShape {
   videoQuality?: VideoQuality;
   videoModel?: VideoModelFamily;
   omniFlashDuration?: OmniFlashDuration;
+  mediaProvider?: MediaProviderKey;
 }
 
 function loadPersisted(): PersistShape {
@@ -91,6 +100,17 @@ function persist(state: PersistShape): void {
 const persisted = loadPersisted();
 
 const VALID_VIDEO_QUALITIES: VideoQuality[] = ["fast", "lite", "quality", "lite_relaxed"];
+const VALID_MEDIA_PROVIDERS: MediaProviderKey[] = ["flow", "muse"];
+
+function snapshotPersist(get: () => SettingsState): PersistShape {
+  return {
+    imageModel: get().imageModel,
+    videoQuality: get().videoQuality,
+    videoModel: get().videoModel,
+    omniFlashDuration: get().omniFlashDuration,
+    mediaProvider: get().mediaProvider,
+  };
+}
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   imageModel: persisted.imageModel ?? "NANO_BANANA_2",
@@ -100,40 +120,28 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       : "fast",
   videoModel: persisted.videoModel ?? "veo",
   omniFlashDuration: persisted.omniFlashDuration ?? 4,
+  mediaProvider:
+    persisted.mediaProvider && VALID_MEDIA_PROVIDERS.includes(persisted.mediaProvider)
+      ? persisted.mediaProvider
+      : "flow",
   setImageModel(model) {
     set({ imageModel: model });
-    persist({
-      imageModel: model,
-      videoQuality: get().videoQuality,
-      videoModel: get().videoModel,
-      omniFlashDuration: get().omniFlashDuration,
-    });
+    persist(snapshotPersist(get));
   },
   setVideoQuality(q) {
     set({ videoQuality: q });
-    persist({
-      imageModel: get().imageModel,
-      videoQuality: q,
-      videoModel: get().videoModel,
-      omniFlashDuration: get().omniFlashDuration,
-    });
+    persist(snapshotPersist(get));
   },
   setVideoModel(m) {
     set({ videoModel: m });
-    persist({
-      imageModel: get().imageModel,
-      videoQuality: get().videoQuality,
-      videoModel: m,
-      omniFlashDuration: get().omniFlashDuration,
-    });
+    persist(snapshotPersist(get));
   },
   setOmniFlashDuration(d) {
     set({ omniFlashDuration: d });
-    persist({
-      imageModel: get().imageModel,
-      videoQuality: get().videoQuality,
-      videoModel: get().videoModel,
-      omniFlashDuration: d,
-    });
+    persist(snapshotPersist(get));
+  },
+  setMediaProvider(p) {
+    set({ mediaProvider: p });
+    persist(snapshotPersist(get));
   },
 }));

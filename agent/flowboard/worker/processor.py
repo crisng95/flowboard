@@ -18,6 +18,7 @@ from flowboard.db import get_session
 from flowboard.db.models import Request
 from flowboard.node_mirror import stage_node_patch
 from flowboard.request_types import MEDIA_PRODUCING_TYPES
+from flowboard import config
 from flowboard.services import media as media_service
 from flowboard.services.flow_client import flow_client
 from flowboard.services.flow_sdk import get_flow_sdk, resolve_paygate_tier
@@ -27,6 +28,33 @@ logger = logging.getLogger(__name__)
 
 # type → coroutine(params) → (result_dict, error_or_None)
 Handler = Callable[[dict], Awaitable[tuple[dict, Optional[str]]]]
+
+
+def _media_provider_of(params: dict) -> str:
+    """Which backend renders this dispatch: "flow" or "muse".
+
+    Per-request `media_provider` (stamped by the GenerationDialog) wins;
+    otherwise the `FLOWBOARD_MEDIA_PROVIDER` default. Unknown values fail
+    closed to "flow", preserving the existing behaviour.
+    """
+    raw = params.get("media_provider")
+    if isinstance(raw, str):
+        lowered = raw.strip().lower()
+        if lowered in ("flow", "muse"):
+            return lowered
+    return "muse" if config.MEDIA_PROVIDER_DEFAULT == "muse" else "flow"
+
+
+def _orientation_from_aspect(aspect: object) -> Optional[str]:
+    """Map Flow aspect enums to the provider-job orientation vocabulary."""
+    if not isinstance(aspect, str):
+        return None
+    upper = aspect.upper()
+    if "PORTRAIT" in upper:
+        return "VERTICAL"
+    if "LANDSCAPE" in upper:
+        return "HORIZONTAL"
+    return None
 
 
 # The `proxy` request type is a manual escape hatch, not part of any
@@ -84,6 +112,35 @@ async def _handle_gen_image(params: dict) -> tuple[dict, Optional[str]]:
     project_id = params.get("project_id")
     if not isinstance(prompt, str) or not prompt.strip():
         return {}, "missing_prompt"
+    if _media_provider_of(params) == "muse":
+        # Muse path needs no Flow project, tier, or model key — the Pax
+        # worker renders from prompt + refs alone.
+        from flowboard.services.muse_media import run_muse_media
+
+        raw_ref_ids = params.get("ref_media_ids")
+        if not isinstance(raw_ref_ids, list):
+            raw_ref_ids = params.get("character_media_ids")
+        ref_media_ids = None
+        if isinstance(raw_ref_ids, list):
+            cleaned = [m for m in raw_ref_ids if isinstance(m, str) and m]
+            ref_media_ids = cleaned or None
+        raw_count = params.get("variant_count")
+        variant_count = raw_count if isinstance(raw_count, int) and raw_count > 0 else 1
+        raw_prompts = params.get("prompts")
+        per_variant_prompts = None
+        if isinstance(raw_prompts, list):
+            cleaned = [p for p in raw_prompts if isinstance(p, str) and p.strip()]
+            per_variant_prompts = cleaned or None
+        return await run_muse_media(
+            kind="image",
+            prompt=prompt.strip(),
+            orientation=_orientation_from_aspect(params.get("aspect_ratio")),
+            reference_media_ids=ref_media_ids,
+            extra={
+                "variant_count": variant_count,
+                "prompts": per_variant_prompts,
+            },
+        )
     if not isinstance(project_id, str) or not project_id.strip():
         return {}, "missing_project_id"
     project_id = project_id.strip()
@@ -204,6 +261,24 @@ async def _handle_gen_video(params: dict) -> tuple[dict, Optional[str]]:
 
     if not isinstance(prompt, str) or not prompt.strip():
         return {}, "missing_prompt"
+    if _media_provider_of(params) == "muse":
+        # i2v via the Pax worker: one job, one output per start frame.
+        from flowboard.services.muse_media import run_muse_media
+
+        starts: list[str] = []
+        if start_media_ids:
+            starts = start_media_ids
+        elif isinstance(start_media_id, str) and start_media_id.strip():
+            starts = [start_media_id.strip()]
+        if not starts:
+            return {}, "missing_start_media_id"
+        return await run_muse_media(
+            kind="video",
+            prompt=prompt.strip(),
+            orientation=_orientation_from_aspect(params.get("aspect_ratio")),
+            source_media_ids=starts,
+            extra={"video_quality": params.get("video_quality")},
+        )
     if not isinstance(project_id, str) or not project_id.strip():
         return {}, "missing_project_id"
     project_id = project_id.strip()
@@ -421,6 +496,25 @@ async def _handle_edit_image(params: dict) -> tuple[dict, Optional[str]]:
     source_media_id = params.get("source_media_id") or params.get("sourceMediaId")
     if not isinstance(prompt, str) or not prompt.strip():
         return {}, "missing_prompt"
+    if _media_provider_of(params) == "muse":
+        # No Flow project/tier needed — worker edits the source image
+        # directly.
+        from flowboard.services.muse_media import run_muse_media
+
+        if not isinstance(source_media_id, str) or not source_media_id.strip():
+            return {}, "missing_source_media_id"
+        raw_refs = params.get("ref_media_ids")
+        ref_media_ids = None
+        if isinstance(raw_refs, list):
+            cleaned = [m for m in raw_refs if isinstance(m, str) and m]
+            ref_media_ids = cleaned or None
+        return await run_muse_media(
+            kind="edit_image",
+            prompt=prompt.strip(),
+            orientation=_orientation_from_aspect(params.get("aspect_ratio")),
+            source_media_ids=[source_media_id.strip()],
+            reference_media_ids=ref_media_ids,
+        )
     if not isinstance(project_id, str) or not project_id.strip():
         return {}, "missing_project_id"
     project_id = project_id.strip()
@@ -500,6 +594,19 @@ async def _handle_gen_video_omni(params: dict) -> tuple[dict, Optional[str]]:
 
     if not isinstance(prompt, str) or not prompt.strip():
         return {}, "missing_prompt"
+    if _media_provider_of(params) == "muse":
+        # r2v via the Pax worker: reference ingredients + duration.
+        from flowboard.services.muse_media import run_muse_media
+
+        if not ref_media_ids:
+            return {}, "missing_ref_media_ids"
+        return await run_muse_media(
+            kind="video_refs",
+            prompt=prompt.strip(),
+            orientation=_orientation_from_aspect(params.get("aspect_ratio")),
+            reference_media_ids=ref_media_ids,
+            extra={"duration_s": duration_s},
+        )
     if not isinstance(project_id, str) or not project_id.strip():
         return {}, "missing_project_id"
     project_id = project_id.strip()

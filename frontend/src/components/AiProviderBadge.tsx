@@ -33,6 +33,7 @@ const PROVIDER_LABEL: Record<LLMProviderName, string> = {
   claude: "Claude",
   gemini: "Gemini",
   openai: "OpenAI",
+  muse: "Muse",
 };
 
 const FEATURE_LABEL: Record<LLMFeature, string> = {

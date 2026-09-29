@@ -7,7 +7,7 @@ import {
   patchNode,
 } from "../api/client";
 import { useBoardStore, type FlowboardNodeData } from "./board";
-import { useSettingsStore } from "./settings";
+import { useSettingsStore, type MediaProviderKey } from "./settings";
 
 type PollEntry = { requestId: number; timerId: ReturnType<typeof setTimeout> | null };
 
@@ -636,8 +636,14 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     sourceMediaIds?: string[];
     variantCount?: number;
     prompts?: string[];
+    mediaProvider?: MediaProviderKey;
   }) {
-    const projectId = await get().ensureProjectId();
+    // "muse" = delegated to a Pax worker — skips the Flow project and
+    // paygate pre-flights below entirely (no Flow involved).
+    const mediaProvider: MediaProviderKey =
+      opts.mediaProvider ?? useSettingsStore.getState().mediaProvider;
+    const useMuse = mediaProvider === "muse";
+    const projectId = useMuse ? "" : await get().ensureProjectId();
     if (projectId === null) return;
 
     // Pre-flight: refuse to dispatch if the paygate tier is unknown.
@@ -646,9 +652,9 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     // the user a clearer hint without spending a captcha round-trip and
     // without leaving a `failed` request row in the DB. The
     // AccountPanel's "Tier unknown — Open Flow" banner is the recovery
-    // path.
+    // path. (Muse path needs no tier.)
     const knownTier = opts.paygateTier ?? get().paygateTier;
-    if (!knownTier) {
+    if (!useMuse && !knownTier) {
       set({
         error: "Open Flow once so the extension can detect your plan, then retry. (See the Tier-unknown banner in the bottom-left.)",
       });
@@ -715,6 +721,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
             params: {
               prompt: opts.prompt,
+              media_provider: mediaProvider,
               project_id: projectId,
               ref_media_ids: ingredients,
               duration_s: settings.omniFlashDuration,
@@ -738,6 +745,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           }
           const videoParams: Record<string, unknown> = {
             prompt: opts.prompt,
+            media_provider: mediaProvider,
             project_id: projectId,
             aspect_ratio: opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_LANDSCAPE",
             // Tier precedence: explicit caller arg > auto-detected from
@@ -762,6 +770,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         const refMediaIds = collectUpstreamRefMediaIds(rfId);
         const params: Record<string, unknown> = {
           prompt: opts.prompt,
+          media_provider: mediaProvider,
           project_id: projectId,
           aspect_ratio: opts.aspectRatio ?? "IMAGE_ASPECT_RATIO_LANDSCAPE",
           paygate_tier:
@@ -880,7 +889,9 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
   },
 
   async refineImage(rfId, opts) {
-    const projectId = await get().ensureProjectId();
+    const mediaProvider: MediaProviderKey = useSettingsStore.getState().mediaProvider;
+    const useMuse = mediaProvider === "muse";
+    const projectId = useMuse ? "" : await get().ensureProjectId();
     if (projectId === null) return;
 
     const node = useBoardStore.getState().nodes.find((n) => n.id === rfId);
@@ -908,6 +919,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
         params: {
           prompt: opts.prompt,
+          media_provider: mediaProvider,
           project_id: projectId,
           source_media_id: sourceMediaId,
           ref_media_ids: opts.refMediaIds ?? [],

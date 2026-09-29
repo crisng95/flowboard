@@ -5,9 +5,10 @@ Looks up the configured provider — plus that feature's pinned model and
 reasoning effort — runs the capability gates (vision attachment vs.
 text-only provider), then delegates to the provider's ``run()``.
 
-Three CLI-backed providers are registered: Claude, Gemini (which drives
+Three CLI-backed providers are registered (Claude, Gemini (which drives
 the ``agy`` CLI — see ``gemini.py`` for why the id outlived the binary),
-OpenAI Codex. xAI Grok was previously wired up but never shipped a usable
+OpenAI Codex) plus ``muse`` — the assistant itself (Pax), fulfilled through
+the provider-job queue instead of a subprocess. xAI Grok was previously wired up but never shipped a usable
 end-user CLI, so it was dropped from both UI and registry.
 """
 from __future__ import annotations
@@ -18,6 +19,7 @@ from typing import Literal, Optional
 from .base import LLMError, LLMProvider
 from .claude import ClaudeProvider
 from .gemini import GeminiProvider
+from .muse import MuseProvider
 from .openai import OpenAIProvider
 from . import secrets
 
@@ -34,6 +36,7 @@ _PROVIDERS: dict[str, LLMProvider] = {
     "claude": ClaudeProvider(),
     "gemini": GeminiProvider(),
     "openai": OpenAIProvider(),
+    "muse": MuseProvider(),
 }
 
 

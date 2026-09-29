@@ -196,3 +196,40 @@ class BoardFlowProject(SQLModel, table=True):
     board_id: int = Field(primary_key=True, foreign_key="board.id")
     flow_project_id: str
     created_at: datetime = Field(default_factory=_utcnow)
+
+
+class ProviderJob(SQLModel, table=True):
+    """Handoff queue between the agent worker and external providers/agents.
+
+    The "Muse" provider (Pax — the assistant itself) is a *delegated*
+    backend: instead of calling a model API, the agent publishes a job
+    here and an external worker claims it via ``routes/provider_jobs.py``,
+    renders the media (or answers the LLM prompt) with its own tools, and
+    posts the result back.
+
+    Lifecycle: QUEUED → CLAIMED → RUNNING → SUCCEEDED | FAILED | CANCELLED.
+    A claim grants a lease (``lease_expires_at``); the worker heartbeats to
+    extend it. A crashed worker's lease expires and the job becomes
+    reclaimable, so jobs are never stranded.
+    """
+    id: str = Field(primary_key=True)  # uuid4 hex
+    provider: str = Field(index=True)  # "muse"
+    # llm | image | edit_image | video (i2v) | video_refs (r2v)
+    kind: str = Field(index=True)
+    status: str = Field(default="QUEUED", index=True)
+    prompt: str = ""
+    orientation: Optional[str] = None  # VERTICAL | HORIZONTAL
+    source_url: Optional[str] = None  # edit_image input (file:// or https://)
+    start_url: Optional[str] = None  # i2v start frame
+    end_url: Optional[str] = None
+    reference_urls: list = Field(default_factory=list, sa_column=Column(JSON))
+    extra: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    claimed_by: Optional[str] = None
+    claimed_at: Optional[datetime] = None
+    lease_expires_at: Optional[datetime] = None
+    progress: int = 0
+    progress_message: Optional[str] = None
+    result: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    error_message: Optional[str] = None
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)

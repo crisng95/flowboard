@@ -45,7 +45,7 @@ import { ProviderSetupModal } from "./ProviderSetupModal";
 const REFRESH_INTERVAL_MS = 30_000;
 // Order matters — this is the option order in every provider select.
 // Gemini first (lowest install friction), Claude middle, Codex last.
-const SHOWN_PROVIDERS: LLMProviderName[] = ["gemini", "claude", "openai"];
+const SHOWN_PROVIDERS: LLMProviderName[] = ["gemini", "claude", "openai", "muse"];
 const FEATURES: LLMFeature[] = ["auto_prompt", "vision", "planner"];
 
 const FEATURE_META: Record<LLMFeature, { title: string; blurb: string }> = {
@@ -69,6 +69,7 @@ const PROVIDER_LABEL: Record<LLMProviderName, string> = {
   claude: "Claude",
   gemini: "Gemini (agy)",
   openai: "OpenAI (Codex)",
+  muse: "Muse (Pax)",
 };
 
 const UNTESTED: FeatureTest = { state: "untested" };

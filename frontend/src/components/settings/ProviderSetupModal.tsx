@@ -91,6 +91,7 @@ export function ProviderSetupModal({ provider, open, onClose }: ProviderSetupMod
         {provider === "openai" && (
           <OpenAiContent tab={openaiTab} onTabChange={setOpenaiTab} />
         )}
+        {provider === "muse" && <MuseContent />}
 
         <div className="setup-modal__footer">
           <a
@@ -259,6 +260,41 @@ function OpenAiContent({ tab, onTabChange }: OpenAiContentProps) {
   );
 }
 
+function MuseContent() {
+  return (
+    <div className="setup-modal__body">
+      <p>
+        Muse is Pax — this assistant — acting as the provider. No CLI
+        to install, no key to paste: requests are queued and fulfilled
+        by a Pax worker with its own tools.
+      </p>
+      <ol className="setup-modal__steps">
+        <li>
+          <span className="setup-modal__step-label">Start a worker</span>
+          <CommandLine cmd="python agent/scripts/muse_worker.py --worker-id pax-1" />
+          <span className="setup-modal__step-hint">
+            Run on the same host as the agent, keep it running while you
+            generate. The Muse row flips to ✓ Connected on its first
+            poll (~30s).
+          </span>
+        </li>
+        <li>
+          <span className="setup-modal__step-label">Test</span>
+          <span className="setup-modal__step-hint">
+            Click “Test” on a feature row — it sends a real round-trip
+            through the worker and reports latency.
+          </span>
+        </li>
+      </ol>
+      <p className="setup-modal__note">
+        Without a running worker, Muse-routed features fail with
+        “no worker listening”. See docs/muse-provider.md for the
+        queue protocol.
+      </p>
+    </div>
+  );
+}
+
 function titleFor(p: LLMProviderName): string {
   switch (p) {
     case "claude":
@@ -267,6 +303,8 @@ function titleFor(p: LLMProviderName): string {
       return "🤖 Gemini CLI Setup";
     case "openai":
       return "🤖 OpenAI Setup";
+    case "muse":
+      return "🤖 Muse (Pax) Setup";
   }
 }
 
@@ -278,6 +316,8 @@ function labelFor(p: LLMProviderName): string {
       return "Google Gemini";
     case "openai":
       return "OpenAI";
+    case "muse":
+      return "Muse";
   }
 }
 
@@ -289,5 +329,7 @@ function docsLinkFor(p: LLMProviderName): string {
       return "https://github.com/google/gemini-cli";
     case "openai":
       return "https://platform.openai.com/docs/quickstart";
+    case "muse":
+      return "https://muse.ai";
   }
 }

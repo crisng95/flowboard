@@ -678,9 +678,9 @@ export async function uploadImageFromUrl(
 // name") is gone — `configured` now only means every feature has a
 // provider pinned; model/effort stay optional.
 
-export type LLMProviderName = "claude" | "gemini" | "openai";
+export type LLMProviderName = "claude" | "gemini" | "openai" | "muse";
 export type LLMFeature = "auto_prompt" | "vision" | "planner";
-export type LLMProviderMode = "cli" | "api" | "none";
+export type LLMProviderMode = "cli" | "api" | "assistant" | "none";
 export type LLMLastError =
   | "not_installed"
   | "not_authenticated"

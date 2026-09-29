@@ -10,6 +10,7 @@ from flowboard.config import EXTENSION_WS_PORT, WS_HOST
 from flowboard.db import get_session, init_db
 from flowboard.db.models import Node, Request
 from flowboard.routes import activity, auth, boards, chat, edges, flow_projects, llm, media, nodes, plans, projects, prompt, upload, vision
+from flowboard.routes import provider_jobs as provider_jobs_route
 from flowboard.routes import references as references_route
 from flowboard.routes import requests as requests_route
 from flowboard.services.flow_client import flow_client
@@ -138,6 +139,7 @@ app.include_router(prompt.router)
 app.include_router(auth.router)
 app.include_router(llm.router)
 app.include_router(activity.router)
+app.include_router(provider_jobs_route.router)
 
 
 @app.get("/api/health")

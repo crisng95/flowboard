@@ -80,7 +80,7 @@ class _TestBody(BaseModel):
 # Whitelist for the writable feature → provider mapping. Hand-edited
 # secrets.json with garbage values is tolerated by `read_feature_config`,
 # but the HTTP surface must reject input that wouldn't route anywhere.
-_VALID_PROVIDER_NAMES = {"claude", "gemini", "openai"}
+_VALID_PROVIDER_NAMES = {"claude", "gemini", "openai", "muse"}
 _VALID_FEATURES = ("auto_prompt", "vision", "planner")
 
 
@@ -125,6 +125,13 @@ async def list_providers() -> list[dict]:
                 or getattr(provider, "_cli_available", False)
             )
             requires_key = False  # CLI path doesn't require it
+        elif provider.name == "muse":
+            # No CLI, no key — "set up" means a Pax worker is listening.
+            # `available` already encodes worker presence, so configured
+            # tracks it 1:1 like the CLI providers do.
+            mode = "assistant"
+            configured = available
+            requires_key = False
         else:
             mode = "cli"
             configured = available
@@ -181,9 +188,14 @@ async def set_provider_key(name: str, body: _ApiKeyBody) -> dict:
     if name not in _VALID_PROVIDER_NAMES:
         raise HTTPException(status_code=404, detail=f"unknown provider {name!r}")
     if name != "openai":
+        reason = (
+            "needs no key — a Pax worker fulfils it"
+            if name == "muse"
+            else "uses CLI auth instead"
+        )
         raise HTTPException(
             status_code=400,
-            detail=f"{name} doesn't accept API keys; uses CLI auth instead",
+            detail=f"{name} doesn't accept API keys; {reason}",
         )
     secrets.set_api_key(name, body.apiKey)
     # Bust the relevant provider's availability cache so the next /providers

@@ -84,3 +84,26 @@ FLOW_PROJECT_ID = os.getenv("FLOWBOARD_FLOW_PROJECT_ID", "")
 # the account's plan once; an unrecognised value fails loudly rather than
 # silently serving Pro to an Ultra account.
 DEFAULT_PAYGATE_TIER = os.getenv("FLOWBOARD_PAYGATE_TIER", "PAYGATE_TIER_TWO")
+
+# ── Muse provider (Pax, the assistant itself) ─────────────────────────────
+#
+# The "muse" provider is a *delegated* backend: generation and LLM jobs are
+# published to the provider-job queue and fulfilled by an external worker
+# (Pax) instead of the Chrome extension → Google Flow path. No credentials,
+# no CLI, no Flow plan needed on this path.
+
+# Default media backend for gen_image / gen_video / gen_video_omni /
+# edit_image dispatches: "flow" (Chrome extension → Google Flow) or "muse"
+# (provider-job queue → Pax worker). A per-request `media_provider` param
+# overrides this; the GenerationDialog stamps the user's sticky choice.
+MEDIA_PROVIDER_DEFAULT = os.getenv("FLOWBOARD_MEDIA_PROVIDER", "flow").strip().lower() or "flow"
+
+# How long a producer waits for a Pax worker to finish one job before
+# giving up. LLM jobs (auto-prompt/vision/planner) are quick; media jobs
+# (image/video renders) can take many minutes.
+MUSE_LLM_TIMEOUT_S = float(os.getenv("FLOWBOARD_MUSE_LLM_TIMEOUT_S", "600"))
+MUSE_MEDIA_TIMEOUT_S = float(os.getenv("FLOWBOARD_MUSE_MEDIA_TIMEOUT_S", "1800"))
+
+# Worker presence TTL: a worker that hasn't polled within this window is
+# treated as offline (drives the Settings UI's availability tick).
+MUSE_WORKER_PRESENCE_TTL_S = float(os.getenv("FLOWBOARD_MUSE_WORKER_TTL_S", "300"))

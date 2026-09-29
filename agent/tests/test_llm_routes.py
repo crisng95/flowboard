@@ -36,20 +36,23 @@ def _reset_provider_caches():
 
 
 def test_list_providers_returns_all_three(client, tmp_secrets_path):
-    """All 3 registered providers (Claude / Gemini / OpenAI) appear with
-    expected fields. xAI Grok was dropped — never shipped a usable CLI."""
+    """All 4 registered providers (Claude / Gemini / OpenAI / Muse) appear
+    with expected fields. xAI Grok was dropped — never shipped a usable CLI.
+    Muse is the delegated Pax-worker provider, not a CLI."""
     with patch.object(
         registry._PROVIDERS["claude"], "is_available", return_value=False
     ), patch.object(
         registry._PROVIDERS["gemini"], "is_available", return_value=False
     ), patch.object(
         registry._PROVIDERS["openai"], "is_available", return_value=False
+    ), patch.object(
+        registry._PROVIDERS["muse"], "is_available", return_value=False
     ):
         resp = client.get("/api/llm/providers")
     assert resp.status_code == 200
     by_name = {p["name"]: p for p in resp.json()}
-    assert set(by_name) == {"claude", "gemini", "openai"}
-    for name in ("claude", "gemini", "openai"):
+    assert set(by_name) == {"claude", "gemini", "openai", "muse"}
+    for name in ("claude", "gemini", "openai", "muse"):
         entry = by_name[name]
         assert "available" in entry
         assert "configured" in entry
@@ -61,6 +64,14 @@ def test_list_providers_returns_all_three(client, tmp_secrets_path):
         assert isinstance(entry["efforts"], list)
         assert isinstance(entry["models"], list)
         assert "defaultModel" in entry
+    # Muse specifics: assistant mode, no key, no effort ladder, supports vision.
+    muse = by_name["muse"]
+    assert muse["mode"] == "assistant"
+    assert muse["requiresKey"] is False
+    assert muse["supportsVision"] is True
+    assert muse["supportsEffort"] is False
+    assert muse["efforts"] == []
+    assert muse["configured"] is False  # is_available stubbed False above
 
 
 def test_list_providers_carries_effort_ladders_and_catalogs(

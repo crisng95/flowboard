@@ -48,3 +48,7 @@ coverage/
 /video_model*.md
 .omc/autopilot/
 .omc/worktrees/
+
+# Local runtime junk
+*.log
+.chrome-profile*/
