@@ -107,3 +107,15 @@ MUSE_MEDIA_TIMEOUT_S = float(os.getenv("FLOWBOARD_MUSE_MEDIA_TIMEOUT_S", "1800")
 # Worker presence TTL: a worker that hasn't polled within this window is
 # treated as offline (drives the Settings UI's availability tick).
 MUSE_WORKER_PRESENCE_TTL_S = float(os.getenv("FLOWBOARD_MUSE_WORKER_TTL_S", "300"))
+
+# ── muse2api gateway (optional Muse transport) ───────────────────────────
+#
+# Base URL of a muse2api service (https://github.com/crisng95/muse2api), e.g.
+# http://127.0.0.1:18610. When set, the Muse provider calls muse2api's
+# OpenAI-compatible API directly for LLM and media instead of publishing to
+# the provider-job queue, so no Pax worker is needed. Empty keeps the queue.
+MUSE2API_BASE = os.getenv("FLOWBOARD_MUSE2API_BASE", "").strip()
+# muse2api's `MUSE2API_API_KEY` (sent as `Authorization: Bearer`).
+MUSE2API_KEY = os.getenv("FLOWBOARD_MUSE2API_KEY", "").strip()
+# How often a video task is polled while muse2api renders it.
+MUSE2API_POLL_S = float(os.getenv("FLOWBOARD_MUSE2API_POLL_S", "3"))

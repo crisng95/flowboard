@@ -126,10 +126,12 @@ async def list_providers() -> list[dict]:
             )
             requires_key = False  # CLI path doesn't require it
         elif provider.name == "muse":
-            # No CLI, no key — "set up" means a Pax worker is listening.
-            # `available` already encodes worker presence, so configured
-            # tracks it 1:1 like the CLI providers do.
-            mode = "assistant"
+            # No CLI, no key in secrets.json. "gateway": muse2api is set in
+            # .env and `available` is its /readyz. "assistant": "set up"
+            # means a Pax worker is listening and `available` is worker
+            # presence. Either way configured tracks it 1:1 like the CLI
+            # providers do.
+            mode = provider.mode  # type: ignore[attr-defined]
             configured = available
             requires_key = False
         else:
@@ -189,7 +191,7 @@ async def set_provider_key(name: str, body: _ApiKeyBody) -> dict:
         raise HTTPException(status_code=404, detail=f"unknown provider {name!r}")
     if name != "openai":
         reason = (
-            "needs no key — a Pax worker fulfils it"
+            "its muse2api key lives in .env (FLOWBOARD_MUSE2API_KEY)"
             if name == "muse"
             else "uses CLI auth instead"
         )

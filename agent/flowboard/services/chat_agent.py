@@ -235,8 +235,9 @@ async def _chat_llm(
         provider = MuseProvider()
         if not await provider.is_available():
             raise LLMError(
-                "Chưa có Muse worker — agent không thể suy nghĩ. "
-                "Chạy: python agent/scripts/muse_worker.py"
+                "Muse chưa sẵn sàng — agent không thể suy nghĩ. "
+                "Đặt FLOWBOARD_MUSE2API_BASE trỏ tới muse2api, hoặc chạy: "
+                "python agent/scripts/muse_worker.py"
             )
         return await provider.run(
             user_prompt,

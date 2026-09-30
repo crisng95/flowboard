@@ -475,6 +475,66 @@ empty. Add a Character node, generate it, drop a Visual asset, drop an
 Image, wire them up, click **▶ Generate** — the full demo above is
 about 15 minutes of clicking.
 
+### Step 5 (optional) — Muse via the muse2api gateway
+
+Flowboard can render images/videos and answer LLM features through
+[muse.ai](https://muse.ai) instead of Google Flow, by talking to
+**[muse2api](https://github.com/crisng95/muse2api)** — a separate
+OpenAI-compatible gateway over muse.ai.
+
+> **muse2api is its own service, from its own repo.** Flowboard does not
+> bundle, install or start it. If `FLOWBOARD_MUSE2API_BASE` points at a
+> muse2api that isn't running, every Muse feature fails with
+> `muse2api unreachable at …` and the Muse row in Settings stays ✗.
+
+```
+Flowboard agent (:8434) ──HTTP, Bearer key──▶ muse2api (:18610) ──▶ muse.ai
+```
+
+**1. Start muse2api** (in a separate terminal, keep it running):
+
+```bash
+git clone https://github.com/crisng95/muse2api.git
+cd muse2api
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+cp .env.example .env      # MUSE2API_DRIVER=mock: fake outputs, no account
+python -m muse2api        # → http://127.0.0.1:18610
+```
+
+The API key is `MUSE2API_API_KEY` from its `.env`; if you leave that unset,
+muse2api generates one on first start and saves it to `data/api_key`.
+
+For real renders set `MUSE2API_DRIVER=browser` (needs Chromium/Chrome)
+and import a logged-in muse.ai account's cookies through its Admin API —
+see the muse2api README. `mock` is enough to check the wiring end to end.
+
+Check it is up:
+
+```bash
+curl http://127.0.0.1:18610/readyz
+# {"ready":true,"driver":{"driver":"mock","ok":true},...}
+```
+
+**2. Point Flowboard at it** — add to `.env` at the Flowboard repo root,
+then restart the agent (Step 3):
+
+```bash
+FLOWBOARD_MUSE2API_BASE=http://127.0.0.1:18610
+FLOWBOARD_MUSE2API_KEY=<muse2api's MUSE2API_API_KEY>
+```
+
+**3. Use it.** Settings → AI Providers shows **Muse ✓** once muse2api's
+`/readyz` reports ready; pin any feature to Muse there, and pick
+**Muse** in the GenerationDialog's *Backend* chip for image/video. No
+Flow project, Chrome extension or paygate tier is needed on this path.
+
+What maps to what, and muse2api v0.1's current gaps (image edits return
+501, reference images are dropped), are in
+[docs/muse-provider.md](docs/muse-provider.md). Leaving
+`FLOWBOARD_MUSE2API_BASE` unset keeps the older queue + Pax worker
+transport described there.
+
 ### Upgrading from a pre-migration install
 
 If Flowboard worked for you before September 2026 and now fails with
@@ -635,6 +695,7 @@ loudly later with a message pointing back here).
 | **Claude Code** | OAuth via `claude` CLI · Anthropic browser sign-in | ✅ Default · production-tested |
 | **Gemini** | OAuth via `agy` (Antigravity CLI) · Google AI Ultra plan | ✅ Tested live |
 | **OpenAI Codex** | OAuth via `codex` CLI · ChatGPT Plus/Pro | ✅ Tested live |
+| **Muse** | muse2api gateway (separate service — see [Step 5](#step-5-optional--muse-via-the-muse2api-gateway)) · or a Pax worker | 🧪 Tested against muse2api's mock driver |
 
 #### Models and effort
 
