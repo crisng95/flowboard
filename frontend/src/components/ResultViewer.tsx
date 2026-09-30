@@ -12,6 +12,7 @@ const ICON: Record<string, string> = {
   video: "▶",
   prompt: "✦",
   note: "✎",
+  merge: "⧉",
 };
 
 // Friendly labels for the metadata grid's `model` row. Keys match what

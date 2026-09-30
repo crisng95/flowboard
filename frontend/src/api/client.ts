@@ -144,7 +144,7 @@ export function getHealth() {
 
 // ── DTOs ────────────────────────────────────────────────────────────────────
 
-export type NodeType = "character" | "image" | "video" | "prompt" | "note" | "visual_asset" | "Storyboard";
+export type NodeType = "character" | "image" | "video" | "prompt" | "note" | "visual_asset" | "Storyboard" | "merge";
 export type NodeStatus = "idle" | "queued" | "running" | "done" | "error";
 
 export interface Board {
@@ -310,12 +310,20 @@ export function deleteEdge(id: number): Promise<{ ok: true }> {
 
 export type ChatRole = "user" | "assistant" | "system";
 
+export interface ChatAttachmentDTO {
+  id: number;
+  asset_id: number;
+  mime: string;
+  url: string;
+}
+
 export interface ChatMessageDTO {
   id: number;
   board_id: number;
   role: ChatRole;
   content: string;
   mentions: string[];
+  attachments: ChatAttachmentDTO[];
   created_at: string;
 }
 
@@ -331,10 +339,21 @@ export interface PlanDTO {
   created_at: string;
 }
 
+// Dock flow: POST returns fast with the user message + run id; the agent
+// loop runs server-side and the client polls the active run.
 export interface ChatSendResponse {
   user: ChatMessageDTO;
-  assistant: ChatMessageDTO;
-  plan?: PlanDTO;
+  run_id: number;
+}
+
+export interface ChatRunDTO {
+  id: number;
+  board_id: number;
+  user_message_id: number;
+  status: "running" | "done" | "failed";
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
 }
 
 export function listChatMessages(boardId: number) {
@@ -345,11 +364,48 @@ export function sendChatMessage(
   boardId: number,
   message: string,
   mentions: string[],
+  attachmentIds: number[] = [],
 ) {
   return api<ChatSendResponse>("/api/chat", {
     method: "POST",
-    body: JSON.stringify({ board_id: boardId, message, mentions }),
+    body: JSON.stringify({
+      board_id: boardId,
+      message,
+      mentions,
+      attachment_ids: attachmentIds,
+    }),
   });
+}
+
+export function getActiveChatRun(boardId: number) {
+  return api<ChatRunDTO | null>(`/api/boards/${boardId}/chat/runs/active`);
+}
+
+export interface ChatUploadResult {
+  assets: Array<{ id: number; mime: string; url: string }>;
+}
+
+// Multipart upload for chat attachments. Uses raw fetch (not api())
+// because api() pins Content-Type: application/json, which would break
+// the multipart boundary the browser sets on FormData.
+export async function uploadChatAttachments(
+  boardId: number,
+  files: File[],
+): Promise<ChatUploadResult> {
+  const form = new FormData();
+  form.set("board_id", String(boardId));
+  for (const f of files) form.append("files", f, f.name);
+  const res = await fetch("/api/chat/attachments", {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(
+      `uploadChatAttachments: ${res.status}${detail ? ` ${detail}` : ""}`,
+    );
+  }
+  return res.json() as Promise<ChatUploadResult>;
 }
 
 // ── Generation ───────────────────────────────────────────────────────────────

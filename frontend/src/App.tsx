@@ -5,6 +5,7 @@ import { AddNodePalette } from "./canvas/AddNodePalette";
 import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
 // import { ChatSidebar } from "./components/ChatSidebar";
+import { ChatDock } from "./components/ChatDock";
 import { ProjectSidebar } from "./components/ProjectSidebar";
 import { ReferencesPanel } from "./components/ReferencesPanel";
 import { Toaster } from "./components/Toaster";
@@ -49,6 +50,7 @@ export function App() {
         </div>
       </ReactFlowProvider>
       {/* <ChatSidebar /> */}
+      <ChatDock />
       <Toaster />
       <GenerationDialog />
       <ResultViewer />

@@ -16,6 +16,7 @@ NodeType = Literal[
     "video",
     "prompt",
     "note",
+    "merge",
     "visual_asset",
     # Storyboard = thin image-node wrapper. Backend treats it the same as
     # `image` for storage / dispatch — see frontend/src/lib/storyboardPrompt.ts

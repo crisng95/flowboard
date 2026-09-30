@@ -163,6 +163,7 @@ const TYPE_TITLE: Record<NodeType, string> = {
   note: "Note",
   visual_asset: "Visual asset",
   Storyboard: "Storyboard",
+  merge: "Merge",
 };
 
 // ── Persisted active-board id ─────────────────────────────────────────────

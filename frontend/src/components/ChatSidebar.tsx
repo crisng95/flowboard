@@ -18,6 +18,7 @@ const ICON: Record<string, string> = {
   video: "▶",
   prompt: "✦",
   note: "✎",
+  merge: "⧉",
 };
 
 // ── PlanPreviewCard ───────────────────────────────────────────────────────────

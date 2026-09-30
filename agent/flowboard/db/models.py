@@ -160,6 +160,32 @@ class ChatMessage(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow)
 
 
+class ChatAttachment(SQLModel, table=True):
+    """One uploaded image attached to a chat message.
+
+    The bytes live at the linked Asset's ``local_path``
+    (``storage/chat_uploads/``); the Asset row stays ``node_id=None``
+    (unbound) until the agent binds it to a node.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    message_id: int = Field(foreign_key="chatmessage.id", index=True)
+    asset_id: int = Field(foreign_key="asset.id", index=True)
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class ChatRun(SQLModel, table=True):
+    """One server-side agent execution spawned from a chat message."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    board_id: int = Field(foreign_key="board.id", index=True)
+    user_message_id: int = Field(foreign_key="chatmessage.id")
+    status: str = "running"  # running | done | failed
+    error: Optional[str] = None
+    created_at: datetime = Field(default_factory=_utcnow)
+    finished_at: Optional[datetime] = None
+
+
 class Plan(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     board_id: int = Field(foreign_key="board.id", index=True)

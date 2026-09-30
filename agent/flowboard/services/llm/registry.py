@@ -26,7 +26,7 @@ from . import secrets
 logger = logging.getLogger(__name__)
 
 
-Feature = Literal["auto_prompt", "vision", "planner"]
+Feature = Literal["auto_prompt", "vision", "planner", "chat_agent"]
 
 
 # Module-level singletons. Each provider class has cheap probe state

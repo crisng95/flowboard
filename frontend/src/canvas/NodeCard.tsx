@@ -17,6 +17,7 @@ const ICON: Record<string, string> = {
   prompt: "✦",
   note: "✎",
   visual_asset: "◇",
+  merge: "⧉",
 };
 
 const STATUS_COLOR: Record<string, string> = {

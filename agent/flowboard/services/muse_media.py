@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import mimetypes
 import uuid
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -122,6 +123,12 @@ async def _resolve_media_input_url(media_id: str) -> Optional[str]:
             ).first()
             if row is not None and row.url:
                 return row.url
+            # Local-only assets (e.g. chat uploads) have no remote URL —
+            # the worker runs on the same host, so hand it the file path.
+            if row is not None and row.local_path:
+                p = Path(row.local_path)
+                if p.is_file():
+                    return f"file://{p}"
     except Exception:  # noqa: BLE001
         logger.exception("muse media: asset lookup failed for %s", media_id[:12])
     return None
