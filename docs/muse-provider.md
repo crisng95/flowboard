@@ -1,24 +1,67 @@
 # Muse provider
 
-**Muse** is Flowboard's delegated provider: Pax (this assistant) acting as
-both an LLM backend and a media-generation backend, instead of the
-CLI/API providers (Claude / Gemini / Codex) and Google Flow.
+**Muse** is Flowboard's delegated provider: an LLM backend and a
+media-generation backend served by muse.ai (through the muse2api gateway)
+or by Pax (this assistant) through a worker, instead of the CLI/API
+providers (Claude / Gemini / Codex) and Google Flow.
 
-- **LLM features** (Auto-prompt, Vision, Planner): pin any feature to
-  `Muse (Pax)` in Settings → AI Providers. `run()` publishes an `llm` job
-  to the provider-job queue and waits for a Pax worker to answer it with
-  its own language/vision tools.
+- **LLM features** (Auto-prompt, Vision, Planner) and the ChatDock agent:
+  pin any feature to `Muse` in Settings → AI Providers.
 - **Media** (image / edit / video): pick **Muse** in the GenerationDialog's
   Backend chip. `gen_image`, `edit_image`, `gen_video`, `gen_video_omni`
-  route to the queue instead of the Flow SDK — no Flow plan, no Chrome
+  route to Muse instead of the Flow SDK — no Flow plan, no Chrome
   extension, no paygate tier needed.
+
+Muse has two transports. Which one runs is decided by one setting:
+
+```
+FLOWBOARD_MUSE2API_BASE set    Flowboard ──HTTP──▶ muse2api ──▶ muse.ai
+FLOWBOARD_MUSE2API_BASE unset  Flowboard ──provider-job queue──▶ Pax worker
+```
+
+## muse2api gateway
+
+[muse2api](https://github.com/crisng95/muse2api) exposes muse.ai as an
+OpenAI-compatible API with its own account pool, failover and video task
+manager. Point Flowboard at it in `.env` at the repo root and restart the
+agent:
+
+```bash
+FLOWBOARD_MUSE2API_BASE=http://127.0.0.1:18610
+FLOWBOARD_MUSE2API_KEY=<muse2api's MUSE2API_API_KEY>
+# FLOWBOARD_MUSE2API_POLL_S=3   # video task poll interval
+```
+
+No worker and no intermediate gateway are needed: muse2api already does
+the account scheduling, retries and long-running task tracking that the
+queue exists for. The agent calls it directly (`services/muse2api.py`):
+
+| Flowboard | muse2api | Notes |
+|---|---|---|
+| LLM features, ChatDock agent | `POST /v1/chat/completions` | attachments sent as `image_url` data URLs |
+| `gen_image` | `POST /v1/images/generations` | `b64_json`; `variant_count` > 4 is split, per-variant `prompts` → one call each; reference images are dropped (reported in `result.warnings`) |
+| `edit_image` | `POST /v1/images/edits` | multipart, source then refs. muse2api v0.1 returns 501 for this route, so edits fail with that message until it ships |
+| `gen_video` (i2v) | `POST /v1/videos` + poll `GET /v1/videos/{id}` | one task per start frame, frame as `image` |
+| `gen_video_omni` (r2v) | same | first reference becomes the first frame, the rest are dropped (warned); `duration_s` → `duration` |
+
+Orientation maps to muse2api's `size`: landscape `16:9`, portrait `9:16`.
+Media links are fetched from the configured base URL even when muse2api
+advertises another host, then ingested into the media cache so they serve
+from `/media/{id}` like any Flow render.
+
+`is_available()` (the Settings green tick) is muse2api's `/readyz`, cached
+for 30s; the Muse model catalog is its live list of chat models. Errors
+carry muse2api's own message (e.g. `muse2api HTTP 503: no account
+available`) and never the key.
+
+## Queue + Pax worker
 
 Nothing is configured per-provider: no CLI to install, no API key, no
 Flow project. `is_available()` (and the Settings green tick) is driven by
 **worker presence** — a Pax worker that polled the queue within
 `FLOWBOARD_MUSE_WORKER_TTL_S` (default 300s) means the provider is up.
 
-## Running a worker
+### Running a worker
 
 On the same host as the agent:
 
@@ -46,7 +89,7 @@ and `handle_media` are **stubs** — wire in your real tooling:
   reads the bytes and ingests them into the media cache, so they serve
   from `/media/{id}` like any Flow render.
 
-## Queue protocol (`/api/provider-jobs`)
+### Queue protocol (`/api/provider-jobs`)
 
 | Endpoint | Who | What |
 |---|---|---|
@@ -68,8 +111,10 @@ becomes reclaimable — jobs are never stranded.
 
 ## Timeouts
 
-- `FLOWBOARD_MUSE_LLM_TIMEOUT_S` (default 600): producer wait per LLM job.
-- `FLOWBOARD_MUSE_MEDIA_TIMEOUT_S` (default 1800): producer wait per media job.
+- `FLOWBOARD_MUSE_LLM_TIMEOUT_S` (default 600): producer wait per LLM job
+  (also caps a muse2api chat call).
+- `FLOWBOARD_MUSE_MEDIA_TIMEOUT_S` (default 1800): producer wait per media job
+  (also the muse2api image/video deadline).
 - `FLOWBOARD_MEDIA_PROVIDER` (`flow`|`muse`, default `flow`): default
   media backend when a request doesn't stamp `media_provider`.
 

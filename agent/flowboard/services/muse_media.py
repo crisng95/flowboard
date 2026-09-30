@@ -24,9 +24,23 @@ and the worker's node-mirroring writes `media_ids` like any Flow run.
 Result shape matches the Flow handlers: `{"media_ids": [...],
 "media_entries": [...], "provider": "muse"}` in the processor's
 `(dict, Optional[str])` convention.
+
+**muse2api transport.** With `FLOWBOARD_MUSE2API_BASE` set, the same four
+kinds skip the queue and call the muse2api gateway directly (see
+`services/muse2api.py`):
+
+    image       /v1/images/generations (one call per per-variant prompt)
+    edit_image  /v1/images/edits (source + refs as multipart)
+    video       /v1/videos, one task per start frame (frame = `image`)
+    video_refs  /v1/videos, first reference as the first frame
+
+muse2api has no reference-image input for text-to-image and only a single
+first frame for video, so refs it cannot take are dropped and reported in
+`result["warnings"]` rather than failing the render.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import mimetypes
 import uuid
@@ -38,6 +52,7 @@ import httpx
 
 from flowboard import config
 from flowboard.services import media as media_service
+from flowboard.services import muse2api
 from flowboard.services import provider_jobs as pq
 
 logger = logging.getLogger(__name__)
@@ -150,6 +165,16 @@ async def run_muse_media(
     """
     media_type = _kind_media_type(kind)
 
+    if muse2api.is_configured():
+        return await _run_via_muse2api(
+            kind=kind,
+            prompt=prompt,
+            orientation=orientation,
+            source_media_ids=source_media_ids or [],
+            reference_media_ids=reference_media_ids or [],
+            extra=extra or {},
+        )
+
     # Resolve input media to worker-readable URLs before queueing, so the
     # job payload is self-contained.
     source_urls: list[str] = []
@@ -243,4 +268,165 @@ async def run_muse_media(
     }
     if slot_errors:
         result["slot_errors"] = slot_errors
+    return result, None
+
+
+# ── muse2api transport ────────────────────────────────────────────────
+
+
+async def _load_input(media_id: str) -> Optional[tuple[bytes, str]]:
+    """A Flowboard media_id's bytes, for shipping to muse2api (no shared FS)."""
+    url = await _resolve_media_input_url(media_id)
+    if not url:
+        return None
+    return await _read_output_bytes(url, "image")
+
+
+async def _muse2api_outputs(
+    kind: str,
+    prompt: str,
+    size: Optional[str],
+    source_ids: list[str],
+    ref_ids: list[str],
+    extra: dict,
+    warnings: list[str],
+) -> list:
+    """Run the gateway calls for one dispatch.
+
+    Returns one entry per output slot: ``(bytes, mime)`` or a
+    ``Muse2APIError`` for a slot that failed (so one bad variant doesn't
+    discard its siblings, mirroring the queue path's slot_errors).
+    """
+    timeout = config.MUSE_MEDIA_TIMEOUT_S
+
+    async def _slot(coro):
+        try:
+            return await coro
+        except muse2api.Muse2APIError as exc:
+            return exc
+
+    if kind == "image":
+        if ref_ids:
+            warnings.append(
+                f"{len(ref_ids)} reference image(s) ignored: muse2api text-to-image "
+                "takes no image input"
+            )
+        prompts = [p for p in (extra.get("prompts") or []) if isinstance(p, str) and p.strip()]
+        if prompts:
+            batches = [(p.strip(), 1) for p in prompts]
+        else:
+            count = extra.get("variant_count")
+            count = count if isinstance(count, int) and count > 0 else 1
+            batches = []
+            while count > 0:
+                n = min(count, muse2api.MAX_IMAGES_PER_CALL)
+                batches.append((prompt, n))
+                count -= n
+        results = await asyncio.gather(*(
+            _slot(muse2api.generate_images(p, n=n, size=size, timeout=timeout))
+            for p, n in batches
+        ))
+        out: list = []
+        for (_p, n), r in zip(batches, results):
+            if isinstance(r, Exception):
+                out.extend([r] * n)
+            else:
+                out.extend(r)
+        return out
+
+    if kind == "edit_image":
+        if not source_ids:
+            return [muse2api.Muse2APIError("missing source image")]
+        source = await _load_input(source_ids[0])
+        if source is None:
+            return [muse2api.Muse2APIError("source image unreadable")]
+        refs = [r for r in [await _load_input(m) for m in ref_ids] if r is not None]
+        try:
+            return list(await muse2api.edit_image(
+                prompt, image=source, references=refs, size=size, timeout=timeout
+            ))
+        except muse2api.Muse2APIError as exc:
+            return [exc]
+
+    # Video: muse2api takes exactly one optional first frame per task.
+    if kind == "video":
+        frames = source_ids
+    else:  # video_refs
+        frames = ref_ids[:1]
+        if len(ref_ids) > 1:
+            warnings.append(
+                f"{len(ref_ids) - 1} reference image(s) ignored: muse2api video "
+                "takes a single first frame"
+            )
+    duration = extra.get("duration_s")
+    duration = duration if isinstance(duration, int) and duration > 0 else None
+
+    async def _one_video(media_id: Optional[str]):
+        image = None
+        if media_id is not None:
+            loaded = await _load_input(media_id)
+            if loaded is None:
+                raise muse2api.Muse2APIError(f"start frame {media_id[:12]} unreadable")
+            image = muse2api.data_url(*loaded)
+        return await muse2api.generate_video(
+            prompt, image=image, size=size, duration=duration, timeout=timeout
+        )
+
+    targets: list[Optional[str]] = list(frames) or [None]
+    return list(await asyncio.gather(*(_slot(_one_video(m)) for m in targets)))
+
+
+async def _run_via_muse2api(
+    *,
+    kind: str,
+    prompt: str,
+    orientation: Optional[str],
+    source_media_ids: list[str],
+    reference_media_ids: list[str],
+    extra: dict,
+) -> tuple[dict, Optional[str]]:
+    media_type = _kind_media_type(kind)
+    warnings: list[str] = []
+    logger.info("muse media: %s via muse2api at %s", kind, muse2api.base_url())
+    outputs = await _muse2api_outputs(
+        kind,
+        prompt,
+        muse2api.size_for_orientation(orientation),
+        source_media_ids,
+        reference_media_ids,
+        extra,
+        warnings,
+    )
+
+    media_ids: list[Optional[str]] = []
+    media_entries: list[dict] = []
+    slot_errors: list[dict] = []
+    for i, out in enumerate(outputs):
+        if isinstance(out, Exception):
+            slot_errors.append({"slot": i, "error": str(out)[:300]})
+            media_ids.append(None)
+            continue
+        data, mime = out
+        mid = uuid.uuid4().hex
+        if not media_service.ingest_inline_bytes(mid, data, kind=media_type, mime=mime):
+            slot_errors.append({"slot": i, "error": "ingest_failed"})
+            media_ids.append(None)
+            continue
+        media_ids.append(mid)
+        media_entries.append({"media_id": mid, "url": f"/media/{mid}"})
+
+    if not any(media_ids):
+        detail = slot_errors[0]["error"] if slot_errors else "no outputs"
+        return {}, f"muse2api_failed: {detail}"[:400]
+
+    result: dict = {
+        "provider": "muse",
+        "transport": "muse2api",
+        "media_ids": media_ids,
+        "media_entries": media_entries,
+    }
+    if slot_errors:
+        result["slot_errors"] = slot_errors
+    if warnings:
+        result["warnings"] = warnings
     return result, None

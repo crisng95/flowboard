@@ -69,7 +69,7 @@ const PROVIDER_LABEL: Record<LLMProviderName, string> = {
   claude: "Claude",
   gemini: "Gemini (agy)",
   openai: "OpenAI (Codex)",
-  muse: "Muse (Pax)",
+  muse: "Muse",
 };
 
 const UNTESTED: FeatureTest = { state: "untested" };

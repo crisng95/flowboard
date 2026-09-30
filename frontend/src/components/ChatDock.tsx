@@ -314,8 +314,8 @@ export function ChatDock() {
           }`}
           title={
             museAvailable
-              ? "Muse worker đang chạy"
-              : "Chưa có Muse worker"
+              ? "Muse sẵn sàng (muse2api hoặc worker)"
+              : "Muse chưa sẵn sàng"
           }
         >
           {museAvailable === null ? "○" : museAvailable ? "●" : "○"} Muse
@@ -332,8 +332,9 @@ export function ChatDock() {
 
       {museAvailable === false && (
         <div className="chat-dock__notice">
-          Chưa có Muse worker — chạy{" "}
-          <code>python agent/scripts/muse_worker.py</code> rồi gửi lại.
+          Muse chưa sẵn sàng — đặt <code>FLOWBOARD_MUSE2API_BASE</code> trỏ
+          tới muse2api, hoặc chạy{" "}
+          <code>python agent/scripts/muse_worker.py</code>, rồi gửi lại.
         </div>
       )}
 
